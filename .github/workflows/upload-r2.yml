@@ -1,0 +1,173 @@
+name: Upload R2
+
+on:
+  workflow_run:
+    workflows:
+      - Release
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Extension release tag, for example duckdb-v1.0.0
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  upload:
+    name: Upload extension assets to R2
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve public base URL
+        id: r2_config
+        env:
+          ONETCLI_PUBLIC_BASE_URL: ${{ vars.ONETCLI_PUBLIC_BASE_URL }}
+        run: |
+          base_url="${ONETCLI_PUBLIC_BASE_URL%/}"
+          if [ -z "$base_url" ]; then
+            echo "::error::ONETCLI_PUBLIC_BASE_URL repo variable is not set"
+            exit 1
+          fi
+          echo "base_url=$base_url" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve release tag
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
+          WORKFLOW_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || '' }}
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_TAG" ]; then
+            release_tag="$INPUT_TAG"
+            extension_id="${release_tag%%-v*}"
+            extension_version="${release_tag#${extension_id}-v}"
+          else
+            mkdir -p run-metadata
+            gh run download "$WORKFLOW_RUN_ID" \
+              --repo "$GITHUB_REPOSITORY" \
+              --name release-metadata \
+              --dir run-metadata
+            release_tag="$(node -e 'const fs = require("fs"); const d = JSON.parse(fs.readFileSync("run-metadata/release-metadata.json", "utf8")); process.stdout.write(d.release_tag);')"
+            extension_id="$(node -e 'const fs = require("fs"); const d = JSON.parse(fs.readFileSync("run-metadata/release-metadata.json", "utf8")); process.stdout.write(d.extension_id);')"
+            extension_version="$(node -e 'const fs = require("fs"); const d = JSON.parse(fs.readFileSync("run-metadata/release-metadata.json", "utf8")); process.stdout.write(d.extension_version);')"
+          fi
+          gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null
+          echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "extension_id=$extension_id" >> "$GITHUB_OUTPUT"
+          echo "version=$extension_version" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve extension metadata
+        id: extension
+        env:
+          EXTENSION_ID: ${{ steps.release.outputs.extension_id }}
+        run: |
+          set -euo pipefail
+          metadata="$(node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+          const id = process.env.EXTENSION_ID;
+          const roots = ["extensions/ipc", "extensions/wasm", "extensions/language"];
+          let data = null;
+          for (const root of roots) {
+            const file = path.join(root, id, "extension.build.json");
+            if (fs.existsSync(file)) {
+              data = JSON.parse(fs.readFileSync(file, "utf8"));
+              break;
+            }
+          }
+          if (!data) throw new Error(`unknown extension id: ${id}`);
+          process.stdout.write(JSON.stringify({
+            kind: data.kind,
+            targets: data.targets,
+            r2Prefix: data.r2Prefix,
+          }));
+          NODE
+          )"
+          echo "kind=$(node -e 'const data = JSON.parse(process.argv[1]); process.stdout.write(data.kind);' "$metadata")" >> "$GITHUB_OUTPUT"
+          echo "targets=$(node -e 'const data = JSON.parse(process.argv[1]); process.stdout.write(JSON.stringify(data.targets));' "$metadata")" >> "$GITHUB_OUTPUT"
+          echo "r2_prefix=$(node -e 'const data = JSON.parse(process.argv[1]); process.stdout.write(data.r2Prefix);' "$metadata")" >> "$GITHUB_OUTPUT"
+
+      - name: Verify R2 secrets are set
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+          CLOUDFLARE_R2_BUCKET: ${{ secrets.CLOUDFLARE_R2_BUCKET }}
+        run: |
+          for name in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY CLOUDFLARE_R2_BUCKET; do
+            if [ -z "${!name}" ]; then
+              echo "::error::${name} secret is empty or not set"
+              exit 1
+            fi
+          done
+
+      - name: Download GitHub Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          mkdir -p artifacts
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "${{ steps.release.outputs.extension_id }}-driver-*.tar.gz" \
+            --pattern "sha256sums.txt" \
+            --pattern "extension-manifest.json" \
+            --dir artifacts
+          ls -la artifacts
+
+      - name: Verify downloaded assets
+        env:
+          EXTENSION_ID: ${{ steps.release.outputs.extension_id }}
+          TARGETS_JSON: ${{ steps.extension.outputs.targets }}
+        run: |
+          set -euo pipefail
+          node -e 'const targets = JSON.parse(process.env.TARGETS_JSON); for (const target of targets) console.log(`${process.env.EXTENSION_ID}-driver-${target}.tar.gz`);' > expected-assets.txt
+          while read -r file; do
+            test -s "artifacts/${file}"
+            awk -v file="$file" '$2 == file && $1 ~ /^[0-9a-f]{64}$/ { found = 1 } END { exit found ? 0 : 1 }' artifacts/sha256sums.txt
+          done < expected-assets.txt
+          test -s artifacts/extension-manifest.json
+          node -e 'const fs = require("fs"); const m = JSON.parse(fs.readFileSync("artifacts/extension-manifest.json", "utf8")); if (!m.extensions || !m.extensions.length) process.exit(1);'
+
+      - name: Configure Cloudflare R2 credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+          aws-region: auto
+
+      - name: Upload extension assets and manifest to R2
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_R2_BUCKET: ${{ secrets.CLOUDFLARE_R2_BUCKET }}
+          EXTENSION_ID: ${{ steps.release.outputs.extension_id }}
+          EXTENSION_VERSION: ${{ steps.release.outputs.version }}
+          R2_PREFIX: ${{ steps.extension.outputs.r2_prefix }}
+          TARGETS_JSON: ${{ steps.extension.outputs.targets }}
+        run: |
+          set -euo pipefail
+          endpoint="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          upload_object() {
+            local source="$1"
+            local key="$2"
+            local content_type="$3"
+            local cache_control="$4"
+            aws s3 cp "$source" "s3://${CLOUDFLARE_R2_BUCKET}/${key}" \
+              --endpoint-url "$endpoint" \
+              --content-type "$content_type" \
+              --cache-control "$cache_control"
+          }
+          node -e 'const targets = JSON.parse(process.env.TARGETS_JSON); for (const target of targets) console.log(`${process.env.EXTENSION_ID}-driver-${target}.tar.gz`);' > upload-assets.txt
+          while read -r file; do
+            upload_object "artifacts/${file}" "${R2_PREFIX}/${EXTENSION_VERSION}/${file}" "application/gzip" "public, max-age=31536000, immutable"
+            upload_object "artifacts/${file}" "${R2_PREFIX}/latest/${file}" "application/gzip" "public, max-age=300"
+          done < upload-assets.txt
+          upload_object "artifacts/extension-manifest.json" "extensions/manifest.json" "application/json; charset=utf-8" "no-cache"

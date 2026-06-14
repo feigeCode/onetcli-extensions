@@ -1,0 +1,172 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*-v*"
+  workflow_dispatch:
+    inputs:
+      extension:
+        description: Extension id, for example duckdb
+        required: true
+        type: string
+      version:
+        description: Extension version, for example 1.0.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    name: Resolve release extension
+    runs-on: ubuntu-latest
+    outputs:
+      extension_id: ${{ steps.prepare.outputs.extension_id }}
+      version: ${{ steps.prepare.outputs.version }}
+      release_tag: ${{ steps.prepare.outputs.release_tag }}
+      matrix: ${{ steps.prepare.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: prepare
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            EXTENSION_ID="${{ inputs.extension }}"
+            VERSION="${{ inputs.version }}"
+            RELEASE_TAG="${EXTENSION_ID}-v${VERSION}"
+          else
+            RELEASE_TAG="$GITHUB_REF_NAME"
+            EXTENSION_ID="${RELEASE_TAG%%-v*}"
+            VERSION="${RELEASE_TAG#${EXTENSION_ID}-v}"
+          fi
+          MATRIX="$(EXTENSION_ID="$EXTENSION_ID" node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+          const id = process.env.EXTENSION_ID;
+          const roots = ["extensions/ipc", "extensions/wasm", "extensions/language"];
+          let metadata = null;
+          for (const root of roots) {
+            const file = path.join(root, id, "extension.build.json");
+            if (fs.existsSync(file)) {
+              metadata = JSON.parse(fs.readFileSync(file, "utf8"));
+              break;
+            }
+          }
+          if (!metadata) throw new Error(`unknown extension id: ${id}`);
+          const include = metadata.targets.map((target) => ({
+            extension: metadata.id,
+            package: metadata.package || "",
+            kind: metadata.kind,
+            target,
+            os: runnerForTarget(target),
+          }));
+          process.stdout.write(JSON.stringify({ include }));
+          function runnerForTarget(target) {
+            if (target === "universal") return "ubuntu-latest";
+            if (target.includes("apple-darwin")) {
+              return target.startsWith("x86_64") ? "macos-15-intel" : "macos-latest";
+            }
+            if (target.includes("windows")) return "windows-latest";
+            return "ubuntu-latest";
+          }
+          NODE
+          )"
+          echo "extension_id=$EXTENSION_ID" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.extension }} / ${{ matrix.target }})
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        if: ${{ matrix.target != 'universal' }}
+        with:
+          target: ${{ matrix.target }}
+      - name: Build
+        if: ${{ matrix.package != '' && matrix.target != 'universal' }}
+        run: cargo build --release -p ${{ matrix.package }} --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          if [ "${{ matrix.kind }}" = "database_driver" ]; then
+            bash scripts/package-driver.sh "${{ matrix.extension }}" "${{ matrix.target }}" artifacts "${{ needs.prepare.outputs.version }}"
+            bash scripts/verify-package.sh "artifacts/${{ matrix.extension }}-driver-${{ matrix.target }}.tar.gz"
+          else
+            echo "::error::Unsupported extension kind in release workflow: ${{ matrix.kind }}"
+            exit 1
+          fi
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.extension }}-${{ matrix.target }}
+          path: artifacts/${{ matrix.extension }}-driver-${{ matrix.target }}.tar.gz
+
+  release:
+    name: Create Release
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum *.tar.gz > sha256sums.txt
+          cat sha256sums.txt
+      - name: Generate marketplace manifest
+        env:
+          ARTIFACT_DIR: artifacts
+          EXTENSION_ID: ${{ needs.prepare.outputs.extension_id }}
+          EXTENSION_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          ONETCLI_PUBLIC_BASE_URL: ${{ vars.ONETCLI_PUBLIC_BASE_URL }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/generate-marketplace-manifest.mjs
+      - name: Write release metadata
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+          fs.writeFileSync(
+            "artifacts/release-metadata.json",
+            `${JSON.stringify({
+              release_tag: "${{ needs.prepare.outputs.release_tag }}",
+              extension_id: "${{ needs.prepare.outputs.extension_id }}",
+              extension_version: "${{ needs.prepare.outputs.version }}",
+            }, null, 2)}\n`,
+          );
+          NODE
+      - name: Upload release metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-metadata
+          path: artifacts/release-metadata.json
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.release_tag }}
+          name: ${{ needs.prepare.outputs.extension_id }} ${{ needs.prepare.outputs.version }}
+          generate_release_notes: true
+          files: |
+            artifacts/*.tar.gz
+            artifacts/sha256sums.txt
+            artifacts/extension-manifest.json

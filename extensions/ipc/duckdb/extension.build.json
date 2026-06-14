@@ -1,0 +1,15 @@
+{
+  "id": "duckdb",
+  "kind": "database_driver",
+  "package": "duckdb_driver",
+  "binary": "duckdb_driver",
+  "path": "extensions/ipc/duckdb",
+  "targets": [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc"
+  ],
+  "releaseTagPrefix": "duckdb-v",
+  "r2Prefix": "extensions/duckdb"
+}

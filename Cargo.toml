@@ -1,0 +1,27 @@
+[workspace]
+members = [
+    "extensions/ipc/duckdb",
+]
+resolver = "2"
+
+[workspace.package]
+publish = false
+edition = "2024"
+
+[workspace.dependencies]
+anyhow = "1.0.102"
+base64 = "0.22"
+chrono = { version = "0.4.23", features = ["serde"] }
+duckdb = { version = "1.10501.0", features = ["bundled"] }
+extension-driver = { git = "https://github.com/feigeCode/onetcli", branch = "dev-ipc", package = "extension-driver" }
+extension-host = { git = "https://github.com/feigeCode/onetcli", branch = "dev-ipc", package = "extension-host" }
+extension-protocol = { git = "https://github.com/feigeCode/onetcli", branch = "dev-ipc", package = "extension-protocol" }
+hex = "0.4"
+interprocess = { version = "2.4.0", features = ["tokio"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["io-util", "rt-multi-thread", "macros", "sync"] }
+tracing = "0.1.41"
+tracing-subscriber = "0.3"
+uuid = { version = "1.23.0", features = ["v4", "serde"] }
