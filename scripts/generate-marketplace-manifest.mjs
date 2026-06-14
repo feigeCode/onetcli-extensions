@@ -5,7 +5,6 @@ const artifactDir = process.env.ARTIFACT_DIR || "artifacts";
 const version = requiredEnv("EXTENSION_VERSION");
 const releaseTag = requiredEnv("RELEASE_TAG");
 const extensionId = requiredEnv("EXTENSION_ID");
-const publicBaseUrl = requiredEnv("ONETCLI_PUBLIC_BASE_URL").replace(/\/+$/, "");
 const repository = requiredEnv("GITHUB_REPOSITORY");
 
 const targets = [
@@ -22,7 +21,7 @@ const sha256s = {};
 
 for (const target of targets) {
   const fileName = `duckdb-driver-${target}.tar.gz`;
-  assetUrls[target] = `${publicBaseUrl}/extensions/duckdb/${version}/${fileName}`;
+  assetUrls[target] = `${extensionId}/${version}/${fileName}`;
   fallbackAssetUrls[target] = `https://github.com/${repository}/releases/download/${releaseTag}/${fileName}`;
   sha256s[target] = checksumFor(checksums, fileName);
 }

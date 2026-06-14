@@ -139,7 +139,6 @@ jobs:
           EXTENSION_ID: ${{ needs.prepare.outputs.extension_id }}
           EXTENSION_VERSION: ${{ needs.prepare.outputs.version }}
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
-          ONETCLI_PUBLIC_BASE_URL: ${{ vars.ONETCLI_PUBLIC_BASE_URL }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: node scripts/generate-marketplace-manifest.mjs
       - name: Write release metadata

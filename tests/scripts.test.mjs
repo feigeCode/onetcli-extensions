@@ -115,7 +115,7 @@ test("changed-extensions emits matrix entries only for changed extension paths",
   });
 });
 
-test("generate-marketplace-manifest writes merged entry with R2 and GitHub fallback assets", () => {
+test("generate-marketplace-manifest writes merged entry with relative R2 and GitHub fallback assets", () => {
   const workdir = makeTempDir();
   copyScript("generate-marketplace-manifest.mjs", workdir);
   fs.mkdirSync(path.join(workdir, "artifacts"), { recursive: true });
@@ -141,7 +141,6 @@ test("generate-marketplace-manifest writes merged entry with R2 and GitHub fallb
       EXTENSION_VERSION: "1.2.3",
       EXTENSION_ID: "duckdb",
       RELEASE_TAG: "duckdb-v1.2.3",
-      ONETCLI_PUBLIC_BASE_URL: "https://cdn.example.com/",
       GITHUB_REPOSITORY: "feigeCode/onetcli-extensions",
     },
   });
@@ -154,7 +153,7 @@ test("generate-marketplace-manifest writes merged entry with R2 and GitHub fallb
   assert.equal(manifest.extensions.length, 1);
   assert.equal(
     manifest.extensions[0].asset_urls["x86_64-unknown-linux-gnu"],
-    "https://cdn.example.com/extensions/duckdb/1.2.3/duckdb-driver-x86_64-unknown-linux-gnu.tar.gz",
+    "duckdb/1.2.3/duckdb-driver-x86_64-unknown-linux-gnu.tar.gz",
   );
   assert.equal(
     manifest.extensions[0].fallback_asset_urls["x86_64-unknown-linux-gnu"],

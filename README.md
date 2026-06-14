@@ -59,13 +59,6 @@ Run DuckDB driver tests:
 cargo test -p duckdb_driver -- --nocapture
 ```
 
-If local socket timing becomes noisy on a particular machine, run the Rust test
-harness serially:
-
-```bash
-cargo test -p duckdb_driver -- --test-threads=1 --nocapture
-```
-
 Check formatting:
 
 ```bash
@@ -117,12 +110,18 @@ ARTIFACT_DIR=artifacts
 EXTENSION_VERSION=1.0.0
 EXTENSION_ID=duckdb
 RELEASE_TAG=duckdb-v1.0.0
-ONETCLI_PUBLIC_BASE_URL=https://onetcli.test.cn
 GITHUB_REPOSITORY=feigeCode/onetcli-extensions
 ```
 
-The manifest includes both primary R2 asset URLs and GitHub Release fallback
-URLs.
+The manifest includes relative primary R2 asset URLs and absolute GitHub
+Release fallback URLs. Because the R2 manifest is published at
+`/extensions/manifest.json`, a DuckDB primary package path is written as:
+
+```text
+duckdb/1.0.0/duckdb-driver-x86_64-unknown-linux-gnu.tar.gz
+```
+
+The `onetcli` client resolves that path against the manifest directory.
 
 ## CI
 
@@ -163,12 +162,6 @@ Manual release is also available through `workflow_dispatch` with:
 
 `.github/workflows/upload-r2.yml` runs after a successful Release workflow or
 can be triggered manually with a release tag.
-
-Repository variable:
-
-```text
-ONETCLI_PUBLIC_BASE_URL
-```
 
 Repository secrets:
 
