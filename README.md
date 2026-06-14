@@ -1,5 +1,7 @@
 # onetcli-extensions
 
+中文版本: [README.zh-CN.md](README.zh-CN.md)
+
 First-party extension repository for onetcli.
 
 This repository builds and publishes extension packages independently from the
