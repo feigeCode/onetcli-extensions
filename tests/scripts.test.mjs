@@ -196,6 +196,18 @@ test("generate-marketplace-manifest writes merged entry with relative R2 and Git
   assert.match(manifest.extensions[0].sha256s["x86_64-unknown-linux-gnu"], /^[0-9a-f]{64}$/);
 });
 
+test("upload-r2 workflow exports R2 credentials without AWS STS configuration", () => {
+  const workflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/upload-r2.yml"), "utf8");
+
+  assert.doesNotMatch(workflow, /aws-actions\/configure-aws-credentials/);
+  assert.match(workflow, /AWS_ACCESS_KEY_ID:\s+\$\{\{\s*secrets\.CLOUDFLARE_R2_ACCESS_KEY_ID\s*\}\}/);
+  assert.match(
+    workflow,
+    /AWS_SECRET_ACCESS_KEY:\s+\$\{\{\s*secrets\.CLOUDFLARE_R2_SECRET_ACCESS_KEY\s*\}\}/,
+  );
+  assert.match(workflow, /AWS_DEFAULT_REGION:\s+auto\b/);
+});
+
 function makeTempDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "onetcli-extensions-test-"));
   fs.mkdirSync(path.join(dir, "unpacked"), { recursive: true });

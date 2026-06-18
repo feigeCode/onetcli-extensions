@@ -125,15 +125,13 @@ jobs:
           test -s artifacts/extension-manifest.json
           node -e 'const fs = require("fs"); const m = JSON.parse(fs.readFileSync("artifacts/extension-manifest.json", "utf8")); if (!m.extensions || !m.extensions.length) process.exit(1);'
 
-      - name: Configure Cloudflare R2 credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
-          aws-region: auto
-
       - name: Upload extension assets and manifest to R2
         env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_REGION: auto
+          AWS_EC2_METADATA_DISABLED: true
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_R2_BUCKET: ${{ secrets.CLOUDFLARE_R2_BUCKET }}
           EXTENSION_ID: ${{ steps.release.outputs.extension_id }}
