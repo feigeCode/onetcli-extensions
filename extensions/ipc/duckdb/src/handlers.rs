@@ -1941,6 +1941,31 @@ mod tests {
     }
 
     #[test]
+    fn query_fetch_formats_timestamp_values() {
+        let mut state = fresh_state();
+        let conn_id = open_main_conn(&mut state);
+        let start = handle_query_start(
+            &mut state,
+            &serde_json::json!({
+                "conn_id": conn_id,
+                "sql": "SELECT TIMESTAMP '2026-01-16 09:22:05' AS created_at"
+            }),
+        )
+        .unwrap();
+        let cursor_id = start["cursor_id"].as_str().unwrap().to_string();
+
+        let fetch = handle_cursor_fetch(
+            &mut state,
+            &serde_json::json!({ "cursor_id": cursor_id, "n": 10 }),
+        )
+        .unwrap();
+        let rows = fetch["rows"].as_array().unwrap();
+
+        assert_eq!("datetime", rows[0][0]["type"]);
+        assert_eq!("2026-01-16 09:22:05", rows[0][0]["value"]);
+    }
+
+    #[test]
     fn query_start_rewrites_current_catalog_system_table_reference() {
         let mut state = fresh_state();
         let conn_id = open_main_conn(&mut state);

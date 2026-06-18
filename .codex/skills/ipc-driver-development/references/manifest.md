@@ -6,6 +6,7 @@
 - [Methods](#methods)
 - [Dialect](#dialect)
 - [Host SQL Generation](#host-sql-generation)
+- [Connection Lifecycle](#connection-lifecycle)
 - [Capabilities](#capabilities)
 - [UI Form](#ui-form)
 - [Compatibility Fallback](#compatibility-fallback)
@@ -49,6 +50,12 @@ Minimal shape:
     "identifier_quote_left": "\"",
     "identifier_quote_right": "\"",
     "compatible_database_type": "PostgreSQL"
+  },
+  "connection": {
+    "single_file": false,
+    "single_connection": false,
+    "close_on_release": false,
+    "path_fields": []
   },
   "capabilities": {
     "supports_schema": true,
@@ -191,6 +198,55 @@ Explain rules:
 - If it does not contain `{sql}`, host appends a space and the target SQL.
 - Empty template returns no direct explain statement.
 - For external explain routing, host may wrap a `sql/explain` wire request and include the formatted template as `fallback_sql`.
+
+## Connection Lifecycle
+
+`connection` describes physical connection behavior the host cannot infer from generic SQL metadata. Use it for local embedded engines or file-backed drivers where concurrent physical opens can fail or leave file locks behind.
+
+Host source of truth:
+
+- `crates/db/src/ipc/registry.rs`: `IpcDriverConnection`
+- `crates/db/src/ipc/plugin.rs`: `ExternalDatabasePlugin::connection_lifecycle`
+- `crates/db/src/plugin.rs`: `ConnectionLifecycle`
+- `crates/db/src/manager.rs`: session creation, physical open serialization, and close-on-release handling
+
+Supported connection fields:
+
+| Field | Meaning |
+| --- | --- |
+| `single_file` | The connection targets a local file path rather than a network/server endpoint. |
+| `single_connection` | The engine cannot safely open multiple physical connections to the same file at the same time. |
+| `close_on_release` | The host should close the physical connection when the session is released instead of keeping it idle in the pool. |
+| `path_fields` | Ordered config fields used to derive the file lock key, for example `host`, `database`, or `extra_params.path`. |
+
+Example for a single-file embedded database:
+
+```json
+{
+  "connection": {
+    "single_file": true,
+    "single_connection": true,
+    "close_on_release": true,
+    "path_fields": ["host", "database", "extra_params.path"]
+  }
+}
+```
+
+Behavior:
+
+- If `single_file` and `single_connection` are both true, the host derives a physical-open lock key from `path_fields` and serializes physical opens for the same resolved file.
+- `close_on_release` tells the host to drop the physical connection when a UI/session operation ends. This prevents idle external driver processes from retaining file locks.
+- `path_fields` must match the driver's own path resolution order in `conn/open`. Do not use catalog names, display names, or connection names unless the driver actually opens that value as the file path.
+- A `file:` prefix is treated as a path prefix and should not create a distinct lock identity from the same bare path.
+- The host manager should read this lifecycle policy from the plugin/manifest. Do not write special branches such as `if driver_id == "duckdb"` in host session or IPC connection code.
+
+Use this block when:
+
+- The database is embedded or local-file backed.
+- The engine reports lock errors when two driver processes open the same file.
+- The driver should not keep idle sessions alive because the database file must be reusable immediately.
+
+Do not use this block for normal server databases. Server-backed drivers should usually keep the defaults so the host can pool connections normally.
 
 ## Capabilities
 

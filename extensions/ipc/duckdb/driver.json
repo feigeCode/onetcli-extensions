@@ -19,6 +19,12 @@
     "name": "duckdb-driver.sock",
     "connect_timeout_ms": 5000
   },
+  "connection": {
+    "single_file": true,
+    "single_connection": true,
+    "close_on_release": true,
+    "path_fields": ["host", "database", "extra_params.path"]
+  },
   "methods": [
     "$/ping",
     "shutdown",

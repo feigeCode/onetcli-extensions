@@ -6,7 +6,8 @@
 
 use anyhow::{Result, anyhow};
 use base64::Engine;
-use duckdb::types::{Value, ValueRef};
+use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, Timelike};
+use duckdb::types::{TimeUnit, Value, ValueRef};
 use extension_protocol::row::{CellValue, ColumnTypeKind};
 
 fn bytes_to_base64(bytes: &[u8]) -> String {
@@ -34,6 +35,9 @@ pub fn value_ref_to_cell(value: ValueRef<'_>) -> CellValue {
         ValueRef::Decimal(v) => CellValue::Decimal {
             value: v.to_string(),
         },
+        ValueRef::Timestamp(unit, value) => CellValue::Datetime {
+            value: format_timestamp(unit, value),
+        },
         ValueRef::Text(bytes) => match String::from_utf8(bytes.to_vec()) {
             Ok(s) => CellValue::Text { value: s },
             Err(_) => CellValue::Bytes {
@@ -43,10 +47,78 @@ pub fn value_ref_to_cell(value: ValueRef<'_>) -> CellValue {
         ValueRef::Blob(bytes) => CellValue::Bytes {
             value: bytes_to_base64(bytes),
         },
+        ValueRef::Date32(days) => CellValue::Date {
+            value: format_date32(days),
+        },
+        ValueRef::Time64(unit, value) => CellValue::Time {
+            value: format_time64(unit, value),
+        },
         other => CellValue::Text {
             value: format!("{other:?}"),
         },
     }
+}
+
+fn format_timestamp(unit: TimeUnit, value: i64) -> String {
+    let (secs, nanos) = split_epoch(unit, value);
+    match DateTime::from_timestamp(secs, nanos) {
+        Some(datetime) => format_datetime(datetime.naive_utc()),
+        None => format!("Timestamp({unit:?}, {value})"),
+    }
+}
+
+fn split_epoch(unit: TimeUnit, value: i64) -> (i64, u32) {
+    let nanos_per_second = match unit {
+        TimeUnit::Second => 1,
+        TimeUnit::Millisecond => 1_000,
+        TimeUnit::Microsecond => 1_000_000,
+        TimeUnit::Nanosecond => 1_000_000_000,
+    };
+    let seconds = value.div_euclid(nanos_per_second);
+    let units = value.rem_euclid(nanos_per_second);
+    let nanos_per_unit = 1_000_000_000 / nanos_per_second;
+    (seconds, (units * nanos_per_unit) as u32)
+}
+
+fn format_datetime(datetime: NaiveDateTime) -> String {
+    let mut value = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
+    append_fraction(&mut value, datetime.nanosecond());
+    value
+}
+
+fn format_date32(days: i32) -> String {
+    let Some(epoch) = NaiveDate::from_ymd_opt(1970, 1, 1) else {
+        return format!("Date32({days})");
+    };
+    match epoch.checked_add_signed(Duration::days(days as i64)) {
+        Some(date) => date.format("%Y-%m-%d").to_string(),
+        None => format!("Date32({days})"),
+    }
+}
+
+fn format_time64(unit: TimeUnit, value: i64) -> String {
+    let (_, nanos) = split_epoch(unit, value);
+    let seconds = unit.to_micros(value).div_euclid(1_000_000);
+    let seconds_of_day = seconds.rem_euclid(24 * 60 * 60) as u32;
+    let hour = seconds_of_day / 3600;
+    let minute = (seconds_of_day % 3600) / 60;
+    let second = seconds_of_day % 60;
+    let mut value = format!("{hour:02}:{minute:02}:{second:02}");
+    append_fraction(&mut value, nanos);
+    value
+}
+
+fn append_fraction(value: &mut String, nanos: u32) {
+    if nanos == 0 {
+        return;
+    }
+
+    let mut fraction = format!("{nanos:09}");
+    while fraction.ends_with('0') {
+        fraction.pop();
+    }
+    value.push('.');
+    value.push_str(&fraction);
 }
 
 /// 把 wire 参数值转成 DuckDB owning value,供 `params_from_iter` 绑定。
@@ -109,6 +181,7 @@ pub fn map_column_type_kind(db_type: &str) -> ColumnTypeKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use duckdb::types::TimeUnit;
 
     #[test]
     fn null_maps_to_null_cell() {
@@ -211,6 +284,21 @@ mod tests {
             v,
             CellValue::Bytes {
                 value: "AQID".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn timestamp_microsecond_value_ref_maps_to_datetime_cell() {
+        let v = value_ref_to_cell(ValueRef::Timestamp(
+            TimeUnit::Microsecond,
+            1_768_555_325_000_000,
+        ));
+
+        assert_eq!(
+            v,
+            CellValue::Datetime {
+                value: "2026-01-16 09:22:05".to_string()
             }
         );
     }
