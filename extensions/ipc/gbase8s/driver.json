@@ -1,0 +1,181 @@
+{
+  "id": "gbase8s",
+  "name": "GBase 8s",
+  "description": "GBase 8s Java IPC driver using the official JDBC driver",
+  "version": "0.1.0",
+  "entry": {
+    "command": "./gbase8s-ipc-driver",
+    "args": [],
+    "working_dir": null
+  },
+  "transport": {
+    "name": "gbase8s-driver.sock",
+    "connect_timeout_ms": 5000
+  },
+  "methods": [
+    "$/ping",
+    "shutdown",
+    "conn/test",
+    "conn/open",
+    "conn/close",
+    "conn/ping",
+    "conn/use",
+    "query/start",
+    "cursor/fetch",
+    "cursor/close",
+    "cursor/cancel",
+    "exec/run",
+    "exec/batch",
+    "tx/begin",
+    "tx/commit",
+    "tx/rollback",
+    "tx/savepoint",
+    "tx/release",
+    "ddl/build",
+    "ddl/build_create_table",
+    "ddl/build_alter_table",
+    "ddl/build_drop",
+    "data/export",
+    "data/import_begin",
+    "data/import_chunk",
+    "data/import_commit",
+    "data/import_abort",
+    "stream/read",
+    "stream/close",
+    "schema/databases",
+    "schema/schemas",
+    "schema/objects",
+    "schema/columns",
+    "schema/indexes",
+    "schema/foreign_keys",
+    "schema/checks",
+    "schema/views",
+    "schema/functions",
+    "schema/procedures",
+    "schema/triggers",
+    "schema/sequences",
+    "schema/types",
+    "schema/view_definition",
+    "schema/dump_ddl"
+  ],
+  "dialect": {
+    "identifier_quote_left": "\"",
+    "identifier_quote_right": "\"",
+    "limit_style": "limit_offset",
+    "bool_true": "1",
+    "bool_false": "0"
+  },
+  "connection": {
+    "single_file": false,
+    "single_connection": false,
+    "close_on_release": false,
+    "path_fields": []
+  },
+  "capabilities": {
+    "supports_schema": true,
+    "uses_schema_as_database": false,
+    "supports_sequences": false,
+    "supports_functions": true,
+    "supports_procedures": false,
+    "supports_triggers": false,
+    "supports_table_engine": false,
+    "supports_table_charset": false,
+    "supports_table_collation": false,
+    "supports_auto_increment": false,
+    "supports_tablespace": false,
+    "supports_unsigned": false,
+    "supports_enum_values": false,
+    "show_charset_in_column_detail": false,
+    "show_collation_in_column_detail": false,
+    "table_engines": []
+  },
+  "ui": {
+    "icon": "Database",
+    "locales_dir": "locales",
+    "default_port": 11811,
+    "form": {
+      "schema_version": 1,
+      "forms": [
+        {
+          "kind": "Connection",
+          "title_i18n_key": "database.gbase8s.connection.title",
+          "submit_i18n_key": "common.connect",
+          "tabs": [
+            {
+              "id": "general",
+              "label_i18n_key": "database.connection.tab.general",
+              "fields": [
+                {
+                  "id": "name",
+                  "label_i18n_key": "database.connection.field.name",
+                  "field_type": "Text",
+                  "required": true,
+                  "placeholder_i18n_key": "database.connection.field.name.placeholder"
+                },
+                {
+                  "id": "host",
+                  "label_i18n_key": "database.connection.field.host",
+                  "field_type": "Text",
+                  "required": true,
+                  "default_value": "127.0.0.1"
+                },
+                {
+                  "id": "port",
+                  "label_i18n_key": "database.connection.field.port",
+                  "field_type": "Number",
+                  "required": true,
+                  "default_value": "11811",
+                  "min": 1,
+                  "max": 65535
+                },
+                {
+                  "id": "username",
+                  "label_i18n_key": "database.connection.field.username",
+                  "field_type": "Text",
+                  "required": true
+                },
+                {
+                  "id": "password",
+                  "label_i18n_key": "database.connection.field.password",
+                  "field_type": "Password",
+                  "required": false
+                },
+                {
+                  "id": "database",
+                  "label_i18n_key": "database.connection.field.database",
+                  "field_type": "Text",
+                  "required": true
+                },
+                {
+                  "id": "extra_params.GBASEDBTSERVER",
+                  "label_i18n_key": "database.gbase8s.field.gbasedbtserver",
+                  "field_type": "Text",
+                  "required": true,
+                  "placeholder_i18n_key": "database.gbase8s.field.gbasedbtserver.placeholder"
+                },
+                {
+                  "id": "extra_params.PROTOCOL",
+                  "label_i18n_key": "database.gbase8s.field.protocol",
+                  "field_type": "Text",
+                  "required": true,
+                  "default_value": "onsoctcp"
+                },
+                {
+                  "id": "driver_class",
+                  "label_i18n_key": "database.gbase8s.field.driver_class",
+                  "field_type": "Text",
+                  "required": false,
+                  "default_value": "com.gbasedbt.jdbc.Driver",
+                  "help_i18n_key": "database.gbase8s.field.driver_class.help"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "actions": {
+        "actions": []
+      }
+    }
+  }
+}

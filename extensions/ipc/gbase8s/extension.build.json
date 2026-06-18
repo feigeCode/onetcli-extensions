@@ -1,0 +1,16 @@
+{
+  "id": "gbase8s",
+  "kind": "database_driver",
+  "language": "java",
+  "package": "java/gbase8s-ipc-driver",
+  "binary": "gbase8s-ipc-driver",
+  "jar": "gbase8s-ipc-driver.jar",
+  "path": "extensions/ipc/gbase8s",
+  "targets": [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc"
+  ]
+}

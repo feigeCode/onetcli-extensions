@@ -78,6 +78,41 @@ test("Go IPC driver manifests expose the full shared method surface", () => {
   }
 });
 
+test("GBase8s Java IPC driver manifest exposes the full method surface", () => {
+  const metadata = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, "extensions/ipc/gbase8s/extension.build.json"), "utf8"),
+  );
+  assert.equal(metadata.language, "java");
+  assert.equal(metadata.package, "java/gbase8s-ipc-driver");
+  assert.equal(metadata.binary, "gbase8s-ipc-driver");
+  assert.equal(metadata.jar, "gbase8s-ipc-driver.jar");
+
+  const driverJson = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, "extensions/ipc/gbase8s/driver.json"), "utf8"),
+  );
+  for (const method of [
+    "tx/begin",
+    "tx/commit",
+    "tx/rollback",
+    "tx/savepoint",
+    "tx/release",
+    "ddl/build",
+    "ddl/build_create_table",
+    "ddl/build_alter_table",
+    "ddl/build_drop",
+    "data/export",
+    "data/import_begin",
+    "data/import_chunk",
+    "data/import_commit",
+    "data/import_abort",
+    "stream/read",
+    "stream/close",
+    "schema/dump_ddl",
+  ]) {
+    assert.ok(driverJson.methods.includes(method), `gbase8s methods missing ${method}`);
+  }
+});
+
 test("package-driver creates a DuckDB package with executable entry command", () => {
   const workdir = makeTempDir();
   createPackageFixture(workdir);
@@ -224,6 +259,95 @@ test("package-driver creates a Go IPC driver package", () => {
   assert.equal(
     fs.readFileSync(path.join(workdir, "unpacked/dm/dm-ipc-driver"), "utf8"),
     "fake dm go binary\n",
+  );
+});
+
+test("package-driver includes Java IPC driver launcher and jar library", () => {
+  const workdir = makeTempDir();
+  createPackageFixture(workdir, {
+    id: "gbase8s",
+    binary: "gbase8s-ipc-driver",
+    binaryContents: "#!/usr/bin/env sh\nexec java -jar \"$DIR/lib/gbase8s-ipc-driver.jar\" \"$@\"\n",
+    language: "java",
+    package: "java/gbase8s-ipc-driver",
+  });
+  fs.mkdirSync(path.join(workdir, "target/x86_64-unknown-linux-gnu/release/lib"), {
+    recursive: true,
+  });
+  fs.writeFileSync(
+    path.join(workdir, "target/x86_64-unknown-linux-gnu/release/lib/gbase8s-ipc-driver.jar"),
+    "fake jar\n",
+  );
+
+  const archivePath = execFileSync(
+    "bash",
+    [
+      path.join(workdir, "scripts/package-driver.sh"),
+      "gbase8s",
+      "x86_64-unknown-linux-gnu",
+      path.join(workdir, "artifacts"),
+      "0.1.0",
+    ],
+    { cwd: workdir, encoding: "utf8" },
+  ).trim();
+
+  execFileSync("tar", ["xzf", archivePath, "-C", path.join(workdir, "unpacked")]);
+  assert.equal(
+    fs.readFileSync(
+      path.join(workdir, "unpacked/gbase8s/lib/gbase8s-ipc-driver.jar"),
+      "utf8",
+    ),
+    "fake jar\n",
+  );
+  const driverJson = JSON.parse(
+    fs.readFileSync(path.join(workdir, "unpacked/gbase8s/driver.json"), "utf8"),
+  );
+  assert.equal(driverJson.entry.command, "./gbase8s-ipc-driver");
+});
+
+test("build-java-driver stages launcher and shaded jar into target release directory", () => {
+  const workdir = makeTempDir();
+  copyScript("build-java-driver.sh", workdir);
+  writeJson(path.join(workdir, "extensions/ipc/gbase8s/extension.build.json"), {
+    id: "gbase8s",
+    kind: "database_driver",
+    language: "java",
+    package: "java/gbase8s-ipc-driver",
+    binary: "gbase8s-ipc-driver",
+    jar: "gbase8s-ipc-driver.jar",
+    path: "extensions/ipc/gbase8s",
+    targets: ["x86_64-unknown-linux-gnu"],
+  });
+  fs.mkdirSync(path.join(workdir, "java/gbase8s-ipc-driver/target"), { recursive: true });
+  fs.mkdirSync(path.join(workdir, "java/gbase8s-ipc-driver/bin"), { recursive: true });
+  fs.writeFileSync(
+    path.join(workdir, "java/gbase8s-ipc-driver/target/gbase8s-ipc-driver-0.1.0-all.jar"),
+    "fake shaded jar\n",
+  );
+  fs.writeFileSync(
+    path.join(workdir, "java/gbase8s-ipc-driver/bin/gbase8s-ipc-driver"),
+    "#!/usr/bin/env sh\n",
+  );
+
+  execFileSync(
+    "bash",
+    [
+      path.join(workdir, "scripts/build-java-driver.sh"),
+      "gbase8s",
+      "x86_64-unknown-linux-gnu",
+    ],
+    { cwd: workdir },
+  );
+
+  assert.equal(
+    fs.readFileSync(
+      path.join(workdir, "target/x86_64-unknown-linux-gnu/release/lib/gbase8s-ipc-driver.jar"),
+      "utf8",
+    ),
+    "fake shaded jar\n",
+  );
+  assert.ok(
+    fs.existsSync(path.join(workdir, "target/x86_64-unknown-linux-gnu/release/gbase8s-ipc-driver")),
   );
 });
 

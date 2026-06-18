@@ -100,6 +100,11 @@ jobs:
         if: ${{ matrix.language == 'go' && matrix.target != 'universal' }}
         with:
           go-version-file: go.mod
+      - uses: actions/setup-java@v4
+        if: ${{ matrix.language == 'java' && matrix.target != 'universal' }}
+        with:
+          distribution: temurin
+          java-version: '8'
       - name: Build
         if: ${{ matrix.language == 'rust' && matrix.package != '' && matrix.target != 'universal' }}
         env:
@@ -108,6 +113,9 @@ jobs:
       - name: Build Go driver
         if: ${{ matrix.language == 'go' && matrix.target != 'universal' }}
         run: bash scripts/build-go-driver.sh "${{ matrix.extension }}" "${{ matrix.target }}"
+      - name: Build Java driver
+        if: ${{ matrix.language == 'java' && matrix.target != 'universal' }}
+        run: bash scripts/build-java-driver.sh "${{ matrix.extension }}" "${{ matrix.target }}"
       - name: Package
         shell: bash
         run: |

@@ -36,6 +36,8 @@ if [ ! -f "$SOURCE_BIN" ]; then
   echo "Missing driver binary: ${SOURCE_BIN}" >&2
   if [ "$LANGUAGE" = "go" ]; then
     echo "Run: bash scripts/build-go-driver.sh ${EXTENSION_ID} ${TARGET}" >&2
+  elif [ "$LANGUAGE" = "java" ]; then
+    echo "Run: bash scripts/build-java-driver.sh ${EXTENSION_ID} ${TARGET}" >&2
   else
     echo "Run: cargo build --release -p ${BIN_STEM} --target ${TARGET}" >&2
   fi
@@ -46,6 +48,9 @@ rm -rf "$DRIVER_DIR"
 mkdir -p "$DRIVER_DIR" "$ARTIFACT_DIR"
 cp "$SOURCE_BIN" "${DRIVER_DIR}/${BIN_NAME}"
 cp -R "${SOURCE_DIR}/locales" "${DRIVER_DIR}/locales"
+if [ -d "${REPO_DIR}/target/${TARGET}/release/lib" ]; then
+  cp -R "${REPO_DIR}/target/${TARGET}/release/lib" "${DRIVER_DIR}/lib"
+fi
 
 if [[ "$TARGET" == *windows* ]]; then
   RUNTIME_DLL="${REPO_DIR}/target/${TARGET}/release/deps/duckdb.dll"

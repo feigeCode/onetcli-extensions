@@ -1,0 +1,49 @@
+#!/usr/bin/env sh
+set -eu
+
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+JAR="$DIR/lib/gbase8s-ipc-driver.jar"
+JDK_HOME="${GBASE8S_JDK_HOME:-${JAVA_HOME:-}}"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --jdk-home|--java-home)
+      if [ "$#" -lt 2 ]; then
+        echo "Missing value for $1" >&2
+        exit 1
+      fi
+      JDK_HOME="$2"
+      shift 2
+      ;;
+    --jdk-home=*|--java-home=*)
+      JDK_HOME="${1#*=}"
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+if [ ! -f "$JAR" ]; then
+  echo "Missing driver jar: $JAR" >&2
+  echo "Run 'bash scripts/build-java-driver.sh gbase8s <target>' before launching the driver." >&2
+  exit 1
+fi
+
+if [ -n "$JDK_HOME" ]; then
+  JAVA_BIN="$JDK_HOME/bin/java"
+  if [ ! -x "$JAVA_BIN" ]; then
+    echo "Java executable not found or not executable: $JAVA_BIN" >&2
+    exit 1
+  fi
+else
+  JAVA_BIN="java"
+fi
+
+cd "$DIR"
+exec "$JAVA_BIN" -jar "$JAR" "$@"
