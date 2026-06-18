@@ -148,6 +148,41 @@ test("IPC driver build metadata declares release and R2 manifest routing", () =>
   }
 });
 
+test("IPC driver form fields include host-required defaults", () => {
+  const ids = fs
+    .readdirSync(path.join(repoRoot, "extensions/ipc"))
+    .filter((id) => fs.existsSync(path.join(repoRoot, "extensions/ipc", id, "driver.json")))
+    .sort();
+  const requiredKeys = [
+    "default_value",
+    "placeholder_i18n_key",
+    "help_i18n_key",
+    "options",
+    "options_source",
+    "visible_when",
+    "default_when",
+    "disabled_when_editing",
+    "rows",
+    "min",
+    "max",
+  ];
+
+  for (const id of ids) {
+    const driverJson = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, "extensions/ipc", id, "driver.json"), "utf8"),
+    );
+    for (const form of driverJson.ui?.form?.forms || []) {
+      for (const tab of form.tabs || []) {
+        for (const field of tab.fields || []) {
+          for (const key of requiredKeys) {
+            assert.ok(Object.hasOwn(field, key), `${id} field ${field.id} missing ${key}`);
+          }
+        }
+      }
+    }
+  }
+});
+
 test("package-driver creates a DuckDB package with executable entry command", () => {
   const workdir = makeTempDir();
   createPackageFixture(workdir);
