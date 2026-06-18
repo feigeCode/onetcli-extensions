@@ -568,6 +568,19 @@ test("upload-r2 workflow exports R2 credentials without AWS STS configuration", 
   assert.match(workflow, /AWS_DEFAULT_REGION:\s+auto\b/);
 });
 
+test("CI workflow routes Rust, Go, and Java extension jobs by language", () => {
+  const workflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/ci.yml"), "utf8");
+
+  assert.match(workflow, /matrix\.language == 'rust'/);
+  assert.match(workflow, /matrix\.language == 'go'/);
+  assert.match(workflow, /matrix\.language == 'java'/);
+  assert.match(workflow, /actions\/setup-go@v5/);
+  assert.match(workflow, /actions\/setup-java@v4/);
+  assert.match(workflow, /scripts\/build-go-driver\.sh/);
+  assert.match(workflow, /scripts\/build-java-driver\.sh/);
+  assert.doesNotMatch(workflow, /name: Test Rust package\n\s+if: \$\{\{ matrix\.package != '' \}\}\n\s+run: cargo test -p \$\{\{ matrix\.package \}\}/);
+});
+
 function makeTempDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "onetcli-extensions-test-"));
   fs.mkdirSync(path.join(dir, "unpacked"), { recursive: true });
