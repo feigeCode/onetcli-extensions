@@ -156,4 +156,12 @@ jobs:
             upload_object "artifacts/${file}" "${R2_PREFIX}/${EXTENSION_VERSION}/${file}" "application/gzip" "public, max-age=31536000, immutable"
             upload_object "artifacts/${file}" "${R2_PREFIX}/latest/${file}" "application/gzip" "public, max-age=300"
           done < upload-assets.txt
-          upload_object "artifacts/extension-manifest.json" "extensions/manifest.json" "application/json; charset=utf-8" "no-cache"
+          existing_manifest="artifacts/existing-extension-manifest.json"
+          merged_manifest="artifacts/merged-extension-manifest.json"
+          aws s3 cp "s3://${CLOUDFLARE_R2_BUCKET}/extensions/manifest.json" "$existing_manifest" \
+            --endpoint-url "$endpoint" || true
+          CURRENT_MANIFEST="artifacts/extension-manifest.json" \
+            EXISTING_MANIFEST="$existing_manifest" \
+            OUTPUT_MANIFEST="$merged_manifest" \
+            node scripts/merge-marketplace-manifest.mjs
+          upload_object "$merged_manifest" "extensions/manifest.json" "application/json; charset=utf-8" "no-cache"

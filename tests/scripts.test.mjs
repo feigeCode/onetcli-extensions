@@ -709,6 +709,64 @@ test("generate-marketplace-manifest uses selected extension metadata", () => {
   );
 });
 
+test("merge-marketplace-manifest replaces current extension and preserves others", () => {
+  const workdir = makeTempDir();
+  copyScript("merge-marketplace-manifest.mjs", workdir);
+  writeJson(path.join(workdir, "existing.json"), {
+    schema_version: 1,
+    release_version: "duckdb-v1.0.0",
+    extensions: [
+      { id: "duckdb", version: "1.0.0" },
+      { id: "dm", version: "0.1.0-old" },
+    ],
+  });
+  writeJson(path.join(workdir, "current.json"), {
+    schema_version: 1,
+    release_version: "dm-v0.1.0",
+    extensions: [{ id: "dm", version: "0.1.0" }],
+  });
+
+  execFileSync("node", [path.join(workdir, "scripts/merge-marketplace-manifest.mjs")], {
+    cwd: workdir,
+    env: {
+      ...process.env,
+      EXISTING_MANIFEST: "existing.json",
+      CURRENT_MANIFEST: "current.json",
+      OUTPUT_MANIFEST: "merged/manifest.json",
+    },
+  });
+
+  const merged = JSON.parse(fs.readFileSync(path.join(workdir, "merged/manifest.json"), "utf8"));
+  assert.equal(merged.release_version, "dm-v0.1.0");
+  assert.deepEqual(merged.extensions, [
+    { id: "dm", version: "0.1.0" },
+    { id: "duckdb", version: "1.0.0" },
+  ]);
+});
+
+test("merge-marketplace-manifest works when no existing R2 manifest is present", () => {
+  const workdir = makeTempDir();
+  copyScript("merge-marketplace-manifest.mjs", workdir);
+  writeJson(path.join(workdir, "current.json"), {
+    schema_version: 1,
+    release_version: "gbase8s-v0.1.0",
+    extensions: [{ id: "gbase8s", version: "0.1.0" }],
+  });
+
+  execFileSync("node", [path.join(workdir, "scripts/merge-marketplace-manifest.mjs")], {
+    cwd: workdir,
+    env: {
+      ...process.env,
+      EXISTING_MANIFEST: "missing.json",
+      CURRENT_MANIFEST: "current.json",
+      OUTPUT_MANIFEST: "manifest.json",
+    },
+  });
+
+  const merged = JSON.parse(fs.readFileSync(path.join(workdir, "manifest.json"), "utf8"));
+  assert.deepEqual(merged.extensions, [{ id: "gbase8s", version: "0.1.0" }]);
+});
+
 test("upload-r2 workflow exports R2 credentials without AWS STS configuration", () => {
   const workflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/upload-r2.yml"), "utf8");
 
@@ -719,6 +777,8 @@ test("upload-r2 workflow exports R2 credentials without AWS STS configuration", 
     /AWS_SECRET_ACCESS_KEY:\s+\$\{\{\s*secrets\.CLOUDFLARE_R2_SECRET_ACCESS_KEY\s*\}\}/,
   );
   assert.match(workflow, /AWS_DEFAULT_REGION:\s+auto\b/);
+  assert.match(workflow, /merge-marketplace-manifest\.mjs/);
+  assert.doesNotMatch(workflow, /upload_object "artifacts\/extension-manifest\.json" "extensions\/manifest\.json"/);
 });
 
 test("CI workflow routes Rust, Go, and Java extension jobs by language", () => {
