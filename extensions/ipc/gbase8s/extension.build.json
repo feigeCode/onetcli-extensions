@@ -12,5 +12,7 @@
     "x86_64-apple-darwin",
     "aarch64-apple-darwin",
     "x86_64-pc-windows-msvc"
-  ]
+  ],
+  "releaseTagPrefix": "gbase8s-v",
+  "r2Prefix": "extensions/gbase8s"
 }

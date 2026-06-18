@@ -131,6 +131,23 @@ test("GBase8s Java IPC driver manifest exposes the full method surface", () => {
   }
 });
 
+test("IPC driver build metadata declares release and R2 manifest routing", () => {
+  const ids = fs
+    .readdirSync(path.join(repoRoot, "extensions/ipc"))
+    .filter((id) =>
+      fs.existsSync(path.join(repoRoot, "extensions/ipc", id, "extension.build.json")),
+    )
+    .sort();
+
+  for (const id of ids) {
+    const metadata = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, "extensions/ipc", id, "extension.build.json"), "utf8"),
+    );
+    assert.equal(metadata.releaseTagPrefix, `${id}-v`, `${id} releaseTagPrefix drifted`);
+    assert.equal(metadata.r2Prefix, `extensions/${id}`, `${id} r2Prefix drifted`);
+  }
+});
+
 test("package-driver creates a DuckDB package with executable entry command", () => {
   const workdir = makeTempDir();
   createPackageFixture(workdir);
