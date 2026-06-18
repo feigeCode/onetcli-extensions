@@ -548,13 +548,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
 name = "extension-driver"
 version = "0.1.0"
-source = "git+https://github.com/feigeCode/onetcli?branch=dev-ipc#64fcc6eca3eeeda2eb595b43cfa199172b18baeb"
+source = "git+https://github.com/feigeCode/onetcli?branch=dev-ipc#f48c15643dd3dc427606182c8fab402c16d1672b"
 dependencies = [
  "anyhow",
  "extension-protocol",
@@ -566,7 +566,7 @@ dependencies = [
 [[package]]
 name = "extension-host"
 version = "0.1.0"
-source = "git+https://github.com/feigeCode/onetcli?branch=dev-ipc#64fcc6eca3eeeda2eb595b43cfa199172b18baeb"
+source = "git+https://github.com/feigeCode/onetcli?branch=dev-ipc#f48c15643dd3dc427606182c8fab402c16d1672b"
 dependencies = [
  "async-trait",
  "extension-protocol",
@@ -582,7 +582,7 @@ dependencies = [
 [[package]]
 name = "extension-protocol"
 version = "0.1.0"
-source = "git+https://github.com/feigeCode/onetcli?branch=dev-ipc#64fcc6eca3eeeda2eb595b43cfa199172b18baeb"
+source = "git+https://github.com/feigeCode/onetcli?branch=dev-ipc#f48c15643dd3dc427606182c8fab402c16d1672b"
 dependencies = [
  "serde",
  "serde_json",
@@ -1263,7 +1263,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1740,7 +1740,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1919,7 +1919,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2021,10 +2021,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.2",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
