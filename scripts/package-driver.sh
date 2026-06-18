@@ -24,7 +24,11 @@ LANGUAGE="$(node -e 'const fs = require("fs"); const data = JSON.parse(fs.readFi
 BIN_STEM="$(node -e 'const fs = require("fs"); const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(data.binary || `${data.id}_driver`);' "$BUILD_METADATA")"
 BIN_NAME="$BIN_STEM"
 if [[ "$TARGET" == *windows* ]]; then
-  BIN_NAME="${BIN_STEM}.exe"
+  if [ "$LANGUAGE" = "java" ]; then
+    BIN_NAME="${BIN_STEM}.cmd"
+  else
+    BIN_NAME="${BIN_STEM}.exe"
+  fi
 fi
 
 SOURCE_BIN="${REPO_DIR}/target/${TARGET}/release/${BIN_NAME}"

@@ -57,7 +57,12 @@ if [ "${#existing_jars[@]}" -eq 0 ]; then
   exit 1
 fi
 
-LAUNCHER="${PROJECT_DIR}/bin/${BIN_STEM}"
+BIN_NAME="$BIN_STEM"
+if [[ "$TARGET" == *windows* ]]; then
+  BIN_NAME="${BIN_STEM}.cmd"
+fi
+
+LAUNCHER="${PROJECT_DIR}/bin/${BIN_NAME}"
 if [ ! -f "$LAUNCHER" ]; then
   echo "Missing Java driver launcher: ${LAUNCHER}" >&2
   exit 1
@@ -66,5 +71,7 @@ fi
 OUT_DIR="${REPO_DIR}/target/${TARGET}/release"
 mkdir -p "${OUT_DIR}/lib"
 cp "${existing_jars[0]}" "${OUT_DIR}/lib/${JAR_NAME}"
-cp "$LAUNCHER" "${OUT_DIR}/${BIN_STEM}"
-chmod +x "${OUT_DIR}/${BIN_STEM}"
+cp "$LAUNCHER" "${OUT_DIR}/${BIN_NAME}"
+if [[ "$TARGET" != *windows* ]]; then
+  chmod +x "${OUT_DIR}/${BIN_NAME}"
+fi
