@@ -47,6 +47,7 @@
     "data/import_abort",
     "stream/read",
     "stream/close",
+    "schema/object_view",
     "schema/databases",
     "schema/schemas",
     "schema/objects",

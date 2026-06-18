@@ -8,6 +8,8 @@ use extension_protocol::method;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
+const SCHEMA_OBJECT_VIEW: &str = "schema/object_view";
+
 #[tokio::test]
 async fn duckdb_driver_declared_methods_are_callable() {
     let (client_stream, server_stream) = tokio::io::duplex(1024 * 1024);
@@ -299,6 +301,31 @@ async fn duckdb_driver_declared_methods_are_callable() {
     .await;
     assert!(columns.iter().any(|column| column["name"] == "id"));
     assert!(columns.iter().any(|column| column["name"] == "amount"));
+
+    let column_view: Value = call(
+        &handle,
+        &timeout,
+        &mut called,
+        SCHEMA_OBJECT_VIEW,
+        json!({
+            "conn_id": conn_id,
+            "view": "columns",
+            "database": database,
+            "schema": "main",
+            "table": "events"
+        }),
+    )
+    .await;
+    assert_eq!(Some("Columns"), column_view["title"].as_str());
+    assert_eq!(Some("name"), column_view["columns"][0]["key"].as_str());
+    assert_eq!(Some("Field"), column_view["columns"][0]["name"].as_str());
+    assert!(
+        column_view["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row[0] == "amount" && row[1] == "INTEGER")
+    );
 
     let views: Vec<Value> = call(
         &handle,

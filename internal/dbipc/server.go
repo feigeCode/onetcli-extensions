@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -98,6 +99,7 @@ func DeclaredMethods() []string {
 		"data/import_abort",
 		"stream/read",
 		"stream/close",
+		"schema/object_view",
 		"schema/databases",
 		"schema/schemas",
 		"schema/objects",
@@ -201,6 +203,8 @@ func (s *Server) Handle(ctx context.Context, req ipc.Message) ipc.Message {
 		return s.handleStreamRead(req)
 	case "stream/close":
 		return s.handleStreamClose(req)
+	case "schema/object_view":
+		return s.handleSchemaObjectView(ctx, req)
 	case "schema/databases":
 		return s.handleSchemaDatabases(ctx, req)
 	case "schema/schemas":
@@ -954,6 +958,218 @@ func (s *Server) handleStreamClose(req ipc.Message) ipc.Message {
 	}
 	delete(s.streams, p.StreamID)
 	return s.ok(req.ID, nil)
+}
+
+type objectViewParams struct {
+	ConnID   uint64 `json:"conn_id"`
+	View     string `json:"view"`
+	Database string `json:"database,omitempty"`
+	Schema   string `json:"schema,omitempty"`
+	Table    string `json:"table,omitempty"`
+}
+
+type objectView struct {
+	Title   string             `json:"title,omitempty"`
+	Columns []objectViewColumn `json:"columns"`
+	Rows    [][]string         `json:"rows"`
+}
+
+type objectViewColumn struct {
+	Key     string   `json:"key"`
+	Name    string   `json:"name"`
+	WidthPx *float64 `json:"width_px,omitempty"`
+	Align   string   `json:"align,omitempty"`
+}
+
+func (s *Server) handleSchemaObjectView(ctx context.Context, req ipc.Message) ipc.Message {
+	var p objectViewParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	conn, ok := s.conns[p.ConnID]
+	if !ok {
+		return s.err(req.ID, ErrUnknownConnID, fmt.Sprintf("unknown conn_id %d", p.ConnID))
+	}
+
+	switch p.View {
+	case "databases":
+		if s.spec.SchemaSQL.Databases == nil {
+			return s.ok(req.ID, objectViewResult("Databases", objectViewColumns("name", "Name"), [][]string{{conn.config.Database}}))
+		}
+		rows, err := queryObjectViewRows(ctx, conn.db, s.spec.SchemaSQL.Databases(conn.config), func(cols []any) []string {
+			return []string{stringCell(cols, 0)}
+		})
+		if err != nil {
+			return s.err(req.ID, ErrSQLSyntax, err.Error())
+		}
+		return s.ok(req.ID, objectViewResult("Databases", objectViewColumns("name", "Name"), rows))
+	case "schemas":
+		if s.spec.SchemaSQL.Schemas == nil {
+			return s.ok(req.ID, objectViewResult("Schemas", objectViewColumns("name", "Name"), [][]string{{conn.config.Username}}))
+		}
+		rows, err := queryObjectViewRows(ctx, conn.db, s.spec.SchemaSQL.Schemas(conn.config, p.Database), func(cols []any) []string {
+			return []string{stringCell(cols, 0), stringCell(cols, 1)}
+		})
+		if err != nil {
+			return s.err(req.ID, ErrSQLSyntax, err.Error())
+		}
+		return s.ok(req.ID, objectViewResult("Schemas", objectViewColumns("name", "Name", "owner", "Owner"), rows))
+	case "tables":
+		return s.handleObjectListView(ctx, req.ID, conn, p, "Tables", []string{"table"})
+	case "views":
+		if s.spec.SchemaSQL.Views == nil {
+			return s.ok(req.ID, objectViewResult("Views", objectViewColumns("name", "Name", "kind", "Kind", "comment", "Comment"), [][]string{}))
+		}
+		rows, err := queryObjectViewRows(ctx, conn.db, s.spec.SchemaSQL.Views(conn.config, p.Database, p.Schema), func(cols []any) []string {
+			return []string{stringCell(cols, 0), stringCell(cols, 1), stringCell(cols, 2)}
+		})
+		if err != nil {
+			return s.err(req.ID, ErrSQLSyntax, err.Error())
+		}
+		return s.ok(req.ID, objectViewResult("Views", objectViewColumns("name", "Name", "kind", "Kind", "comment", "Comment"), rows))
+	case "columns":
+		if p.Table == "" {
+			return s.err(req.ID, ErrInvalidParams, "missing required parameter `table`")
+		}
+		if s.spec.SchemaSQL.Columns == nil {
+			return s.ok(req.ID, objectViewResult("Columns", columnObjectViewColumns(), [][]string{}))
+		}
+		rows, err := queryObjectViewRows(ctx, conn.db, s.spec.SchemaSQL.Columns(conn.config, p.Database, p.Schema, p.Table), func(cols []any) []string {
+			return []string{
+				stringCell(cols, 1),
+				stringCell(cols, 2),
+				fmt.Sprint(boolCell(cols, 3)),
+				stringCell(cols, 4),
+				"",
+			}
+		})
+		if err != nil {
+			return s.err(req.ID, ErrSQLSyntax, err.Error())
+		}
+		return s.ok(req.ID, objectViewResult("Columns", columnObjectViewColumns(), rows))
+	case "indexes":
+		if p.Table == "" {
+			return s.err(req.ID, ErrInvalidParams, "missing required parameter `table`")
+		}
+		if s.spec.SchemaSQL.Indexes == nil {
+			return s.ok(req.ID, objectViewResult("Indexes", indexObjectViewColumns(), [][]string{}))
+		}
+		rows, err := queryObjectViewRows(ctx, conn.db, s.spec.SchemaSQL.Indexes(conn.config, p.Database, p.Schema, p.Table), func(cols []any) []string {
+			return []string{
+				stringCell(cols, 0),
+				strings.Join(splitListCell(cols, 1), ", "),
+				fmt.Sprint(boolCell(cols, 2)),
+				fmt.Sprint(boolCell(cols, 3)),
+				stringCell(cols, 4),
+			}
+		})
+		if err != nil {
+			return s.err(req.ID, ErrSQLSyntax, err.Error())
+		}
+		return s.ok(req.ID, objectViewResult("Indexes", indexObjectViewColumns(), rows))
+	case "functions":
+		if s.spec.SchemaSQL.Functions == nil {
+			return s.ok(req.ID, objectViewResult("Functions", objectViewColumns("name", "Name", "returns", "Returns", "language", "Language", "comment", "Comment"), [][]string{}))
+		}
+		rows, err := queryObjectViewRows(ctx, conn.db, s.spec.SchemaSQL.Functions(conn.config, p.Database, p.Schema), func(cols []any) []string {
+			return []string{stringCell(cols, 0), stringCell(cols, 2), stringCell(cols, 3), stringCell(cols, 4)}
+		})
+		if err != nil {
+			return s.err(req.ID, ErrSQLSyntax, err.Error())
+		}
+		return s.ok(req.ID, objectViewResult("Functions", objectViewColumns("name", "Name", "returns", "Returns", "language", "Language", "comment", "Comment"), rows))
+	case "procedures", "triggers", "sequences":
+		return s.ok(req.ID, objectViewResult(titleForObjectView(p.View), objectViewColumns("name", "Name"), [][]string{}))
+	default:
+		return s.err(req.ID, ErrNotSupported, fmt.Sprintf("unsupported object view %q", p.View))
+	}
+}
+
+func (s *Server) handleObjectListView(ctx context.Context, id json.RawMessage, conn *connectionState, p objectViewParams, title string, kinds []string) ipc.Message {
+	columns := objectViewColumns("name", "Name", "kind", "Kind", "comment", "Comment")
+	if s.spec.SchemaSQL.Objects == nil {
+		return s.ok(id, objectViewResult(title, columns, [][]string{}))
+	}
+	rows, err := queryObjectViewRows(ctx, conn.db, s.spec.SchemaSQL.Objects(conn.config, p.Database, p.Schema, kinds), func(cols []any) []string {
+		return []string{stringCell(cols, 0), stringCell(cols, 1), stringCell(cols, 2)}
+	})
+	if err != nil {
+		return s.err(id, ErrSQLSyntax, err.Error())
+	}
+	return s.ok(id, objectViewResult(title, columns, rows))
+}
+
+func queryObjectViewRows(ctx context.Context, db *sql.DB, sqlText string, mapRow func([]any) []string) ([][]string, error) {
+	rows, err := db.QueryContext(ctx, sqlText)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	out := [][]string{}
+	for rows.Next() {
+		values := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range values {
+			ptrs[i] = &values[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return nil, err
+		}
+		out = append(out, mapRow(values))
+	}
+	return out, rows.Err()
+}
+
+func objectViewResult(title string, columns []objectViewColumn, rows [][]string) objectView {
+	return objectView{Title: title, Columns: columns, Rows: rows}
+}
+
+func columnObjectViewColumns() []objectViewColumn {
+	return []objectViewColumn{
+		objectViewColumnWithWidth("name", "Field", 220, ""),
+		objectViewColumnWithWidth("type", "Type", 160, ""),
+		objectViewColumnWithWidth("nullable", "Null?", 72, "right"),
+		objectViewColumnWithWidth("default", "Default", 180, ""),
+		objectViewColumnWithWidth("comment", "Comment", 260, ""),
+	}
+}
+
+func indexObjectViewColumns() []objectViewColumn {
+	return []objectViewColumn{
+		objectViewColumnWithWidth("name", "Name", 220, ""),
+		objectViewColumnWithWidth("columns", "Columns", 220, ""),
+		objectViewColumnWithWidth("unique", "Unique?", 90, "right"),
+		objectViewColumnWithWidth("primary", "Primary?", 90, "right"),
+		objectViewColumnWithWidth("type", "Type", 140, ""),
+	}
+}
+
+func objectViewColumns(values ...string) []objectViewColumn {
+	columns := make([]objectViewColumn, 0, len(values)/2)
+	for i := 0; i+1 < len(values); i += 2 {
+		columns = append(columns, objectViewColumnWithWidth(values[i], values[i+1], 0, ""))
+	}
+	return columns
+}
+
+func objectViewColumnWithWidth(key, name string, width float64, align string) objectViewColumn {
+	var widthPtr *float64
+	if width > 0 {
+		widthPtr = &width
+	}
+	return objectViewColumn{Key: key, Name: name, WidthPx: widthPtr, Align: align}
+}
+
+func titleForObjectView(view string) string {
+	if view == "" {
+		return ""
+	}
+	return strings.ToUpper(view[:1]) + view[1:]
 }
 
 func (s *Server) handleSchemaDatabases(ctx context.Context, req ipc.Message) ipc.Message {

@@ -43,6 +43,7 @@ Minimal shape:
     "query/start",
     "cursor/fetch",
     "cursor/close",
+    "schema/object_view",
     "schema/databases",
     "schema/schemas",
     "schema/objects",
@@ -84,6 +85,7 @@ Rules:
 - Standard method names must be known by `extension_protocol::method::ALL_METHODS`.
 - Private extension methods must use the `x/...` namespace.
 - A declared method can still return a typed unsupported error for a database-specific limitation, but it should not be missing from the dispatcher by accident.
+- `schema/object_view` is optional. Add it only after the runtime can return the custom table shape or typed not-supported for unsupported views.
 - Keep `driver.json.methods`, dispatcher match arms, and tests in sync.
 
 Common starter set:
@@ -100,6 +102,7 @@ Common starter set:
   "cursor/fetch",
   "cursor/close",
   "exec/run",
+  "schema/object_view",
   "schema/databases",
   "schema/schemas",
   "schema/objects",

@@ -53,6 +53,7 @@ test("Go IPC driver manifests expose the full shared method surface", () => {
     "data/import_abort",
     "stream/read",
     "stream/close",
+    "schema/object_view",
     "schema/databases",
     "schema/schemas",
     "schema/objects",
@@ -125,6 +126,7 @@ test("GBase8s Java IPC driver manifest exposes the full method surface", () => {
     "data/import_abort",
     "stream/read",
     "stream/close",
+    "schema/object_view",
     "schema/dump_ddl",
   ]) {
     assert.ok(driverJson.methods.includes(method), `gbase8s methods missing ${method}`);

@@ -105,6 +105,9 @@ public final class GBase8sIpcServer {
         if ("schema/objects".equals(method)) {
             return handleSchemaObjects(id, params);
         }
+        if ("schema/object_view".equals(method)) {
+            return handleSchemaObjectView(id, params);
+        }
         if ("schema/columns".equals(method)) {
             return handleSchemaColumns(id, params);
         }
@@ -217,7 +220,7 @@ public final class GBase8sIpcServer {
             "tx/begin", "tx/commit", "tx/rollback", "tx/savepoint", "tx/release",
             "ddl/build", "ddl/build_create_table", "ddl/build_alter_table", "ddl/build_drop",
             "data/export", "data/import_begin", "data/import_chunk", "data/import_commit", "data/import_abort",
-            "stream/read", "stream/close", "schema/databases", "schema/schemas", "schema/objects",
+            "stream/read", "stream/close", "schema/object_view", "schema/databases", "schema/schemas", "schema/objects",
             "schema/columns", "schema/indexes", "schema/foreign_keys", "schema/checks", "schema/views",
             "schema/functions", "schema/procedures", "schema/triggers", "schema/sequences", "schema/types",
             "schema/view_definition", "schema/dump_ddl"
@@ -391,7 +394,7 @@ public final class GBase8sIpcServer {
         );
         List<Map<String, Object>> result = new ArrayList<Map<String, Object>>();
         for (List<Map<String, Object>> row : query.getRows()) {
-            String rawType = rowString(row, 2);
+            String rawType = gbase8sColumnType(rowString(row, 2));
             Map<String, Object> column = new LinkedHashMap<String, Object>();
             column.put("ordinal", Integer.valueOf(rowInt(row, 0)));
             column.put("name", rowString(row, 1));
@@ -437,6 +440,147 @@ public final class GBase8sIpcServer {
             result.add(view);
         }
         return ok(id, result);
+    }
+
+    private JsonNode handleSchemaObjectView(JsonNode id, JsonNode params) throws SQLException {
+        ConnectionState state = requireConnection(id, requiredLong(params, "conn_id"));
+        if (state == null) {
+            return lastError;
+        }
+        String view = requiredText(params, "view");
+        String database = optionalText(params, "database", state.config.getDatabase());
+        String schema = optionalText(params, "schema", "");
+        if ("databases".equals(view)) {
+            QueryResult query = queryRunner.queryBuffered(state.connection, GBase8sSchemaSql.databasesSql(), null, null);
+            List<List<String>> rows = new ArrayList<List<String>>();
+            for (List<Map<String, Object>> row : query.getRows()) {
+                rows.add(rowValues(rowString(row, 0)));
+            }
+            return ok(id, objectView("Databases", objectViewColumns("name", "Name"), rows));
+        }
+        if ("schemas".equals(view)) {
+            QueryResult query = queryRunner.queryBuffered(state.connection, GBase8sSchemaSql.schemasSql(database), null, null);
+            List<List<String>> rows = new ArrayList<List<String>>();
+            for (List<Map<String, Object>> row : query.getRows()) {
+                rows.add(rowValues(rowString(row, 0), rowString(row, 1)));
+            }
+            return ok(id, objectView("Schemas", objectViewColumns("name", "Name", "owner", "Owner"), rows));
+        }
+        if ("tables".equals(view)) {
+            QueryResult query = queryRunner.queryBuffered(
+                state.connection,
+                GBase8sSchemaSql.objectsSql(database, schema, java.util.Collections.singletonList("table")),
+                null,
+                null
+            );
+            List<List<String>> rows = new ArrayList<List<String>>();
+            for (List<Map<String, Object>> row : query.getRows()) {
+                rows.add(rowValues(rowString(row, 0), rowString(row, 1), rowString(row, 2)));
+            }
+            return ok(id, objectView("Tables", objectViewColumns("name", "Name", "kind", "Kind", "comment", "Comment"), rows));
+        }
+        if ("views".equals(view)) {
+            QueryResult query = queryRunner.queryBuffered(state.connection, GBase8sSchemaSql.viewsSql(database, schema), null, null);
+            List<List<String>> rows = new ArrayList<List<String>>();
+            for (List<Map<String, Object>> row : query.getRows()) {
+                rows.add(rowValues(rowString(row, 0), rowString(row, 1), ""));
+            }
+            return ok(id, objectView("Views", objectViewColumns("name", "Name", "kind", "Kind", "comment", "Comment"), rows));
+        }
+        if ("columns".equals(view)) {
+            String table = requiredText(params, "table");
+            QueryResult query = queryRunner.queryBuffered(
+                state.connection,
+                GBase8sSchemaSql.columnsSql(database, schema, table),
+                null,
+                null
+            );
+            List<List<String>> rows = new ArrayList<List<String>>();
+            for (List<Map<String, Object>> row : query.getRows()) {
+                rows.add(rowValues(
+                    rowString(row, 1),
+                    gbase8sColumnType(rowString(row, 2)),
+                    Boolean.toString(nullable(rowString(row, 3))),
+                    rowString(row, 4),
+                    ""
+                ));
+            }
+            return ok(id, objectView("Columns", columnObjectViewColumns(), rows));
+        }
+        if ("indexes".equals(view)) {
+            return ok(id, objectView("Indexes", indexObjectViewColumns(), new ArrayList<List<String>>()));
+        }
+        if ("functions".equals(view)) {
+            return ok(id, objectView("Functions", objectViewColumns("name", "Name", "returns", "Returns", "language", "Language", "comment", "Comment"), new ArrayList<List<String>>()));
+        }
+        if ("procedures".equals(view) || "triggers".equals(view) || "sequences".equals(view)) {
+            return ok(id, objectView(titleForObjectView(view), objectViewColumns("name", "Name"), new ArrayList<List<String>>()));
+        }
+        return error(id, ProtocolError.NOT_SUPPORTED, "unsupported object view: " + view);
+    }
+
+    private Map<String, Object> objectView(String title, List<Map<String, Object>> columns, List<List<String>> rows) {
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("title", title);
+        result.put("columns", columns);
+        result.put("rows", rows);
+        return result;
+    }
+
+    private List<Map<String, Object>> columnObjectViewColumns() {
+        List<Map<String, Object>> columns = new ArrayList<Map<String, Object>>();
+        columns.add(objectViewColumn("name", "Field", 220, ""));
+        columns.add(objectViewColumn("type", "Type", 160, ""));
+        columns.add(objectViewColumn("nullable", "Null?", 72, "right"));
+        columns.add(objectViewColumn("default", "Default", 180, ""));
+        columns.add(objectViewColumn("comment", "Comment", 260, ""));
+        return columns;
+    }
+
+    private List<Map<String, Object>> indexObjectViewColumns() {
+        List<Map<String, Object>> columns = new ArrayList<Map<String, Object>>();
+        columns.add(objectViewColumn("name", "Name", 220, ""));
+        columns.add(objectViewColumn("columns", "Columns", 220, ""));
+        columns.add(objectViewColumn("unique", "Unique?", 90, "right"));
+        columns.add(objectViewColumn("primary", "Primary?", 90, "right"));
+        columns.add(objectViewColumn("type", "Type", 140, ""));
+        return columns;
+    }
+
+    private List<Map<String, Object>> objectViewColumns(String... values) {
+        List<Map<String, Object>> columns = new ArrayList<Map<String, Object>>();
+        for (int i = 0; i + 1 < values.length; i += 2) {
+            columns.add(objectViewColumn(values[i], values[i + 1], 0, ""));
+        }
+        return columns;
+    }
+
+    private Map<String, Object> objectViewColumn(String key, String name, int width, String align) {
+        Map<String, Object> column = new LinkedHashMap<String, Object>();
+        column.put("key", key);
+        column.put("name", name);
+        if (width > 0) {
+            column.put("width_px", Integer.valueOf(width));
+        }
+        if (align != null && align.length() > 0) {
+            column.put("align", align);
+        }
+        return column;
+    }
+
+    private List<String> rowValues(String... values) {
+        List<String> row = new ArrayList<String>();
+        for (String value : values) {
+            row.add(value == null ? "" : value);
+        }
+        return row;
+    }
+
+    private String titleForObjectView(String view) {
+        if (view == null || view.length() == 0) {
+            return "";
+        }
+        return view.substring(0, 1).toUpperCase() + view.substring(1);
     }
 
     private JsonNode handleQueryStart(JsonNode id, JsonNode params) throws SQLException {
@@ -1074,6 +1218,59 @@ public final class GBase8sIpcServer {
             return false;
         }
         return true;
+    }
+
+    private String gbase8sColumnType(String value) {
+        int code;
+        try {
+            code = Integer.parseInt(value == null ? "" : value.trim());
+        } catch (NumberFormatException error) {
+            return value == null ? "" : value;
+        }
+        switch (code & 255) {
+            case 0:
+                return "CHAR";
+            case 1:
+                return "SMALLINT";
+            case 2:
+                return "INTEGER";
+            case 3:
+                return "FLOAT";
+            case 4:
+                return "SMALLFLOAT";
+            case 5:
+                return "DECIMAL";
+            case 6:
+                return "SERIAL";
+            case 7:
+                return "DATE";
+            case 8:
+                return "MONEY";
+            case 10:
+                return "DATETIME";
+            case 11:
+                return "BYTE";
+            case 12:
+                return "TEXT";
+            case 13:
+                return "VARCHAR";
+            case 14:
+                return "INTERVAL";
+            case 15:
+                return "NCHAR";
+            case 16:
+                return "NVARCHAR";
+            case 17:
+                return "INT8";
+            case 18:
+                return "SERIAL8";
+            case 23:
+                return "BOOLEAN";
+            case 40:
+                return "LVARCHAR";
+            default:
+                return value == null ? "" : value;
+        }
     }
 
     private String textOrEmpty(JsonNode node) {

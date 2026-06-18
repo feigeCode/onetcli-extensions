@@ -11,6 +11,7 @@ public final class ProtocolError {
     public static final int UNKNOWN_CURSOR_ID = -32008;
     public static final int CONNECTION_FAILED = -33001;
     public static final int SQL_SYNTAX = -34001;
+    public static final int NOT_SUPPORTED = -35001;
 
     private ProtocolError() {
     }

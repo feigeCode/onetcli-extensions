@@ -36,6 +36,7 @@ use extension_protocol::schema::{
     FunctionInfo, FunctionsParams, IndexInfo, IndexesParams, ObjectInfo, ObjectKind, ObjectsParams,
     SchemaInfo, SchemasParams, ViewInfo, ViewsParams,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::builtin_functions::DUCKDB_BUILTIN_FUNCTIONS;
@@ -54,6 +55,7 @@ const MAX_CURSOR_FETCH_SIZE: u32 = 10_000;
 const DEFAULT_STREAM_READ_BYTES: usize = 64 * 1024;
 const MAX_STREAM_READ_BYTES: usize = 1024 * 1024;
 const EXPORT_FETCH_ROWS: u32 = 1_000;
+pub const SCHEMA_OBJECT_VIEW: &str = "schema/object_view";
 
 // ===================== Lifecycle =====================
 
@@ -1315,6 +1317,243 @@ pub fn handle_schema_indexes(
     serde_json::to_value(out).map_err(params_deserialize_error)
 }
 
+pub fn handle_schema_object_view(
+    state: &mut ConnectionState,
+    params: &Value,
+) -> Result<Value, ProtocolError> {
+    let p: ObjectViewParams =
+        serde_json::from_value(params.clone()).map_err(params_deserialize_error)?;
+    let view = match p.view.as_str() {
+        "databases" => {
+            let params = serde_json::json!({ "conn_id": p.conn_id });
+            let rows: Vec<DatabaseInfo> =
+                serde_json::from_value(handle_schema_databases(state, &params)?)
+                    .map_err(params_deserialize_error)?;
+            ObjectView::new(
+                "Databases",
+                vec![
+                    object_view_column("name", "Name", Some(220.0), None),
+                    object_view_column("comment", "Comment", Some(260.0), None),
+                ],
+                rows.into_iter()
+                    .map(|row| vec![row.name, row.comment])
+                    .collect(),
+            )
+        }
+        "schemas" => {
+            let params = serde_json::json!({ "conn_id": p.conn_id, "database": p.database.unwrap_or_default() });
+            let rows: Vec<SchemaInfo> =
+                serde_json::from_value(handle_schema_schemas(state, &params)?)
+                    .map_err(params_deserialize_error)?;
+            ObjectView::new(
+                "Schemas",
+                vec![
+                    object_view_column("name", "Name", Some(220.0), None),
+                    object_view_column("owner", "Owner", Some(160.0), None),
+                    object_view_column("comment", "Comment", Some(260.0), None),
+                ],
+                rows.into_iter()
+                    .map(|row| vec![row.name, row.owner.unwrap_or_default(), row.comment])
+                    .collect(),
+            )
+        }
+        "tables" => object_view_from_objects(state, &p, "Tables", ObjectKind::Table)?,
+        "views" => {
+            let params = serde_json::json!({ "conn_id": p.conn_id, "database": p.database, "schema": p.schema });
+            let rows: Vec<ViewInfo> = serde_json::from_value(handle_schema_views(state, &params)?)
+                .map_err(params_deserialize_error)?;
+            ObjectView::new(
+                "Views",
+                vec![
+                    object_view_column("name", "Name", Some(220.0), None),
+                    object_view_column("kind", "Kind", Some(140.0), None),
+                    object_view_column("comment", "Comment", Some(260.0), None),
+                ],
+                rows.into_iter()
+                    .map(|row| vec![row.name, row.kind.as_str().to_string(), row.comment])
+                    .collect(),
+            )
+        }
+        "columns" => {
+            let table = p.table.clone().unwrap_or_default();
+            let params = serde_json::json!({
+                "conn_id": p.conn_id,
+                "database": p.database,
+                "schema": p.schema,
+                "table": table,
+            });
+            let rows: Vec<ColumnInfo> =
+                serde_json::from_value(handle_schema_columns(state, &params)?)
+                    .map_err(params_deserialize_error)?;
+            ObjectView::new(
+                "Columns",
+                vec![
+                    object_view_column("name", "Field", Some(220.0), None),
+                    object_view_column("type", "Type", Some(160.0), None),
+                    object_view_column("nullable", "Null?", Some(72.0), Some("right")),
+                    object_view_column("default", "Default", Some(180.0), None),
+                    object_view_column("comment", "Comment", Some(260.0), None),
+                ],
+                rows.into_iter()
+                    .map(|row| {
+                        vec![
+                            row.name,
+                            row.type_str,
+                            row.nullable.to_string(),
+                            row.default.unwrap_or_default(),
+                            row.comment,
+                        ]
+                    })
+                    .collect(),
+            )
+        }
+        "indexes" => {
+            let table = p.table.clone().unwrap_or_default();
+            let params = serde_json::json!({
+                "conn_id": p.conn_id,
+                "database": p.database,
+                "schema": p.schema,
+                "table": table,
+            });
+            let rows: Vec<IndexInfo> =
+                serde_json::from_value(handle_schema_indexes(state, &params)?)
+                    .map_err(params_deserialize_error)?;
+            ObjectView::new(
+                "Indexes",
+                vec![
+                    object_view_column("name", "Name", Some(220.0), None),
+                    object_view_column("columns", "Columns", Some(220.0), None),
+                    object_view_column("unique", "Unique?", Some(90.0), Some("right")),
+                    object_view_column("primary", "Primary?", Some(90.0), Some("right")),
+                    object_view_column("type", "Type", Some(140.0), None),
+                ],
+                rows.into_iter()
+                    .map(|row| {
+                        vec![
+                            row.name,
+                            row.columns.join(", "),
+                            row.is_unique.to_string(),
+                            row.is_primary.to_string(),
+                            row.kind.unwrap_or_default(),
+                        ]
+                    })
+                    .collect(),
+            )
+        }
+        "functions" => {
+            let params = serde_json::json!({ "conn_id": p.conn_id, "database": p.database, "schema": p.schema });
+            let rows: Vec<FunctionInfo> =
+                serde_json::from_value(handle_schema_functions(state, &params)?)
+                    .map_err(params_deserialize_error)?;
+            ObjectView::new(
+                "Functions",
+                vec![
+                    object_view_column("name", "Name", Some(220.0), None),
+                    object_view_column("returns", "Returns", Some(160.0), None),
+                    object_view_column("language", "Language", Some(120.0), None),
+                    object_view_column("comment", "Comment", Some(260.0), None),
+                ],
+                rows.into_iter()
+                    .map(|row| {
+                        vec![
+                            row.name,
+                            row.return_type.unwrap_or_default(),
+                            row.language.unwrap_or_default(),
+                            row.comment,
+                        ]
+                    })
+                    .collect(),
+            )
+        }
+        other => {
+            return Err(ProtocolError::new(
+                error_codes::METHOD_NOT_FOUND,
+                format!("unsupported object view: {other}"),
+            ));
+        }
+    };
+    serde_json::to_value(view).map_err(params_deserialize_error)
+}
+
+fn object_view_from_objects(
+    state: &mut ConnectionState,
+    p: &ObjectViewParams,
+    title: &str,
+    kind: ObjectKind,
+) -> Result<ObjectView, ProtocolError> {
+    let params = serde_json::json!({
+        "conn_id": p.conn_id,
+        "database": p.database,
+        "schema": p.schema,
+        "kinds": [kind.as_str()],
+    });
+    let rows: Vec<ObjectInfo> = serde_json::from_value(handle_schema_objects(state, &params)?)
+        .map_err(params_deserialize_error)?;
+    Ok(ObjectView::new(
+        title,
+        vec![
+            object_view_column("name", "Name", Some(220.0), None),
+            object_view_column("comment", "Comment", Some(260.0), None),
+        ],
+        rows.into_iter()
+            .map(|row| vec![row.name, row.comment])
+            .collect(),
+    ))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ObjectViewParams {
+    conn_id: ConnId,
+    view: String,
+    #[serde(default)]
+    database: Option<String>,
+    #[serde(default)]
+    schema: Option<String>,
+    #[serde(default)]
+    table: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ObjectView {
+    title: String,
+    columns: Vec<ObjectViewColumn>,
+    rows: Vec<Vec<String>>,
+}
+
+impl ObjectView {
+    fn new(title: &str, columns: Vec<ObjectViewColumn>, rows: Vec<Vec<String>>) -> Self {
+        Self {
+            title: title.to_string(),
+            columns,
+            rows,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ObjectViewColumn {
+    key: String,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    width_px: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    align: Option<String>,
+}
+
+fn object_view_column(
+    key: &str,
+    name: &str,
+    width_px: Option<f64>,
+    align: Option<&str>,
+) -> ObjectViewColumn {
+    ObjectViewColumn {
+        key: key.to_string(),
+        name: name.to_string(),
+        width_px,
+        align: align.map(str::to_string),
+    }
+}
+
 pub fn handle_schema_checks(
     state: &mut ConnectionState,
     params: &Value,
@@ -1460,6 +1699,7 @@ fn declared_methods() -> &'static [&'static str] {
         method::DATA_IMPORT_ABORT,
         method::STREAM_READ,
         method::STREAM_CLOSE,
+        SCHEMA_OBJECT_VIEW,
         method::SCHEMA_DATABASES,
         method::SCHEMA_SCHEMAS,
         method::SCHEMA_OBJECTS,

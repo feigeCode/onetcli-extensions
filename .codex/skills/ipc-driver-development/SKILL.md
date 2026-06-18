@@ -37,6 +37,7 @@ Load only the relevant reference file:
 ## Required Guardrails
 
 - Treat `driver.json.methods` as a contract. If a method is listed, the binary must route it or intentionally return a typed unsupported error.
+- Treat `schema/object_view` as the custom object-panel table contract. Declare it only when the driver can return `{title, columns, rows}` for the views it owns; return typed not-supported/method-not-found for unsupported views so the host can fall back to legacy metadata rendering.
 - Treat `driver.json.dialect` as the host-side SQL generation contract. It controls external plugin identifier quoting, pagination, boolean literals, explain fallback, and compatible DDL fallback.
 - Treat `driver.json.connection` as the host-side physical connection lifecycle contract. Single-file/single-connection engines must announce that policy there; do not special-case names such as `duckdb` in `ConnectionManager` or IPC connection code.
 - Treat top-level `driver.json.category` as the host-side external driver grouping contract. Use `"domestic_database"` for国产数据库 drivers that should appear in the 国产数据库 sidebar group; omit it for ordinary external database drivers.
@@ -56,6 +57,7 @@ Load only the relevant reference file:
 | Hardcoding single-file locking behavior in the host for one driver id | Declare `connection.single_file`, `single_connection`, `close_on_release`, and `path_fields` in the manifest so the plugin reports lifecycle policy. |
 | Hardcoding 国产数据库 ids in the host UI | Declare `"category": "domestic_database"` at the top level of each matching external driver manifest. |
 | Returning table names without schema/catalog context | Preserve database, schema, and object names as distinct fields. |
+| Declaring `schema/object_view` without dispatch/tests | Add a connection-scoped route, init/manifest declaration, and tests for at least one rendered view shape. |
 | Treating `information_schema` as a normal user schema bug | Include it when the backend supports it; qualify queries correctly. |
 | Mixing SQL generation with execution | Keep DDL builders pure and let the host decide preview/execution timing. |
 | Assuming Rust-only implementation | Reuse Rust SDKs when in Rust; otherwise implement the same JSON-RPC contract in the chosen language. |

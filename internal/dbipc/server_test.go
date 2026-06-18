@@ -704,6 +704,55 @@ func TestSchemaObjectsUsesDriverSQLAndReturnsKind(t *testing.T) {
 	}
 }
 
+func TestSchemaObjectViewColumnsUsesDriverSQL(t *testing.T) {
+	driverName, state := registerStreamingDriver(t, [][]driver.Value{
+		{int64(1), "id", "BIGINT", "NO", nil},
+		{int64(2), "name", "VARCHAR", "YES", "untitled"},
+	})
+	state.columns = []string{"ordinal", "column_name", "data_type", "is_nullable", "column_default"}
+	spec := testSpecWithSQLDriver(driverName)
+	spec.SchemaSQL.Columns = func(cfg Config, database, schema, table string) string {
+		if database != "main" || schema != "app" || table != "demo" {
+			t.Fatalf("columns params = database:%q schema:%q table:%q", database, schema, table)
+		}
+		return "SELECT ordinal, column_name, data_type, is_nullable, column_default FROM test_columns"
+	}
+	server := NewServer(spec, nil)
+	server.initialized = true
+
+	connID := openTestConn(t, server)
+	resp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "schema/object_view",
+		Params:  []byte(fmt.Sprintf(`{"conn_id":%d,"view":"columns","database":"main","schema":"app","table":"demo"}`, connID)),
+	})
+	if resp.Error != nil {
+		t.Fatalf("schema/object_view returned error: %#v", resp.Error)
+	}
+
+	var result struct {
+		Title   string `json:"title"`
+		Columns []struct {
+			Key     string   `json:"key"`
+			Name    string   `json:"name"`
+			WidthPx *float64 `json:"width_px"`
+			Align   string   `json:"align,omitempty"`
+		} `json:"columns"`
+		Rows [][]string `json:"rows"`
+	}
+	decodeResult(t, resp, &result)
+	if result.Title != "Columns" {
+		t.Fatalf("title = %q", result.Title)
+	}
+	if len(result.Columns) != 5 || result.Columns[0].Key != "name" || result.Columns[0].Name != "Field" {
+		t.Fatalf("columns = %#v", result.Columns)
+	}
+	if len(result.Rows) != 2 || result.Rows[0][0] != "id" || result.Rows[0][1] != "BIGINT" || result.Rows[0][2] != "false" {
+		t.Fatalf("rows = %#v", result.Rows)
+	}
+}
+
 func TestSchemaIndexesUsesDriverSQL(t *testing.T) {
 	driverName, state := registerStreamingDriver(t, [][]driver.Value{
 		{"idx_demo_name", "id,name", "YES", "NO", "btree"},

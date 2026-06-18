@@ -90,6 +90,7 @@ Important params:
 - `schema/databases`: `{ "conn_id": number }`
 - `schema/schemas`: `{ "conn_id": number, "database": string }`
 - `schema/objects`: `{ "conn_id": number, "database"?: string, "schema"?: string, "kinds": [...] }`
+- `schema/object_view`: `{ "conn_id": number, "view": "databases" | "schemas" | "tables" | "columns" | "indexes" | "views" | "functions" | "procedures" | "triggers" | "sequences", "database"?: string, "schema"?: string, "table"?: string }`
 - `schema/columns`: `{ "conn_id": number, "database"?: string, "schema"?: string, "table": string }`
 
 Important result fields:
@@ -98,6 +99,9 @@ Important result fields:
 - Schema: `name`, optional `owner`, `comment`, `extra`
 - Object: `name`, `kind`, optional `row_count_estimate`, `size_bytes`, timestamps, `comment`, `extra`
 - Column: `ordinal`, `name`, `type`, `raw_type`, `nullable`, `default`, primary/unique flags, numeric/string sizing, `comment`, `extra`
+- Object view: `{ "title"?: string, "columns": [{ "key": string, "name": string, "width_px"?: number, "align"?: "left" | "center" | "right" }], "rows": string[][] }`
+
+`schema/object_view` is connection-bound and customizes the object-list table before the host falls back to fixed legacy mappings. Declare it only when routed. If the method is absent or returns typed not-supported/method-not-found for a view, the host uses legacy `schema/databases`, `schema/objects`, `schema/columns`, `schema/indexes`, etc. Keep the first column as the object name when rows are clickable database objects.
 
 Catalog rules:
 

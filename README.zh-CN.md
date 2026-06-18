@@ -4,34 +4,87 @@ English version: [README.md](README.md)
 
 `onetcli` 官方一方扩展仓库。
 
-本仓库用于独立构建和发布扩展包，不跟随主应用 `onetcli` 的发布流程。主应用继续负责扩展运行时、扩展市场客户端、更新客户端以及 SDK/运行时协议；本仓库负责官方扩展源码、发布产物、扩展市场 manifest 条目和 Cloudflare R2 上传自动化。
+本仓库用于独立构建和发布官方扩展包，不跟随主应用 `onetcli` 的发布流程。主应用继续负责扩展运行时、扩展市场客户端、更新客户端以及 SDK/运行时协议；本仓库负责官方扩展源码、发布产物、扩展市场 manifest 条目和 Cloudflare R2 上传自动化。
 
 ## 当前内容
 
 ```text
 extensions/
   ipc/
-    duckdb/
-      extension.build.json
-      driver.json
-      locales/
-      src/
+    duckdb/       Rust DuckDB IPC 数据库驱动
+    iotdb/        Rust Apache IoTDB IPC 数据库驱动
+    dm/           Go 达梦 DM IPC 数据库驱动
+    kingbase/     Go KingbaseES IPC 数据库驱动
+    gbase8s/      Java GBase 8s IPC 数据库驱动
+java/
+  gbase8s-ipc-driver/
+internal/
+  dbipc/          Go IPC 数据库驱动共享运行时
 manifest/
   entries/
 scripts/
+  build-go-driver.sh
+  build-java-driver.sh
   changed-extensions.mjs
   generate-marketplace-manifest.mjs
   package-driver.sh
   verify-package.sh
 tests/
   scripts.test.mjs
+.codex/
+  skills/ipc-driver-development/
 ```
 
-当前第一个扩展是 DuckDB IPC 数据库驱动，位于 `extensions/ipc/duckdb`。
+根目录下重复的 `ipc-driver-development/` skill 目录不再使用。驱动开发说明只保留在 `.codex/skills/ipc-driver-development/`。
+
+## 驱动矩阵
+
+| 驱动 | 运行时 | 构建元数据 | Manifest | 说明 |
+| --- | --- | --- | --- | --- |
+| DuckDB | Rust | `extensions/ipc/duckdb/extension.build.json` | `extensions/ipc/duckdb/driver.json` | 嵌入式单文件数据库驱动。 |
+| Apache IoTDB | Rust | `extensions/ipc/iotdb/extension.build.json` | `extensions/ipc/iotdb/driver.json` | 时序数据库驱动。 |
+| 达梦 DM | Go | `extensions/ipc/dm/extension.build.json` | `extensions/ipc/dm/driver.json` | 复用 `internal/dbipc` 共享运行时，并使用驱动专用 build tags。 |
+| KingbaseES | Go | `extensions/ipc/kingbase/extension.build.json` | `extensions/ipc/kingbase/driver.json` | 复用 `internal/dbipc` 共享运行时，并使用驱动专用 build tags。 |
+| GBase 8s | Java | `extensions/ipc/gbase8s/extension.build.json` | `extensions/ipc/gbase8s/driver.json` | 使用 `java/gbase8s-ipc-driver`。如果存在 `java/gbase8s-ipc-driver/bin/lib/gbase8s-ipc-driver.jar`，需要保留。 |
+
+国产数据库驱动在 `driver.json` 中声明 `"category": "domestic_database"`；host 侧应该使用 manifest 元数据做 UI 分组，不要硬编码具体驱动 id。
+
+## 协议能力
+
+每个驱动都在 `driver.json.methods` 中声明可调用方法，并且应该在 `init` 返回中暴露同一组方法。这个列表是运行时契约：只要声明了某个方法，二进制就必须路由它，或者有意返回类型化 unsupported 错误。
+
+当前 IPC 驱动通过 legacy 固定方法暴露 schema metadata，例如：
+
+- `schema/databases`
+- `schema/schemas`
+- `schema/objects`
+- `schema/columns`
+- `schema/indexes`
+- `schema/views`
+- `schema/functions`
+
+需要自定义对象列表表头的驱动还会声明 `schema/object_view`。该方法是 connection-bound，返回 host 应渲染的完整表格形状：
+
+```json
+{
+  "title": "Columns",
+  "columns": [
+    { "key": "name", "name": "Field", "width_px": 220 },
+    { "key": "type", "name": "Type", "width_px": 160 },
+    { "key": "nullable", "name": "Null?", "width_px": 72, "align": "right" }
+  ],
+  "rows": [
+    ["id", "INTEGER", "false"],
+    ["payload", "JSON", "true"]
+  ]
+}
+```
+
+如果 `schema/object_view` 未声明，或者某个 view 返回类型化 not-supported / method-not-found，host 会回退到 legacy schema 方法。行代表可点击数据库对象时，第一列应保持为对象名。
 
 ## SDK 依赖
 
-DuckDB 驱动依赖 `feigeCode/onetcli` 中的这些 SDK crates：
+Rust 驱动依赖 `feigeCode/onetcli` 中的这些 SDK crates：
 
 - `extension-protocol`
 - `extension-driver`
@@ -41,16 +94,29 @@ DuckDB 驱动依赖 `feigeCode/onetcli` 中的这些 SDK crates：
 
 ## 本地开发
 
-运行脚本测试：
+运行脚本和打包测试：
 
 ```bash
 node --test tests/scripts.test.mjs
 ```
 
-运行 DuckDB 驱动测试：
+运行 Rust 驱动测试：
 
 ```bash
 cargo test -p duckdb_driver -- --nocapture
+cargo test -p iotdb_driver -- --nocapture
+```
+
+运行 Go 共享运行时测试：
+
+```bash
+GOCACHE=/private/tmp/onetcli-go-cache go test ./internal/dbipc
+```
+
+运行 Java 驱动测试：
+
+```bash
+mvn -f java/gbase8s-ipc-driver/pom.xml test
 ```
 
 检查 Rust 格式：
@@ -65,9 +131,11 @@ cargo fmt --all --check
 ruby -e 'require "yaml"; YAML.load_file(".github/workflows/ci.yml"); YAML.load_file(".github/workflows/release.yml"); YAML.load_file(".github/workflows/upload-r2.yml"); puts "workflow yaml ok"'
 ```
 
-## 构建和打包 DuckDB
+## 构建和打包
 
-为当前本机 target 构建扩展包：
+所有扩展包都由 `extensions/ipc/<driver-id>/extension.build.json` 描述。构建元数据定义扩展 id、运行时语言、package 或 binary 名称、target triples、release tag 前缀和 R2 前缀。
+
+为当前本机 target 构建并打包 DuckDB：
 
 ```bash
 HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
@@ -77,16 +145,25 @@ bash scripts/package-driver.sh duckdb "$HOST_TRIPLE" artifacts 1.0.0
 bash scripts/verify-package.sh "artifacts/duckdb-driver-${HOST_TRIPLE}.tar.gz"
 ```
 
-扩展包内容：
+构建并打包 Go 驱动：
 
-```text
-duckdb/
-  driver.json
-  duckdb_driver
-  locales/
+```bash
+HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
+bash scripts/build-go-driver.sh dm "$HOST_TRIPLE"
+mkdir -p artifacts
+bash scripts/package-driver.sh dm "$HOST_TRIPLE" artifacts 0.1.0
 ```
 
-Windows 平台的二进制入口是 `duckdb_driver.exe`。
+构建并打包 Java GBase 8s 驱动：
+
+```bash
+HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
+bash scripts/build-java-driver.sh gbase8s "$HOST_TRIPLE"
+mkdir -p artifacts
+bash scripts/package-driver.sh gbase8s "$HOST_TRIPLE" artifacts 0.1.0
+```
+
+扩展包 archive 中包含扩展目录、`driver.json`、入口二进制或 launcher，以及 locales、icons、运行时库等资源。
 
 ## 扩展市场 Manifest
 
@@ -121,13 +198,13 @@ duckdb/1.0.0/duckdb-driver-x86_64-unknown-linux-gnu.tar.gz
 
 当前选择规则：
 
-- 只修改 `extensions/ipc/duckdb/**` 时，只构建 DuckDB。
-- 修改 `scripts/**`、`crates/**` 或 `.github/workflows/**` 时，构建所有已知扩展。
+- 修改 `extensions/ipc/<driver-id>/**` 时构建对应驱动。
+- 修改共享运行时、脚本、workflow 或打包路径时构建所有已知扩展。
 - 每个 target triple 对应一个 matrix entry。
 
 ## Release
 
-扩展发布使用扩展级 tag。DuckDB 示例：
+扩展发布使用扩展级 tag：
 
 ```bash
 git tag duckdb-v1.0.0
@@ -176,21 +253,27 @@ extensions/manifest.json
 在 `extensions/ipc/<driver-id>` 下新增目录：
 
 ```text
-Cargo.toml
 driver.json
 extension.build.json
 locales/
-src/
+icons/
 ```
 
-将包加入根 workspace members，并创建类似的元数据：
+运行时代码按语言放到对应本地 package：
+
+- Rust 驱动通常放在 `extensions/ipc/<driver-id>/src`，并加入根 Cargo workspace members。
+- Go 驱动可以复用 `internal/dbipc`，并在 `cmd/` 下新增命令。
+- Java 驱动可以放在 `java/` 下。
+
+创建类似的元数据：
 
 ```json
 {
   "id": "postgres",
   "kind": "database_driver",
-  "package": "postgres_driver",
-  "binary": "postgres_driver",
+  "language": "go",
+  "package": "./cmd/postgres-ipc-driver",
+  "binary": "postgres-ipc-driver",
   "path": "extensions/ipc/postgres",
   "targets": [
     "aarch64-apple-darwin",
@@ -203,7 +286,7 @@ src/
 }
 ```
 
-如果新 IPC 数据库驱动使用相同的包结构，通常不需要修改 workflow。
+如果新 IPC 数据库驱动使用现有 metadata 和包结构，通常不需要修改 workflow。
 
 ## 主应用集成
 

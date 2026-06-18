@@ -33,6 +33,7 @@ public class GBase8sIpcServerTest {
         JsonNode init = server.handle(request(1, "init", "{\"host_version\":\"1.0.0\",\"api_offered\":{\"database\":\"1.0\"},\"instance_id\":\"test\",\"config\":{}}"));
         assertEquals("0.1.0", init.get("result").get("extension_version").asText());
         assertEquals("gbase8s", init.get("result").get("drivers_ready").get(0).asText());
+        assertTrue(init.get("result").get("methods").toString().contains("schema/object_view"));
 
         JsonNode unknown = server.handle(request(2, "sql/format", "{\"sql\":\"select 1\"}"));
         assertEquals(-32601, unknown.get("error").get("code").asInt());
@@ -94,6 +95,13 @@ public class GBase8sIpcServerTest {
         assertEquals(1, columns.get("result").get(0).get("ordinal").asInt());
         assertEquals("id", columns.get("result").get(0).get("name").asText());
         assertEquals(false, columns.get("result").get(0).get("nullable").asBoolean());
+
+        JsonNode columnView = server.handle(request(7, "schema/object_view", "{\"conn_id\":" + connId + ",\"view\":\"columns\",\"database\":\"stores\",\"schema\":\"gbasedbt\",\"table\":\"sample\"}"));
+        assertEquals("Columns", columnView.get("result").get("title").asText());
+        assertEquals("name", columnView.get("result").get("columns").get(0).get("key").asText());
+        assertEquals("Field", columnView.get("result").get("columns").get(0).get("name").asText());
+        assertEquals("id", columnView.get("result").get("rows").get(0).get(0).asText());
+        assertEquals("INTEGER", columnView.get("result").get("rows").get(0).get(1).asText());
     }
 
     private GBase8sIpcServer newServer() {
