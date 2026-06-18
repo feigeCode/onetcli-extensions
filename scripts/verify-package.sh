@@ -39,4 +39,27 @@ if [ ! -d "${DRIVER_DIR}/locales" ]; then
   exit 1
 fi
 
+DRIVER_JSON="$DRIVER_JSON" \
+DRIVER_DIR="$DRIVER_DIR" \
+node <<'NODE'
+const fs = require("fs");
+const path = require("path");
+
+const driverJson = process.env.DRIVER_JSON;
+const driverDir = process.env.DRIVER_DIR;
+const manifest = JSON.parse(fs.readFileSync(driverJson, "utf8"));
+const ui = manifest.ui || {};
+
+for (const key of ["icon", "icon_color"]) {
+  const value = ui[key];
+  if (typeof value !== "string" || value.trim() === "") continue;
+  if (!value.includes("/") && !value.includes("\\")) continue;
+  const iconPath = path.join(driverDir, value);
+  if (!fs.existsSync(iconPath)) {
+    console.error(`driver.json ui.${key} references missing file: ${value}`);
+    process.exit(1);
+  }
+}
+NODE
+
 echo "Package verification ok: ${ARCHIVE}"

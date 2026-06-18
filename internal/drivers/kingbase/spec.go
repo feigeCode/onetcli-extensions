@@ -75,7 +75,7 @@ func kingbaseObjectsSQL(cfg dbipc.Config, database, schema string, kinds []strin
 	if schema != "" {
 		schemaFilter = fmt.Sprintf(" AND n.nspname = '%s'", escapeSQL(schema))
 	}
-	return "SELECT c.relname, CASE c.relkind WHEN 'r' THEN 'table' WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized_view' ELSE 'table' END, COALESCE(obj_description(c.oid), '') FROM sys_class c JOIN sys_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('r','v','m')" + schemaFilter + " ORDER BY n.nspname, c.relname"
+	return "SELECT c.relname, CASE c.relkind WHEN 'r' THEN 'table' WHEN 'p' THEN 'table' WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized_view' WHEN 'S' THEN 'sequence' ELSE 'table' END, COALESCE(obj_description(c.oid), '') FROM sys_class c JOIN sys_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN (" + kingbaseRelkindList(kinds) + ")" + schemaFilter + " ORDER BY n.nspname, c.relname"
 }
 
 func kingbaseColumnsSQL(cfg dbipc.Config, database, schema, table string) string {
@@ -105,9 +105,9 @@ func kingbaseForeignKeysSQL(cfg dbipc.Config, database, schema, table string) st
 func kingbaseViewsSQL(cfg dbipc.Config, database, schema string) string {
 	schemaFilter := ""
 	if schema != "" {
-		schemaFilter = fmt.Sprintf(" WHERE schemaname = '%s'", escapeSQL(schema))
+		schemaFilter = fmt.Sprintf(" AND n.nspname = '%s'", escapeSQL(schema))
 	}
-	return "SELECT viewname, schemaname, '', 'NO' FROM sys_views" + schemaFilter + " ORDER BY schemaname, viewname"
+	return "SELECT c.relname, n.nspname, COALESCE(obj_description(c.oid), ''), CASE WHEN c.relkind = 'm' THEN 'YES' ELSE 'NO' END, COALESCE(pg_get_viewdef(c.oid), '') FROM sys_class c JOIN sys_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('v','m')" + schemaFilter + " ORDER BY n.nspname, c.relname"
 }
 
 func kingbaseFunctionsSQL(cfg dbipc.Config, database, schema string) string {
@@ -124,6 +124,37 @@ func kingbaseViewDefinitionSQL(cfg dbipc.Config, database, schema, view string) 
 		schemaFilter = fmt.Sprintf(" AND schemaname = '%s'", escapeSQL(schema))
 	}
 	return fmt.Sprintf("SELECT definition, 'NO' FROM sys_views WHERE viewname = '%s'%s", escapeSQL(view), schemaFilter)
+}
+
+func kingbaseRelkindList(kinds []string) string {
+	if len(kinds) == 0 {
+		return "'r','p','v','m','S'"
+	}
+	seen := map[string]bool{}
+	for _, kind := range kinds {
+		switch strings.ToLower(strings.TrimSpace(kind)) {
+		case "table", "base_table":
+			seen["r"] = true
+			seen["p"] = true
+		case "view":
+			seen["v"] = true
+		case "materialized_view":
+			seen["m"] = true
+		case "sequence":
+			seen["S"] = true
+		}
+	}
+	if len(seen) == 0 {
+		return "''"
+	}
+	order := []string{"r", "p", "v", "m", "S"}
+	values := make([]string, 0, len(seen))
+	for _, relkind := range order {
+		if seen[relkind] {
+			values = append(values, "'"+relkind+"'")
+		}
+	}
+	return strings.Join(values, ",")
 }
 
 func escapeConnInfo(value string) string {

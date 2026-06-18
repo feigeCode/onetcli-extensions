@@ -85,7 +85,8 @@
     "table_engines": []
   },
   "ui": {
-    "icon": "DuckDB",
+    "icon": "icons/duckdb.svg",
+    "icon_color": "icons/duckdb.svg",
     "locales_dir": "locales",
     "default_port": null,
     "form": {

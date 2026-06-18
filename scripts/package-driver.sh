@@ -52,7 +52,10 @@ rm -rf "$DRIVER_DIR"
 mkdir -p "$DRIVER_DIR" "$ARTIFACT_DIR"
 cp "$SOURCE_BIN" "${DRIVER_DIR}/${BIN_NAME}"
 cp -R "${SOURCE_DIR}/locales" "${DRIVER_DIR}/locales"
-if [ -d "${REPO_DIR}/target/${TARGET}/release/lib" ]; then
+if [ -d "${SOURCE_DIR}/icons" ]; then
+  cp -R "${SOURCE_DIR}/icons" "${DRIVER_DIR}/icons"
+fi
+if [ "$LANGUAGE" = "java" ] && [ -d "${REPO_DIR}/target/${TARGET}/release/lib" ]; then
   cp -R "${REPO_DIR}/target/${TARGET}/release/lib" "${DRIVER_DIR}/lib"
 fi
 

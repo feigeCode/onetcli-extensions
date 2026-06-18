@@ -99,7 +99,7 @@ func TestSpecBuildsKingbaseMetadataSQL(t *testing.T) {
 	}
 
 	viewsSQL := spec.SchemaSQL.Views(cfg, "", "app")
-	for _, want := range []string{"sys_views", "schemaname = 'app'", "'NO'"} {
+	for _, want := range []string{"sys_class", "pg_get_viewdef", "c.relkind IN ('v','m')", "n.nspname = 'app'", "'YES'"} {
 		if !strings.Contains(viewsSQL, want) {
 			t.Fatalf("views SQL %q does not contain %q", viewsSQL, want)
 		}
@@ -116,6 +116,38 @@ func TestSpecBuildsKingbaseMetadataSQL(t *testing.T) {
 	for _, want := range []string{"sys_views", "schemaname = 'app'", "viewname = 'v_demo'"} {
 		if !strings.Contains(viewSQL, want) {
 			t.Fatalf("view definition SQL %q does not contain %q", viewSQL, want)
+		}
+	}
+}
+
+func TestSpecBuildsKingbaseObjectsSQLWithProtocolKinds(t *testing.T) {
+	cfg, err := ConfigFromWire(map[string]any{
+		"host":     "127.0.0.1",
+		"username": "system",
+		"database": "TEST",
+	})
+	if err != nil {
+		t.Fatalf("ConfigFromWire returned error: %v", err)
+	}
+
+	tablesSQL := Spec().SchemaSQL.Objects(cfg, "", "app", []string{"table"})
+	for _, want := range []string{
+		"WHEN 'p' THEN 'table'",
+		"c.relkind IN ('r','p')",
+		"n.nspname = 'app'",
+	} {
+		if !strings.Contains(tablesSQL, want) {
+			t.Fatalf("tables SQL %q does not contain %q", tablesSQL, want)
+		}
+	}
+	viewsSQL := Spec().SchemaSQL.Objects(cfg, "", "app", []string{"view", "materialized_view", "sequence"})
+	for _, want := range []string{
+		"WHEN 'm' THEN 'materialized_view'",
+		"WHEN 'S' THEN 'sequence'",
+		"c.relkind IN ('v','m','S')",
+	} {
+		if !strings.Contains(viewsSQL, want) {
+			t.Fatalf("objects SQL %q does not contain %q", viewsSQL, want)
 		}
 	}
 }

@@ -1086,12 +1086,14 @@ func (s *Server) handleSchemaIndexes(ctx context.Context, req ipc.Message) ipc.M
 		return s.ok(req.ID, []map[string]any{})
 	}
 	rows, err := queryObjects(ctx, conn.db, s.spec.SchemaSQL.Indexes(conn.config, p.Database, p.Schema, p.Table), func(cols []any) map[string]any {
+		kind := stringCell(cols, 4)
 		return map[string]any{
 			"name":       stringCell(cols, 0),
 			"columns":    splitListCell(cols, 1),
 			"is_unique":  boolCell(cols, 2),
 			"is_primary": boolCell(cols, 3),
-			"type":       stringCell(cols, 4),
+			"kind":       kind,
+			"type":       kind,
 		}
 	})
 	if err != nil {
@@ -1154,11 +1156,18 @@ func (s *Server) handleSchemaViews(ctx context.Context, req ipc.Message) ipc.Mes
 		return s.ok(req.ID, []map[string]any{})
 	}
 	rows, err := queryObjects(ctx, conn.db, s.spec.SchemaSQL.Views(conn.config, p.Database, p.Schema), func(cols []any) map[string]any {
+		isMaterialized := boolCell(cols, 3)
+		kind := "view"
+		if isMaterialized {
+			kind = "materialized_view"
+		}
 		return map[string]any{
 			"name":            stringCell(cols, 0),
 			"schema":          stringCell(cols, 1),
+			"kind":            kind,
+			"definition_sql":  stringCell(cols, 4),
 			"comment":         stringCell(cols, 2),
-			"is_materialized": boolCell(cols, 3),
+			"is_materialized": isMaterialized,
 		}
 	})
 	if err != nil {

@@ -2,6 +2,7 @@
   "id": "dm",
   "name": "Dameng DM",
   "description": "Dameng DM database IPC driver",
+  "category": "domestic_database",
   "version": "0.1.0",
   "license": "MIT",
   "dependencies": {
@@ -99,7 +100,8 @@
     "table_engines": []
   },
   "ui": {
-    "icon": "Database",
+    "icon": "icons/dm.svg",
+    "icon_color": "icons/dm.svg",
     "locales_dir": "locales",
     "default_port": 5236
   }

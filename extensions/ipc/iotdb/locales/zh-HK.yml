@@ -1,7 +1,12 @@
-database:
-  iotdb:
-    connection:
-      title: Apache IoTDB 連線
-    field:
-      database:
-        help: 可選儲存組前綴，例如 root 或 root.ln。
+"common.connect": "連線"
+"database.connection.tab.general": "常規"
+"database.connection.field.name": "連線名稱"
+"database.connection.field.name.placeholder": "我的 IoTDB 連線"
+"database.connection.field.host": "主機"
+"database.connection.field.host.placeholder": "127.0.0.1"
+"database.connection.field.port": "埠"
+"database.connection.field.username": "使用者名稱"
+"database.connection.field.password": "密碼"
+"database.connection.field.database": "儲存組"
+"database.iotdb.connection.title": "新建 Apache IoTDB 連線"
+"database.iotdb.field.database.help": "可選儲存組前綴，例如 root 或 root.ln。"

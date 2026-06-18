@@ -1,1 +1,17 @@
 name: GBase 8s
+description: GBase 8s Java IPC driver
+"common.connect": "Connect"
+"database.connection.tab.general": "General"
+"database.connection.field.name": "Connection Name"
+"database.connection.field.name.placeholder": "My GBase 8s Connection"
+"database.connection.field.host": "Host"
+"database.connection.field.port": "Port"
+"database.connection.field.username": "Username"
+"database.connection.field.password": "Password"
+"database.connection.field.database": "Database"
+"database.gbase8s.connection.title": "New GBase 8s Connection"
+"database.gbase8s.field.gbasedbtserver": "GBASEDBTSERVER"
+"database.gbase8s.field.gbasedbtserver.placeholder": "gbaseserver"
+"database.gbase8s.field.protocol": "Protocol"
+"database.gbase8s.field.driver_class": "JDBC Driver Class"
+"database.gbase8s.field.driver_class.help": "Defaults to the official GBase 8s JDBC driver class."

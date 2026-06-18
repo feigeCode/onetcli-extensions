@@ -183,6 +183,124 @@ test("IPC driver form fields include host-required defaults", () => {
   }
 });
 
+test("IPC driver locales define every manifest i18n key", () => {
+  const ids = fs
+    .readdirSync(path.join(repoRoot, "extensions/ipc"))
+    .filter((id) => fs.existsSync(path.join(repoRoot, "extensions/ipc", id, "driver.json")))
+    .sort();
+
+  for (const id of ids) {
+    const driverJson = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, "extensions/ipc", id, "driver.json"), "utf8"),
+    );
+    const keys = new Set(
+      [...collectI18nKeys(driverJson)].filter(
+        (key) => key.startsWith("database.") || key.startsWith("common."),
+      ),
+    );
+    if (keys.size === 0) continue;
+
+    const localesDir = path.join(repoRoot, "extensions/ipc", id, driverJson.ui?.locales_dir || "locales");
+    for (const locale of ["en.yml", "zh-CN.yml", "zh-HK.yml"]) {
+      const localePath = path.join(localesDir, locale);
+      assert.ok(fs.existsSync(localePath), `${id} missing locale ${locale}`);
+      const localeText = fs.readFileSync(localePath, "utf8");
+      for (const key of keys) {
+        assert.ok(
+          localeDefinesKey(localeText, key),
+          `${id} ${locale} missing i18n key ${key}`,
+        );
+      }
+    }
+  }
+});
+
+test("IPC driver icon paths reference packaged files", () => {
+  const ids = fs
+    .readdirSync(path.join(repoRoot, "extensions/ipc"))
+    .filter((id) => fs.existsSync(path.join(repoRoot, "extensions/ipc", id, "driver.json")))
+    .sort();
+
+  for (const id of ids) {
+    const driverDir = path.join(repoRoot, "extensions/ipc", id);
+    const driverJson = JSON.parse(fs.readFileSync(path.join(driverDir, "driver.json"), "utf8"));
+    for (const key of ["icon", "icon_color"]) {
+      const icon = driverJson.ui?.[key];
+      if (typeof icon !== "string" || !isRelativeAssetPath(icon)) continue;
+      assert.ok(fs.existsSync(path.join(driverDir, icon)), `${id} ui.${key} missing ${icon}`);
+    }
+  }
+});
+
+test("IPC driver categories keep domestic database routing manifest-driven", () => {
+  const ids = fs
+    .readdirSync(path.join(repoRoot, "extensions/ipc"))
+    .filter((id) => fs.existsSync(path.join(repoRoot, "extensions/ipc", id, "driver.json")))
+    .sort();
+  const domesticIds = [];
+
+  for (const id of ids) {
+    const driverJson = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, "extensions/ipc", id, "driver.json"), "utf8"),
+    );
+    assert.ok(
+      !Object.hasOwn(driverJson.ui || {}, "category"),
+      `${id} category must be declared at manifest top level, not ui.category`,
+    );
+    if (driverJson.category === "domestic_database") {
+      domesticIds.push(id);
+    } else {
+      assert.equal(
+        driverJson.category,
+        undefined,
+        `${id} uses unsupported driver category ${driverJson.category}`,
+      );
+    }
+  }
+
+  assert.deepEqual(domesticIds, ["dm", "gbase8s", "kingbase"]);
+});
+
+test("IPC connection form extra params use raw extra parameter keys", () => {
+  const ids = fs
+    .readdirSync(path.join(repoRoot, "extensions/ipc"))
+    .filter((id) => fs.existsSync(path.join(repoRoot, "extensions/ipc", id, "driver.json")))
+    .sort();
+  const basicFields = new Set([
+    "name",
+    "host",
+    "port",
+    "username",
+    "password",
+    "database",
+    "remark",
+    "service_name",
+    "sid",
+  ]);
+
+  for (const id of ids) {
+    const driverJson = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, "extensions/ipc", id, "driver.json"), "utf8"),
+    );
+    for (const form of driverJson.ui?.form?.forms || []) {
+      for (const tab of form.tabs || []) {
+        for (const field of tab.fields || []) {
+          assert.ok(
+            !field.id.startsWith("extra_params."),
+            `${id} form field ${field.id} should be ${field.id.slice("extra_params.".length)}; non-basic connection form fields are already stored in extra_params`,
+          );
+          if (field.id === "external_driver_id") continue;
+          if (basicFields.has(field.id)) continue;
+          assert.ok(
+            !field.id.includes("."),
+            `${id} extra param form field ${field.id} should use the raw extra_params key without a dotted namespace`,
+          );
+        }
+      }
+    }
+  }
+});
+
 test("package-driver creates a DuckDB package with executable entry command", () => {
   const workdir = makeTempDir();
   createPackageFixture(workdir);
@@ -211,6 +329,79 @@ test("package-driver creates a DuckDB package with executable entry command", ()
     fs.readFileSync(path.join(workdir, "unpacked/duckdb_driver"), "utf8"),
     "fake binary\n",
   );
+});
+
+test("package-driver includes declared icon resources", () => {
+  const workdir = makeTempDir();
+  createPackageFixture(workdir, {
+    driverJson: {
+      id: "duckdb",
+      version: "0.0.0",
+      entry: {},
+      ui: {
+        icon: "icons/duckdb.svg",
+        icon_color: "icons/duckdb-color.svg",
+      },
+    },
+    icons: {
+      "duckdb.svg": "<svg>mono</svg>\n",
+      "duckdb-color.svg": "<svg>color</svg>\n",
+    },
+  });
+
+  const archivePath = execFileSync(
+    "bash",
+    [
+      path.join(workdir, "scripts/package-driver.sh"),
+      "duckdb",
+      "x86_64-unknown-linux-gnu",
+      path.join(workdir, "artifacts"),
+      "1.2.3",
+    ],
+    { cwd: workdir, encoding: "utf8" },
+  ).trim();
+
+  execFileSync("tar", ["xzf", archivePath, "-C", path.join(workdir, "unpacked")]);
+
+  assert.equal(
+    fs.readFileSync(path.join(workdir, "unpacked/icons/duckdb.svg"), "utf8"),
+    "<svg>mono</svg>\n",
+  );
+  assert.equal(
+    fs.readFileSync(path.join(workdir, "unpacked/icons/duckdb-color.svg"), "utf8"),
+    "<svg>color</svg>\n",
+  );
+  execFileSync("bash", [path.join(workdir, "scripts/verify-package.sh"), archivePath], {
+    cwd: workdir,
+    encoding: "utf8",
+  });
+});
+
+test("package-driver only includes release lib directory for Java drivers", () => {
+  const workdir = makeTempDir();
+  createPackageFixture(workdir);
+  fs.mkdirSync(path.join(workdir, "target/x86_64-unknown-linux-gnu/release/lib"), {
+    recursive: true,
+  });
+  fs.writeFileSync(
+    path.join(workdir, "target/x86_64-unknown-linux-gnu/release/lib/gbase8s-ipc-driver.jar"),
+    "java jar\n",
+  );
+
+  const archivePath = execFileSync(
+    "bash",
+    [
+      path.join(workdir, "scripts/package-driver.sh"),
+      "duckdb",
+      "x86_64-unknown-linux-gnu",
+      path.join(workdir, "artifacts"),
+      "1.2.3",
+    ],
+    { cwd: workdir, encoding: "utf8" },
+  ).trim();
+
+  execFileSync("tar", ["xzf", archivePath, "-C", path.join(workdir, "unpacked")]);
+  assert.equal(fs.existsSync(path.join(workdir, "unpacked/lib")), false);
 });
 
 test("package-driver includes downloaded DuckDB runtime library on Windows", () => {
@@ -881,13 +1072,19 @@ function createPackageFixture(workdir, options = {}) {
     package: packageName,
     binary,
   });
-  writeJson(path.join(workdir, `extensions/ipc/${id}/driver.json`), {
+  writeJson(path.join(workdir, `extensions/ipc/${id}/driver.json`), options.driverJson || {
     id,
     version: "0.0.0",
     entry: {},
   });
   fs.mkdirSync(path.join(workdir, `extensions/ipc/${id}/locales`), { recursive: true });
   fs.writeFileSync(path.join(workdir, `extensions/ipc/${id}/locales/en.yml`), `name: ${id}\n`);
+  if (options.icons) {
+    fs.mkdirSync(path.join(workdir, `extensions/ipc/${id}/icons`), { recursive: true });
+    for (const [name, contents] of Object.entries(options.icons)) {
+      fs.writeFileSync(path.join(workdir, `extensions/ipc/${id}/icons`, name), contents);
+    }
+  }
   fs.mkdirSync(path.join(workdir, "target/x86_64-unknown-linux-gnu/release"), { recursive: true });
   fs.writeFileSync(
     path.join(workdir, `target/x86_64-unknown-linux-gnu/release/${binary}`),
@@ -903,6 +1100,46 @@ function copyScript(name, workdir) {
 function writeJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function collectI18nKeys(value, keys = new Set()) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectI18nKeys(item, keys);
+    return keys;
+  }
+  if (!value || typeof value !== "object") return keys;
+  for (const [key, item] of Object.entries(value)) {
+    if (key.endsWith("_i18n_key") && typeof item === "string" && item.length > 0) {
+      keys.add(item);
+    } else {
+      collectI18nKeys(item, keys);
+    }
+  }
+  return keys;
+}
+
+function localeDefinesKey(localeText, key) {
+  if (new RegExp(`^\\s*["']?${escapeRegExp(key)}["']?\\s*:`, "m").test(localeText)) {
+    return true;
+  }
+
+  let indent = -1;
+  for (const part of key.split(".")) {
+    const match = localeText.match(new RegExp(`^(\\s*)${escapeRegExp(part)}\\s*:`, "m"));
+    if (!match) return false;
+    const nextIndent = match[1].length;
+    if (nextIndent <= indent) return false;
+    indent = nextIndent;
+  }
+  return true;
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isRelativeAssetPath(value) {
+  return value.includes("/") || value.includes("\\");
 }
 
 function git(workdir, ...args) {

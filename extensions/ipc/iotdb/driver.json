@@ -86,7 +86,8 @@
     "table_engines": []
   },
   "ui": {
-    "icon": "Database",
+    "icon": "icons/IoTDB.svg",
+    "icon_color": "icons/IoTDB.svg",
     "locales_dir": "locales",
     "default_port": 6667,
     "form": {

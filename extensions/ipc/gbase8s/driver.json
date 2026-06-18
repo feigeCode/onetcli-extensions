@@ -2,6 +2,7 @@
   "id": "gbase8s",
   "name": "GBase 8s",
   "description": "GBase 8s Java IPC driver using the official JDBC driver",
+  "category": "domestic_database",
   "version": "0.1.0",
   "entry": {
     "command": "./gbase8s-ipc-driver",
@@ -90,7 +91,8 @@
     "table_engines": []
   },
   "ui": {
-    "icon": "Database",
+    "icon": "icons/gbase.svg",
+    "icon_color": "icons/gbase.svg",
     "locales_dir": "locales",
     "default_port": 11811,
     "form": {
@@ -208,7 +210,7 @@
                   "max": null
                 },
                 {
-                  "id": "extra_params.GBASEDBTSERVER",
+                  "id": "GBASEDBTSERVER",
                   "label_i18n_key": "database.gbase8s.field.gbasedbtserver",
                   "field_type": "Text",
                   "required": true,
@@ -225,7 +227,7 @@
                   "max": null
                 },
                 {
-                  "id": "extra_params.PROTOCOL",
+                  "id": "PROTOCOL",
                   "label_i18n_key": "database.gbase8s.field.protocol",
                   "field_type": "Text",
                   "required": true,

@@ -59,17 +59,24 @@ public final class GBase8sConfig {
             Map<?, ?> nestedMap = (Map<?, ?>) nested;
             for (Map.Entry<?, ?> entry : nestedMap.entrySet()) {
                 if (entry.getKey() != null && entry.getValue() != null) {
-                    out.put(String.valueOf(entry.getKey()), String.valueOf(entry.getValue()));
+                    putExtraParam(out, String.valueOf(entry.getKey()), String.valueOf(entry.getValue()));
                 }
             }
         }
         for (Map.Entry<String, Object> entry : raw.entrySet()) {
             String key = entry.getKey();
             if (key != null && key.startsWith("extra_params.") && entry.getValue() != null) {
-                out.put(key.substring("extra_params.".length()), String.valueOf(entry.getValue()));
+                putExtraParam(out, key, String.valueOf(entry.getValue()));
             }
         }
         return out;
+    }
+
+    private static void putExtraParam(Map<String, String> out, String key, String value) {
+        if (key.startsWith("extra_params.")) {
+            key = key.substring("extra_params.".length());
+        }
+        out.put(key, value);
     }
 
     private void validate() {

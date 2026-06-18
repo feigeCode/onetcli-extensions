@@ -203,6 +203,50 @@ func TestQueryStartKeepsRowsStreamingUntilCursorFetch(t *testing.T) {
 	}
 }
 
+func TestCursorFetchReturnsEmptyArrayWhenNoRows(t *testing.T) {
+	driverName, _ := registerStreamingDriver(t, nil)
+	server := NewServer(testSpecWithSQLDriver(driverName), nil)
+	server.initialized = true
+
+	connID := openTestConn(t, server)
+	startResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "query/start",
+		Params:  []byte(fmt.Sprintf(`{"conn_id":%d,"sql":"SELECT id, name FROM empty_demo"}`, connID)),
+	})
+	if startResp.Error != nil {
+		t.Fatalf("query/start returned error: %#v", startResp.Error)
+	}
+	var started struct {
+		CursorID string `json:"cursor_id"`
+	}
+	decodeResult(t, startResp, &started)
+
+	fetchResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`3`),
+		Method:  "cursor/fetch",
+		Params:  []byte(fmt.Sprintf(`{"cursor_id":%q,"n":100}`, started.CursorID)),
+	})
+	if fetchResp.Error != nil {
+		t.Fatalf("cursor/fetch returned error: %#v", fetchResp.Error)
+	}
+	var raw map[string]json.RawMessage
+	decodeResult(t, fetchResp, &raw)
+	if string(raw["rows"]) != "[]" {
+		t.Fatalf("cursor/fetch rows raw JSON = %s, want []", raw["rows"])
+	}
+	var fetched struct {
+		Rows [][]cellValue `json:"rows"`
+		Done bool          `json:"done"`
+	}
+	decodeResult(t, fetchResp, &fetched)
+	if len(fetched.Rows) != 0 || !fetched.Done {
+		t.Fatalf("fetch result = %#v, want empty rows and done", fetched)
+	}
+}
+
 func TestConnCloseClosesCursorsForConnection(t *testing.T) {
 	driverName, state := registerStreamingDriver(t, [][]driver.Value{{int64(1)}})
 	server := NewServer(testSpecWithSQLDriver(driverName), nil)
@@ -620,6 +664,46 @@ func TestDataImportBuildsInsertAndCommits(t *testing.T) {
 	}
 }
 
+func TestSchemaObjectsUsesDriverSQLAndReturnsKind(t *testing.T) {
+	driverName, state := registerStreamingDriver(t, [][]driver.Value{
+		{"demo", "table", "demo table"},
+	})
+	state.columns = []string{"object_name", "kind", "comment"}
+	spec := testSpecWithSQLDriver(driverName)
+	spec.SchemaSQL.Objects = func(cfg Config, database, schema string, kinds []string) string {
+		if database != "main" || schema != "app" || len(kinds) != 1 || kinds[0] != "table" {
+			t.Fatalf("objects params = database:%q schema:%q kinds:%#v", database, schema, kinds)
+		}
+		return "SELECT object_name, kind, comment FROM test_objects"
+	}
+	server := NewServer(spec, nil)
+	server.initialized = true
+
+	connID := openTestConn(t, server)
+	resp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "schema/objects",
+		Params:  []byte(fmt.Sprintf(`{"conn_id":%d,"database":"main","schema":"app","kinds":["table"]}`, connID)),
+	})
+	if resp.Error != nil {
+		t.Fatalf("schema/objects returned error: %#v", resp.Error)
+	}
+
+	var result []map[string]any
+	decodeResult(t, resp, &result)
+	if len(result) != 1 {
+		t.Fatalf("objects result = %#v, want one object", result)
+	}
+	object := result[0]
+	if object["name"] != "demo" || object["kind"] != "table" || object["comment"] != "demo table" {
+		t.Fatalf("object metadata = %#v", object)
+	}
+	if _, ok := object["kind"]; !ok {
+		t.Fatalf("object metadata missing kind: raw=%s", resp.Result)
+	}
+}
+
 func TestSchemaIndexesUsesDriverSQL(t *testing.T) {
 	driverName, state := registerStreamingDriver(t, [][]driver.Value{
 		{"idx_demo_name", "id,name", "YES", "NO", "btree"},
@@ -714,16 +798,16 @@ func TestSchemaForeignKeysUsesDriverSQL(t *testing.T) {
 
 func TestSchemaViewsUsesDriverSQL(t *testing.T) {
 	driverName, state := registerStreamingDriver(t, [][]driver.Value{
-		{"v_demo", "app", "demo view", "NO"},
-		{"mv_demo", "app", "materialized demo view", "YES"},
+		{"v_demo", "app", "demo view", "NO", "CREATE VIEW app.v_demo AS SELECT 1"},
+		{"mv_demo", "app", "materialized demo view", "YES", "CREATE MATERIALIZED VIEW app.mv_demo AS SELECT 1"},
 	})
-	state.columns = []string{"view_name", "schema_name", "comment", "is_materialized"}
+	state.columns = []string{"view_name", "schema_name", "comment", "is_materialized", "definition_sql"}
 	spec := testSpecWithSQLDriver(driverName)
 	spec.SchemaSQL.Views = func(cfg Config, database, schema string) string {
 		if database != "main" || schema != "app" {
 			t.Fatalf("views params = database:%q schema:%q", database, schema)
 		}
-		return "SELECT view_name, schema_name, comment, is_materialized FROM test_views"
+		return "SELECT view_name, schema_name, comment, is_materialized, definition_sql FROM test_views"
 	}
 	server := NewServer(spec, nil)
 	server.initialized = true
@@ -746,6 +830,12 @@ func TestSchemaViewsUsesDriverSQL(t *testing.T) {
 	}
 	if result[0]["name"] != "v_demo" || result[0]["schema"] != "app" || result[0]["comment"] != "demo view" {
 		t.Fatalf("first view metadata = %#v", result[0])
+	}
+	if result[0]["kind"] != "view" || result[1]["kind"] != "materialized_view" {
+		t.Fatalf("view kinds = %#v", result)
+	}
+	if result[0]["definition_sql"] != "CREATE VIEW app.v_demo AS SELECT 1" || result[1]["definition_sql"] != "CREATE MATERIALIZED VIEW app.mv_demo AS SELECT 1" {
+		t.Fatalf("view definitions = %#v", result)
 	}
 	if result[0]["is_materialized"] != false || result[1]["is_materialized"] != true {
 		t.Fatalf("materialized flags = %#v", result)
@@ -846,11 +936,39 @@ func TestOptionalSchemaMethodsReturnEmptyResults(t *testing.T) {
 		if resp.Error != nil {
 			t.Fatalf("%s returned error: %#v", method, resp.Error)
 		}
+		if string(resp.Result) != "[]" {
+			t.Fatalf("%s raw result = %s, want []", method, resp.Result)
+		}
 		var result []map[string]any
 		decodeResult(t, resp, &result)
 		if len(result) != 0 {
 			t.Fatalf("%s result = %#v, want empty list", method, result)
 		}
+	}
+}
+
+func TestQueriedSchemaMethodsReturnEmptyArrayWhenNoRows(t *testing.T) {
+	driverName, state := registerStreamingDriver(t, nil)
+	state.columns = []string{"object_name", "kind", "comment"}
+	spec := testSpecWithSQLDriver(driverName)
+	spec.SchemaSQL.Objects = func(cfg Config, database, schema string, kinds []string) string {
+		return "SELECT object_name, kind, comment FROM empty_objects"
+	}
+	server := NewServer(spec, nil)
+	server.initialized = true
+
+	connID := openTestConn(t, server)
+	resp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "schema/objects",
+		Params:  []byte(fmt.Sprintf(`{"conn_id":%d,"schema":"empty"}`, connID)),
+	})
+	if resp.Error != nil {
+		t.Fatalf("schema/objects returned error: %#v", resp.Error)
+	}
+	if string(resp.Result) != "[]" {
+		t.Fatalf("schema/objects raw result = %s, want []", resp.Result)
 	}
 }
 

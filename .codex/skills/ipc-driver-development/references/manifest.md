@@ -8,6 +8,7 @@
 - [Host SQL Generation](#host-sql-generation)
 - [Connection Lifecycle](#connection-lifecycle)
 - [Capabilities](#capabilities)
+- [Category](#category)
 - [UI Form](#ui-form)
 - [Compatibility Fallback](#compatibility-fallback)
 
@@ -22,6 +23,7 @@ Minimal shape:
   "id": "postgres-compatible",
   "name": "Postgres Compatible",
   "description": "Example IPC database driver",
+  "category": "domestic_database",
   "version": "1.0.0",
   "entry": {
     "command": "./postgres_driver",
@@ -70,6 +72,8 @@ Minimal shape:
 ```
 
 The host deserializes this into `IpcDriverManifest` in `crates/db/src/ipc/registry.rs`.
+
+`category` is optional. Omit it for normal external database drivers; only set it when the host should route the driver to a specific non-default group.
 
 ## Methods
 
@@ -271,6 +275,23 @@ Capabilities drive UI visibility and optional metadata calls. Typical fields inc
 
 Keep capabilities honest. A capability set to true tells the host it can expose workflows and call related methods.
 
+## Category
+
+`category` is top-level manifest metadata used by the host to group external database drivers in the new connection UI.
+
+Supported values:
+
+| Value | Meaning |
+| --- | --- |
+| `domestic_database` | Put the external driver under the 国产数据库 sidebar category. |
+
+Rules:
+
+- Declare `"category": "domestic_database"` for国产数据库 drivers such as DM, KingbaseES, and GBase 8s.
+- Leave `category` absent for ordinary external database drivers so they remain in the normal 数据库 category.
+- Do not put `category` under `ui`; host grouping reads the top-level manifest field.
+- Do not hardcode concrete external driver ids in host UI grouping. Classification must come from manifest metadata.
+
 ## UI Form
 
 `ui.form` defines connection form fields. Keep field ids aligned with the config shape consumed by `conn/open`.
@@ -286,6 +307,8 @@ Common field ids:
 - `service_name`
 - `sid`
 - driver-specific extra params
+
+Connection form field ids map directly into `DbConnectionConfig`: the basic fields above become first-class connection fields, and all other visible fields are stored in `extra_params` by their raw id. For driver-specific extra params, use the raw key, for example `GBASEDBTSERVER` or `PROTOCOL`; do not prefix form field ids with `extra_params.`.
 
 Use locale keys when the driver ships `locales/`. Package verification should confirm `locales_dir` exists when declared.
 

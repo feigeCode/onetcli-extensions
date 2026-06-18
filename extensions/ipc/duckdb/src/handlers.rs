@@ -1295,7 +1295,7 @@ pub fn handle_schema_indexes(
                 name,
                 table,
                 columns: vec![],
-                kind: None,
+                kind: Some("art".to_string()),
                 is_unique,
                 is_primary: false,
                 where_clause: None,
@@ -2982,6 +2982,7 @@ mod tests {
 
         assert_eq!(1, indexes.len(), "main.dupe_idx indexes: {indexes:?}");
         assert_eq!("idx_main_dupe", indexes[0]["name"]);
+        assert_eq!("art", indexes[0]["kind"]);
     }
 
     #[test]

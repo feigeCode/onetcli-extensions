@@ -1,1 +1,17 @@
 name: GBase 8s
+description: GBase 8s Java IPC 驱动
+"common.connect": "连接"
+"database.connection.tab.general": "常规"
+"database.connection.field.name": "连接名称"
+"database.connection.field.name.placeholder": "我的 GBase 8s 连接"
+"database.connection.field.host": "主机"
+"database.connection.field.port": "端口"
+"database.connection.field.username": "用户名"
+"database.connection.field.password": "密码"
+"database.connection.field.database": "数据库"
+"database.gbase8s.connection.title": "新建 GBase 8s 连接"
+"database.gbase8s.field.gbasedbtserver": "GBASEDBTSERVER 服务名"
+"database.gbase8s.field.gbasedbtserver.placeholder": "gbaseserver"
+"database.gbase8s.field.protocol": "协议"
+"database.gbase8s.field.driver_class": "JDBC 驱动类"
+"database.gbase8s.field.driver_class.help": "默认使用官方 GBase 8s JDBC 驱动类。"

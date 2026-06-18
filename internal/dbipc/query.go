@@ -59,7 +59,7 @@ func fetchRows(rows *sql.Rows, columnCount int, n int, maxRows *uint64, fetched 
 	if n <= 0 {
 		n = 500
 	}
-	var out [][]cellValue
+	out := make([][]cellValue, 0)
 	for len(out) < n {
 		if maxRows != nil && fetched >= *maxRows {
 			break
@@ -110,7 +110,7 @@ func queryObjects(ctx context.Context, db *sql.DB, sqlText string, mapRow func([
 	if err != nil {
 		return nil, err
 	}
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		values := make([]any, len(cols))
 		ptrs := make([]any, len(cols))

@@ -2,6 +2,7 @@
   "id": "kingbase",
   "name": "KingbaseES",
   "description": "KingbaseES database IPC driver",
+  "category": "domestic_database",
   "version": "0.1.0",
   "license": "MIT",
   "dependencies": {
@@ -99,7 +100,8 @@
     "table_engines": []
   },
   "ui": {
-    "icon": "Database",
+    "icon": "icons/kingbase.svg",
+    "icon_color": "icons/kingbase.svg",
     "locales_dir": "locales",
     "default_port": 54321
   }

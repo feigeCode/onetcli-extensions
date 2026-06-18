@@ -1,7 +1,12 @@
-database:
-  iotdb:
-    connection:
-      title: Apache IoTDB Connection
-    field:
-      database:
-        help: Optional storage group prefix, for example root or root.ln.
+"common.connect": "Connect"
+"database.connection.tab.general": "General"
+"database.connection.field.name": "Connection Name"
+"database.connection.field.name.placeholder": "My IoTDB Connection"
+"database.connection.field.host": "Host"
+"database.connection.field.host.placeholder": "127.0.0.1"
+"database.connection.field.port": "Port"
+"database.connection.field.username": "Username"
+"database.connection.field.password": "Password"
+"database.connection.field.database": "Storage Group"
+"database.iotdb.connection.title": "New Apache IoTDB Connection"
+"database.iotdb.field.database.help": "Optional storage group prefix, for example root or root.ln."

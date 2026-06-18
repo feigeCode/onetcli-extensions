@@ -85,7 +85,12 @@ public class GBase8sIpcServerTest {
         assertEquals("sample", objects.get("result").get(0).get("name").asText());
         assertEquals("table", objects.get("result").get(0).get("kind").asText());
 
-        JsonNode columns = server.handle(request(5, "schema/columns", "{\"conn_id\":" + connId + ",\"database\":\"stores\",\"schema\":\"gbasedbt\",\"table\":\"sample\"}"));
+        JsonNode views = server.handle(request(5, "schema/views", "{\"conn_id\":" + connId + ",\"database\":\"stores\",\"schema\":\"gbasedbt\"}"));
+        assertEquals("v_sample", views.get("result").get(0).get("name").asText());
+        assertEquals("view", views.get("result").get(0).get("kind").asText());
+        assertEquals("", views.get("result").get(0).get("definition_sql").asText());
+
+        JsonNode columns = server.handle(request(6, "schema/columns", "{\"conn_id\":" + connId + ",\"database\":\"stores\",\"schema\":\"gbasedbt\",\"table\":\"sample\"}"));
         assertEquals(1, columns.get("result").get(0).get("ordinal").asInt());
         assertEquals("id", columns.get("result").get(0).get("name").asText());
         assertEquals(false, columns.get("result").get(0).get("nullable").asBoolean());
@@ -105,6 +110,7 @@ public class GBase8sIpcServerTest {
                 statement.execute("INSERT INTO sysusers VALUES ('gbasedbt')");
                 statement.execute("CREATE TABLE systables (tabid INT, tabname VARCHAR(64), tabtype CHAR(1))");
                 statement.execute("INSERT INTO systables VALUES (100, 'sample', 'T')");
+                statement.execute("INSERT INTO systables VALUES (101, 'v_sample', 'V')");
                 statement.execute("CREATE TABLE syscolumns (tabid INT, colno INT, colname VARCHAR(64), coltype INT)");
                 statement.execute("INSERT INTO syscolumns VALUES (100, 0, 'id', 258)");
                 statement.execute("INSERT INTO syscolumns VALUES (100, 1, 'name', 13)");

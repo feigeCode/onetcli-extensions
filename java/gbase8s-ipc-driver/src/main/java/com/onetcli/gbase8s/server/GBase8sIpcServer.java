@@ -108,6 +108,9 @@ public final class GBase8sIpcServer {
         if ("schema/columns".equals(method)) {
             return handleSchemaColumns(id, params);
         }
+        if ("schema/views".equals(method)) {
+            return handleSchemaViews(id, params);
+        }
         if ("query/start".equals(method)) {
             return handleQueryStart(id, params);
         }
@@ -175,7 +178,7 @@ public final class GBase8sIpcServer {
             return handleStreamClose(id, params);
         }
         if ("schema/indexes".equals(method) || "schema/foreign_keys".equals(method) || "schema/checks".equals(method)
-            || "schema/views".equals(method) || "schema/functions".equals(method) || "schema/procedures".equals(method)
+            || "schema/functions".equals(method) || "schema/procedures".equals(method)
             || "schema/triggers".equals(method) || "schema/sequences".equals(method) || "schema/types".equals(method)) {
             return ok(id, new ArrayList<Map<String, Object>>());
         }
@@ -406,6 +409,32 @@ public final class GBase8sIpcServer {
             column.put("comment", "");
             column.put("extra", new LinkedHashMap<String, Object>());
             result.add(column);
+        }
+        return ok(id, result);
+    }
+
+    private JsonNode handleSchemaViews(JsonNode id, JsonNode params) throws SQLException {
+        ConnectionState state = requireConnection(id, requiredLong(params, "conn_id"));
+        if (state == null) {
+            return lastError;
+        }
+        String database = optionalText(params, "database", state.config.getDatabase());
+        String schema = optionalText(params, "schema", "");
+        QueryResult query = queryRunner.queryBuffered(
+            state.connection,
+            GBase8sSchemaSql.viewsSql(database, schema),
+            null,
+            null
+        );
+        List<Map<String, Object>> result = new ArrayList<Map<String, Object>>();
+        for (List<Map<String, Object>> row : query.getRows()) {
+            Map<String, Object> view = new LinkedHashMap<String, Object>();
+            view.put("name", rowString(row, 0));
+            view.put("kind", rowString(row, 1));
+            view.put("definition_sql", rowString(row, 2));
+            view.put("comment", "");
+            view.put("extra", new LinkedHashMap<String, Object>());
+            result.add(view);
         }
         return ok(id, result);
     }

@@ -40,6 +40,20 @@ public class GBase8sJdbcUrlTest {
     }
 
     @Test
+    public void configAcceptsPrefixedKeysInsideNestedExtraParamsForOldForms() {
+        Map<String, Object> raw = validWireConfig();
+        Map<String, Object> extra = new LinkedHashMap<String, Object>();
+        extra.put("extra_params.GBASEDBTSERVER", "old-form-server");
+        extra.put("extra_params.PROTOCOL", "onsoctcp");
+        raw.put("extra_params", extra);
+
+        GBase8sConfig config = GBase8sConfig.fromWire(raw);
+
+        assertEquals("old-form-server", config.getExtraParams().get("GBASEDBTSERVER"));
+        assertEquals("onsoctcp", config.getExtraParams().get("PROTOCOL"));
+    }
+
+    @Test
     public void jdbcUrlUsesOfficialGBase8sSqliFormatWithSortedProperties() {
         Map<String, Object> raw = validWireConfig();
         @SuppressWarnings("unchecked")
