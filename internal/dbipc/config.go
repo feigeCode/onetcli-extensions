@@ -19,12 +19,14 @@ type Config struct {
 }
 
 type DriverSpec struct {
-	ID            string
-	Name          string
-	SQLDriverName string
-	DefaultPort   int
-	BuildDSN      func(Config) (string, error)
-	SchemaSQL     SchemaSQL
+	ID                   string
+	Name                 string
+	SQLDriverName        string
+	DefaultPort          int
+	IdentifierQuoteLeft  string
+	IdentifierQuoteRight string
+	BuildDSN             func(Config) (string, error)
+	SchemaSQL            SchemaSQL
 }
 
 type SchemaSQL struct {

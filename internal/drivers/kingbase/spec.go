@@ -14,11 +14,13 @@ func ConfigFromWire(raw map[string]any) (dbipc.Config, error) {
 
 func Spec() dbipc.DriverSpec {
 	return dbipc.DriverSpec{
-		ID:            "kingbase",
-		Name:          "KingbaseES",
-		SQLDriverName: "kingbase",
-		DefaultPort:   54321,
-		BuildDSN:      buildDSN,
+		ID:                   "kingbase",
+		Name:                 "KingbaseES",
+		SQLDriverName:        "kingbase",
+		DefaultPort:          54321,
+		IdentifierQuoteLeft:  `"`,
+		IdentifierQuoteRight: `"`,
+		BuildDSN:             buildDSN,
 		SchemaSQL: dbipc.SchemaSQL{
 			Databases:      kingbaseDatabasesSQL,
 			Schemas:        kingbaseSchemasSQL,

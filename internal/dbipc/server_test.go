@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,6 +63,28 @@ func TestServerInitReturnsDriverCapabilities(t *testing.T) {
 	}
 	if !containsString(result["methods"], "schema/foreign_keys") {
 		t.Fatalf("methods = %#v", result["methods"])
+	}
+	for _, method := range []string{
+		"tx/begin",
+		"tx/commit",
+		"tx/rollback",
+		"tx/savepoint",
+		"tx/release",
+		"ddl/build",
+		"ddl/build_create_table",
+		"ddl/build_alter_table",
+		"ddl/build_drop",
+		"data/export",
+		"data/import_begin",
+		"data/import_chunk",
+		"data/import_commit",
+		"data/import_abort",
+		"stream/read",
+		"stream/close",
+	} {
+		if !containsString(result["methods"], method) {
+			t.Fatalf("methods missing %s: %#v", method, result["methods"])
+		}
 	}
 }
 
@@ -358,6 +381,242 @@ func TestExecBatchRunsStatementsAndStopsOnError(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&state.execCalls); got != 2 {
 		t.Fatalf("exec calls = %d, want stop after second statement", got)
+	}
+}
+
+func TestTransactionMethodsRouteQueryExecAndLifecycle(t *testing.T) {
+	driverName, state := registerStreamingDriver(t, [][]driver.Value{{int64(1)}})
+	server := NewServer(testSpecWithSQLDriver(driverName), nil)
+	server.initialized = true
+
+	connID := openTestConn(t, server)
+	beginResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "tx/begin",
+		Params:  []byte(fmt.Sprintf(`{"conn_id":%d,"isolation":"serializable","read_only":true}`, connID)),
+	})
+	if beginResp.Error != nil {
+		t.Fatalf("tx/begin returned error: %#v", beginResp.Error)
+	}
+	var begun struct {
+		TxID string `json:"tx_id"`
+	}
+	decodeResult(t, beginResp, &begun)
+	if begun.TxID == "" {
+		t.Fatalf("tx/begin result = %#v", begun)
+	}
+
+	queryResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`3`),
+		Method:  "query/start",
+		Params:  []byte(fmt.Sprintf(`{"conn_id":%d,"tx_id":%q,"sql":"SELECT id FROM demo"}`, connID, begun.TxID)),
+	})
+	if queryResp.Error != nil {
+		t.Fatalf("query/start in tx returned error: %#v", queryResp.Error)
+	}
+	if atomic.LoadInt32(&state.txQueryCalls) != 1 {
+		t.Fatalf("tx query calls = %d, want 1", atomic.LoadInt32(&state.txQueryCalls))
+	}
+
+	execResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`4`),
+		Method:  "exec/run",
+		Params:  []byte(fmt.Sprintf(`{"conn_id":%d,"tx_id":%q,"sql":"UPDATE demo SET id = id"}`, connID, begun.TxID)),
+	})
+	if execResp.Error != nil {
+		t.Fatalf("exec/run in tx returned error: %#v", execResp.Error)
+	}
+	if atomic.LoadInt32(&state.txExecCalls) != 1 {
+		t.Fatalf("tx exec calls = %d, want 1", atomic.LoadInt32(&state.txExecCalls))
+	}
+
+	for _, call := range []struct {
+		method string
+		params string
+	}{
+		{"tx/savepoint", fmt.Sprintf(`{"tx_id":%q,"name":"sp1"}`, begun.TxID)},
+		{"tx/release", fmt.Sprintf(`{"tx_id":%q,"name":"sp1"}`, begun.TxID)},
+		{"tx/commit", fmt.Sprintf(`{"tx_id":%q}`, begun.TxID)},
+	} {
+		resp := server.Handle(context.Background(), ipc.Message{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage(`5`),
+			Method:  call.method,
+			Params:  []byte(call.params),
+		})
+		if resp.Error != nil {
+			t.Fatalf("%s returned error: %#v", call.method, resp.Error)
+		}
+	}
+	if atomic.LoadInt32(&state.commitCalls) != 1 {
+		t.Fatalf("commit calls = %d, want 1", atomic.LoadInt32(&state.commitCalls))
+	}
+}
+
+func TestDdlBuildersProduceDialectSQL(t *testing.T) {
+	server := NewServer(testSpec(), nil)
+	server.initialized = true
+
+	createResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  "ddl/build_create_table",
+		Params: json.RawMessage(`{
+			"spec": {
+				"schema": "app",
+				"name": "demo",
+				"columns": [
+					{"name":"id","type":"BIGINT","nullable":false,"is_primary":true},
+					{"name":"name","type":"VARCHAR(64)","nullable":true,"default":"'anon'"}
+				],
+				"indexes": [{"name":"idx_demo_name","columns":["name"],"is_unique":true}]
+			},
+			"options": {"if_not_exists": true}
+		}`),
+	})
+	if createResp.Error != nil {
+		t.Fatalf("ddl/build_create_table returned error: %#v", createResp.Error)
+	}
+	var createResult struct {
+		SQL        string   `json:"sql"`
+		Statements []string `json:"statements"`
+	}
+	decodeResult(t, createResp, &createResult)
+	if createResult.SQL != `CREATE TABLE IF NOT EXISTS "app"."demo" ("id" BIGINT NOT NULL, "name" VARCHAR(64) DEFAULT 'anon', PRIMARY KEY ("id"))` {
+		t.Fatalf("create SQL = %q", createResult.SQL)
+	}
+	if len(createResult.Statements) != 2 || createResult.Statements[1] != `CREATE UNIQUE INDEX "idx_demo_name" ON "app"."demo" ("name")` {
+		t.Fatalf("create statements = %#v", createResult.Statements)
+	}
+
+	dropResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "ddl/build_drop",
+		Params:  json.RawMessage(`{"kind":"table","schema":"app","name":"demo","if_exists":true,"cascade":true}`),
+	})
+	if dropResp.Error != nil {
+		t.Fatalf("ddl/build_drop returned error: %#v", dropResp.Error)
+	}
+	var dropResult struct {
+		SQL string `json:"sql"`
+	}
+	decodeResult(t, dropResp, &dropResult)
+	if dropResult.SQL != `DROP TABLE IF EXISTS "app"."demo" CASCADE` {
+		t.Fatalf("drop SQL = %q", dropResult.SQL)
+	}
+}
+
+func TestDataExportStreamsNdjsonAndClosesStream(t *testing.T) {
+	driverName, _ := registerStreamingDriver(t, [][]driver.Value{
+		{int64(1), "first"},
+		{int64(2), "second"},
+	})
+	server := NewServer(testSpecWithSQLDriver(driverName), nil)
+	server.initialized = true
+
+	connID := openTestConn(t, server)
+	exportResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "data/export",
+		Params:  []byte(fmt.Sprintf(`{"conn_id":%d,"sql":"SELECT id, name FROM demo ORDER BY id","format":"ndjson","stream_id":"s1"}`, connID)),
+	})
+	if exportResp.Error != nil {
+		t.Fatalf("data/export returned error: %#v", exportResp.Error)
+	}
+
+	readResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`3`),
+		Method:  "stream/read",
+		Params:  json.RawMessage(`{"stream_id":"s1","max_bytes":4096}`),
+	})
+	if readResp.Error != nil {
+		t.Fatalf("stream/read returned error: %#v", readResp.Error)
+	}
+	var readResult struct {
+		Data string `json:"data"`
+		Done bool   `json:"done"`
+	}
+	decodeResult(t, readResp, &readResult)
+	raw, err := base64.StdEncoding.DecodeString(readResult.Data)
+	if err != nil {
+		t.Fatalf("stream/read data is not base64: %v", err)
+	}
+	if string(raw) != "{\"id\":1,\"name\":\"first\"}\n{\"id\":2,\"name\":\"second\"}\n" || !readResult.Done {
+		t.Fatalf("stream chunk = %q done=%v", raw, readResult.Done)
+	}
+
+	closeResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`4`),
+		Method:  "stream/close",
+		Params:  json.RawMessage(`{"stream_id":"s1"}`),
+	})
+	if closeResp.Error != nil {
+		t.Fatalf("stream/close returned error: %#v", closeResp.Error)
+	}
+}
+
+func TestDataImportBuildsInsertAndCommits(t *testing.T) {
+	driverName, state := registerStreamingDriver(t, nil)
+	server := NewServer(testSpecWithSQLDriver(driverName), nil)
+	server.initialized = true
+
+	connID := openTestConn(t, server)
+	beginResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "data/import_begin",
+		Params:  []byte(fmt.Sprintf(`{"conn_id":%d,"schema":"app","table":"demo","format":"json","columns":["id","name"]}`, connID)),
+	})
+	if beginResp.Error != nil {
+		t.Fatalf("data/import_begin returned error: %#v", beginResp.Error)
+	}
+	var begun struct {
+		ImportID string `json:"import_id"`
+	}
+	decodeResult(t, beginResp, &begun)
+
+	chunkResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`3`),
+		Method:  "data/import_chunk",
+		Params:  []byte(fmt.Sprintf(`{"import_id":%q,"rows":[[{"type":"i64","value":1},{"type":"text","value":"first"}]]}`, begun.ImportID)),
+	})
+	if chunkResp.Error != nil {
+		t.Fatalf("data/import_chunk returned error: %#v", chunkResp.Error)
+	}
+	var chunkResult struct {
+		Inserted uint64 `json:"inserted"`
+	}
+	decodeResult(t, chunkResp, &chunkResult)
+	if chunkResult.Inserted != 1 {
+		t.Fatalf("chunk inserted = %d, want 1", chunkResult.Inserted)
+	}
+	if state.lastExecSQL != `INSERT INTO "app"."demo" ("id", "name") VALUES (?, ?)` {
+		t.Fatalf("last exec SQL = %q", state.lastExecSQL)
+	}
+
+	commitResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`4`),
+		Method:  "data/import_commit",
+		Params:  []byte(fmt.Sprintf(`{"import_id":%q}`, begun.ImportID)),
+	})
+	if commitResp.Error != nil {
+		t.Fatalf("data/import_commit returned error: %#v", commitResp.Error)
+	}
+	var commitResult struct {
+		Inserted uint64 `json:"inserted"`
+	}
+	decodeResult(t, commitResp, &commitResult)
+	if commitResult.Inserted != 1 {
+		t.Fatalf("commit inserted = %d, want 1", commitResult.Inserted)
 	}
 }
 
@@ -658,6 +917,11 @@ type streamingDriverState struct {
 	closeCalls    int32
 	execCalls     int32
 	execErrAt     int32
+	txQueryCalls  int32
+	txExecCalls   int32
+	commitCalls   int32
+	rollbackCalls int32
+	lastExecSQL   string
 	lastQueryArgs []driver.NamedValue
 	lastExecArgs  []driver.NamedValue
 }
@@ -680,6 +944,7 @@ func (d *streamingDriver) Open(string) (driver.Conn, error) {
 
 type streamingConn struct {
 	state *streamingDriverState
+	inTx  int32
 }
 
 func (c *streamingConn) Prepare(string) (driver.Stmt, error) {
@@ -691,7 +956,12 @@ func (c *streamingConn) Close() error {
 }
 
 func (c *streamingConn) Begin() (driver.Tx, error) {
-	return nil, driver.ErrSkip
+	atomic.StoreInt32(&c.inTx, 1)
+	return &streamingTx{conn: c}, nil
+}
+
+func (c *streamingConn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
+	return c.Begin()
 }
 
 func (c *streamingConn) Ping(context.Context) error {
@@ -699,17 +969,40 @@ func (c *streamingConn) Ping(context.Context) error {
 }
 
 func (c *streamingConn) QueryContext(_ context.Context, _ string, args []driver.NamedValue) (driver.Rows, error) {
+	if atomic.LoadInt32(&c.inTx) == 1 {
+		atomic.AddInt32(&c.state.txQueryCalls, 1)
+	}
 	c.state.lastQueryArgs = cloneNamedValues(args)
 	return &streamingRows{state: c.state, rows: c.state.rows}, nil
 }
 
-func (c *streamingConn) ExecContext(_ context.Context, _ string, args []driver.NamedValue) (driver.Result, error) {
+func (c *streamingConn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	if atomic.LoadInt32(&c.inTx) == 1 {
+		atomic.AddInt32(&c.state.txExecCalls, 1)
+	}
 	call := atomic.AddInt32(&c.state.execCalls, 1)
 	if c.state.execErrAt > 0 && call == c.state.execErrAt {
 		return nil, errors.New("batch exec failure")
 	}
+	c.state.lastExecSQL = query
 	c.state.lastExecArgs = cloneNamedValues(args)
 	return driver.RowsAffected(1), nil
+}
+
+type streamingTx struct {
+	conn *streamingConn
+}
+
+func (tx *streamingTx) Commit() error {
+	atomic.StoreInt32(&tx.conn.inTx, 0)
+	atomic.AddInt32(&tx.conn.state.commitCalls, 1)
+	return nil
+}
+
+func (tx *streamingTx) Rollback() error {
+	atomic.StoreInt32(&tx.conn.inTx, 0)
+	atomic.AddInt32(&tx.conn.state.rollbackCalls, 1)
+	return nil
 }
 
 type streamingRows struct {

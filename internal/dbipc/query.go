@@ -21,8 +21,12 @@ type columnSpec struct {
 
 type cellValue map[string]any
 
-func startQuery(ctx context.Context, db *sql.DB, sqlText string, args []any) ([]columnSpec, *sql.Rows, error) {
-	rows, err := db.QueryContext(ctx, sqlText, args...)
+type queryExecutor interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func startQuery(ctx context.Context, queryer queryExecutor, sqlText string, args []any) ([]columnSpec, *sql.Rows, error) {
+	rows, err := queryer.QueryContext(ctx, sqlText, args...)
 	if err != nil {
 		return nil, nil, err
 	}

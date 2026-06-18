@@ -19,8 +19,13 @@ type Server struct {
 	initialized bool
 	nextConnID  uint64
 	nextCursor  uint64
+	nextTx      uint64
+	nextImport  uint64
 	conns       map[uint64]*connectionState
 	cursors     map[string]*cursorState
+	txs         map[string]*txState
+	imports     map[string]*importState
+	streams     map[string]*streamState
 	mu          sync.Mutex
 }
 
@@ -38,6 +43,11 @@ type cursorState struct {
 	done        bool
 }
 
+type txState struct {
+	connID uint64
+	tx     *sql.Tx
+}
+
 func NewServer(spec DriverSpec, opener Opener) *Server {
 	if opener == nil {
 		opener = sql.Open
@@ -47,8 +57,13 @@ func NewServer(spec DriverSpec, opener Opener) *Server {
 		opener:     opener,
 		nextConnID: 1,
 		nextCursor: 1,
+		nextTx:     1,
+		nextImport: 1,
 		conns:      map[uint64]*connectionState{},
 		cursors:    map[string]*cursorState{},
+		txs:        map[string]*txState{},
+		imports:    map[string]*importState{},
+		streams:    map[string]*streamState{},
 	}
 }
 
@@ -67,6 +82,22 @@ func DeclaredMethods() []string {
 		"cursor/cancel",
 		"exec/run",
 		"exec/batch",
+		"tx/begin",
+		"tx/commit",
+		"tx/rollback",
+		"tx/savepoint",
+		"tx/release",
+		"ddl/build",
+		"ddl/build_create_table",
+		"ddl/build_alter_table",
+		"ddl/build_drop",
+		"data/export",
+		"data/import_begin",
+		"data/import_chunk",
+		"data/import_commit",
+		"data/import_abort",
+		"stream/read",
+		"stream/close",
 		"schema/databases",
 		"schema/schemas",
 		"schema/objects",
@@ -138,6 +169,38 @@ func (s *Server) Handle(ctx context.Context, req ipc.Message) ipc.Message {
 		return s.handleExecRun(ctx, req)
 	case "exec/batch":
 		return s.handleExecBatch(ctx, req)
+	case "tx/begin":
+		return s.handleTxBegin(ctx, req)
+	case "tx/commit":
+		return s.handleTxCommit(req)
+	case "tx/rollback":
+		return s.handleTxRollback(req)
+	case "tx/savepoint":
+		return s.handleTxSavepoint(ctx, req)
+	case "tx/release":
+		return s.handleTxRelease(ctx, req)
+	case "ddl/build":
+		return s.handleDdlBuild(req)
+	case "ddl/build_create_table":
+		return s.handleDdlBuildCreateTable(req)
+	case "ddl/build_alter_table":
+		return s.handleDdlBuildAlterTable(req)
+	case "ddl/build_drop":
+		return s.handleDdlBuildDrop(req)
+	case "data/export":
+		return s.handleDataExport(ctx, req)
+	case "data/import_begin":
+		return s.handleDataImportBegin(req)
+	case "data/import_chunk":
+		return s.handleDataImportChunk(ctx, req)
+	case "data/import_commit":
+		return s.handleDataImportCommit(req)
+	case "data/import_abort":
+		return s.handleDataImportAbort(req)
+	case "stream/read":
+		return s.handleStreamRead(req)
+	case "stream/close":
+		return s.handleStreamClose(req)
 	case "schema/databases":
 		return s.handleSchemaDatabases(ctx, req)
 	case "schema/schemas":
@@ -227,6 +290,8 @@ func (s *Server) handleConnClose(req ipc.Message) ipc.Message {
 		return s.err(req.ID, ErrUnknownConnID, fmt.Sprintf("unknown conn_id %d", p.ConnID))
 	}
 	s.closeCursorsForConn(p.ConnID)
+	s.rollbackTxsForConn(p.ConnID)
+	s.dropImportsForConn(p.ConnID)
 	conn.db.Close()
 	delete(s.conns, p.ConnID)
 	return s.ok(req.ID, nil)
@@ -270,6 +335,7 @@ func (s *Server) handleQueryStart(ctx context.Context, req ipc.Message) ipc.Mess
 		SQL     string      `json:"sql"`
 		Params  []cellValue `json:"params,omitempty"`
 		MaxRows *uint64     `json:"max_rows,omitempty"`
+		TxID    string      `json:"tx_id,omitempty"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
 		return s.err(req.ID, ErrInvalidParams, err.Error())
@@ -282,7 +348,15 @@ func (s *Server) handleQueryStart(ctx context.Context, req ipc.Message) ipc.Mess
 	if err != nil {
 		return s.err(req.ID, ErrInvalidParams, err.Error())
 	}
-	columns, rows, err := startQuery(ctx, conn.db, p.SQL, args)
+	var queryer queryExecutor = conn.db
+	if p.TxID != "" {
+		tx, errResp := s.txForRequest(req.ID, p.TxID, p.ConnID)
+		if errResp != nil {
+			return *errResp
+		}
+		queryer = tx.tx
+	}
+	columns, rows, err := startQuery(ctx, queryer, p.SQL, args)
 	if err != nil {
 		return s.err(req.ID, ErrSQLSyntax, err.Error())
 	}
@@ -375,6 +449,7 @@ func (s *Server) handleExecRun(ctx context.Context, req ipc.Message) ipc.Message
 		ConnID uint64      `json:"conn_id"`
 		SQL    string      `json:"sql"`
 		Params []cellValue `json:"params,omitempty"`
+		TxID   string      `json:"tx_id,omitempty"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
 		return s.err(req.ID, ErrInvalidParams, err.Error())
@@ -387,7 +462,17 @@ func (s *Server) handleExecRun(ctx context.Context, req ipc.Message) ipc.Message
 	if err != nil {
 		return s.err(req.ID, ErrInvalidParams, err.Error())
 	}
-	res, err := conn.db.ExecContext(ctx, p.SQL, args...)
+	var execer interface {
+		ExecContext(context.Context, string, ...any) (sql.Result, error)
+	} = conn.db
+	if p.TxID != "" {
+		tx, errResp := s.txForRequest(req.ID, p.TxID, p.ConnID)
+		if errResp != nil {
+			return *errResp
+		}
+		execer = tx.tx
+	}
+	res, err := execer.ExecContext(ctx, p.SQL, args...)
 	if err != nil {
 		return s.err(req.ID, ErrSQLSyntax, err.Error())
 	}
@@ -452,6 +537,423 @@ func (s *Server) handleExecBatch(ctx context.Context, req ipc.Message) ipc.Messa
 	}
 
 	return s.ok(req.ID, map[string]any{"results": results, "errors": errorsOut})
+}
+
+func (s *Server) handleTxBegin(ctx context.Context, req ipc.Message) ipc.Message {
+	var p struct {
+		ConnID    uint64 `json:"conn_id"`
+		Isolation string `json:"isolation,omitempty"`
+		ReadOnly  bool   `json:"read_only,omitempty"`
+	}
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	conn, ok := s.conns[p.ConnID]
+	if !ok {
+		return s.err(req.ID, ErrUnknownConnID, fmt.Sprintf("unknown conn_id %d", p.ConnID))
+	}
+	tx, err := conn.db.BeginTx(ctx, &sql.TxOptions{Isolation: isolationLevel(p.Isolation), ReadOnly: p.ReadOnly})
+	if err != nil {
+		return s.err(req.ID, ErrSQLSyntax, err.Error())
+	}
+	txID := fmt.Sprintf("%s-tx-%d", s.spec.ID, s.nextTx)
+	s.nextTx++
+	s.txs[txID] = &txState{connID: p.ConnID, tx: tx}
+	return s.ok(req.ID, map[string]any{"tx_id": txID})
+}
+
+func (s *Server) handleTxCommit(req ipc.Message) ipc.Message {
+	var p struct {
+		TxID string `json:"tx_id"`
+	}
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	tx, ok := s.txs[p.TxID]
+	if !ok {
+		return s.err(req.ID, ErrInvalidParams, fmt.Sprintf("unknown tx_id `%s`", p.TxID))
+	}
+	if err := tx.tx.Commit(); err != nil {
+		return s.err(req.ID, ErrSQLSyntax, err.Error())
+	}
+	delete(s.txs, p.TxID)
+	return s.ok(req.ID, nil)
+}
+
+func (s *Server) handleTxRollback(req ipc.Message) ipc.Message {
+	var p struct {
+		TxID        string `json:"tx_id"`
+		ToSavepoint string `json:"to_savepoint,omitempty"`
+	}
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	tx, ok := s.txs[p.TxID]
+	if !ok {
+		return s.err(req.ID, ErrInvalidParams, fmt.Sprintf("unknown tx_id `%s`", p.TxID))
+	}
+	if p.ToSavepoint != "" {
+		if _, err := tx.tx.Exec("ROLLBACK TO SAVEPOINT " + quoteIdentifier(s.spec, p.ToSavepoint)); err != nil {
+			return s.err(req.ID, ErrSQLSyntax, err.Error())
+		}
+		return s.ok(req.ID, nil)
+	}
+	if err := tx.tx.Rollback(); err != nil {
+		return s.err(req.ID, ErrSQLSyntax, err.Error())
+	}
+	delete(s.txs, p.TxID)
+	return s.ok(req.ID, nil)
+}
+
+func (s *Server) handleTxSavepoint(ctx context.Context, req ipc.Message) ipc.Message {
+	var p struct {
+		TxID string `json:"tx_id"`
+		Name string `json:"name"`
+	}
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	tx, ok := s.txs[p.TxID]
+	if !ok {
+		return s.err(req.ID, ErrInvalidParams, fmt.Sprintf("unknown tx_id `%s`", p.TxID))
+	}
+	if p.Name == "" {
+		return s.err(req.ID, ErrInvalidParams, "missing required parameter `name`")
+	}
+	if _, err := tx.tx.ExecContext(ctx, "SAVEPOINT "+quoteIdentifier(s.spec, p.Name)); err != nil {
+		return s.err(req.ID, ErrSQLSyntax, err.Error())
+	}
+	return s.ok(req.ID, nil)
+}
+
+func (s *Server) handleTxRelease(ctx context.Context, req ipc.Message) ipc.Message {
+	var p struct {
+		TxID string `json:"tx_id"`
+		Name string `json:"name"`
+	}
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	tx, ok := s.txs[p.TxID]
+	if !ok {
+		return s.err(req.ID, ErrInvalidParams, fmt.Sprintf("unknown tx_id `%s`", p.TxID))
+	}
+	if p.Name == "" {
+		return s.err(req.ID, ErrInvalidParams, "missing required parameter `name`")
+	}
+	if _, err := tx.tx.ExecContext(ctx, "RELEASE SAVEPOINT "+quoteIdentifier(s.spec, p.Name)); err != nil {
+		return s.err(req.ID, ErrSQLSyntax, err.Error())
+	}
+	return s.ok(req.ID, nil)
+}
+
+func (s *Server) txForRequest(id json.RawMessage, txID string, connID uint64) (*txState, *ipc.Message) {
+	tx, ok := s.txs[txID]
+	if !ok {
+		resp := s.err(id, ErrInvalidParams, fmt.Sprintf("unknown tx_id `%s`", txID))
+		return nil, &resp
+	}
+	if tx.connID != connID {
+		resp := s.err(id, ErrInvalidParams, fmt.Sprintf("tx_id `%s` does not belong to conn_id %d", txID, connID))
+		return nil, &resp
+	}
+	return tx, nil
+}
+
+func isolationLevel(value string) sql.IsolationLevel {
+	switch value {
+	case "read_uncommitted":
+		return sql.LevelReadUncommitted
+	case "read_committed":
+		return sql.LevelReadCommitted
+	case "repeatable_read":
+		return sql.LevelRepeatableRead
+	case "serializable":
+		return sql.LevelSerializable
+	default:
+		return sql.LevelDefault
+	}
+}
+
+func (s *Server) handleDdlBuild(req ipc.Message) ipc.Message {
+	var p struct {
+		Op      string          `json:"op"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	switch p.Op {
+	case "create_table":
+		var payload struct {
+			Spec    tableSpec          `json:"spec"`
+			Options createTableOptions `json:"options"`
+		}
+		if err := decodePayload(p.Payload, &payload); err != nil {
+			return s.err(req.ID, ErrInvalidParams, err.Error())
+		}
+		_, statements, err := buildCreateTableSQL(s.spec, payload.Spec, payload.Options)
+		if err != nil {
+			return s.err(req.ID, ErrInvalidParams, err.Error())
+		}
+		return s.ok(req.ID, map[string]any{"statements": statements, "warnings": []string{}})
+	case "drop_table", "drop_view":
+		var payload struct {
+			Kind     string `json:"kind"`
+			Name     string `json:"name"`
+			Schema   string `json:"schema,omitempty"`
+			Database string `json:"database,omitempty"`
+			IfExists bool   `json:"if_exists,omitempty"`
+			Cascade  bool   `json:"cascade,omitempty"`
+		}
+		if err := decodePayload(p.Payload, &payload); err != nil {
+			return s.err(req.ID, ErrInvalidParams, err.Error())
+		}
+		if payload.Kind == "" {
+			if p.Op == "drop_view" {
+				payload.Kind = "view"
+			} else {
+				payload.Kind = "table"
+			}
+		}
+		sqlText, err := buildDropSQL(s.spec, payload.Kind, payload.Database, payload.Schema, payload.Name, payload.IfExists, payload.Cascade)
+		if err != nil {
+			return s.err(req.ID, ErrInvalidParams, err.Error())
+		}
+		return s.ok(req.ID, map[string]any{"statements": []string{sqlText}, "warnings": []string{}})
+	default:
+		return s.err(req.ID, ErrNotSupported, fmt.Sprintf("ddl op %q is not supported by the generic builder", p.Op))
+	}
+}
+
+func (s *Server) handleDdlBuildCreateTable(req ipc.Message) ipc.Message {
+	var p struct {
+		Spec    tableSpec          `json:"spec"`
+		Options createTableOptions `json:"options"`
+	}
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	sqlText, statements, err := buildCreateTableSQL(s.spec, p.Spec, p.Options)
+	if err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	return s.ok(req.ID, map[string]any{"sql": sqlText, "statements": statements})
+}
+
+func (s *Server) handleDdlBuildAlterTable(req ipc.Message) ipc.Message {
+	var p struct {
+		FromSpec      tableSpec         `json:"from_spec"`
+		ToSpec        tableSpec         `json:"to_spec"`
+		ColumnRenames []columnRenameDDL `json:"column_renames"`
+		Options       alterTableOptions `json:"options"`
+	}
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	statements, rollback, warnings, err := buildAlterTableSQL(s.spec, p.FromSpec, p.ToSpec, p.ColumnRenames, p.Options)
+	if err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	return s.ok(req.ID, map[string]any{"statements": statements, "rollback_statements": rollback, "warnings": warnings})
+}
+
+func (s *Server) handleDdlBuildDrop(req ipc.Message) ipc.Message {
+	var p struct {
+		Kind     string `json:"kind"`
+		Name     string `json:"name"`
+		Schema   string `json:"schema,omitempty"`
+		Database string `json:"database,omitempty"`
+		IfExists bool   `json:"if_exists,omitempty"`
+		Cascade  bool   `json:"cascade,omitempty"`
+	}
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	sqlText, err := buildDropSQL(s.spec, p.Kind, p.Database, p.Schema, p.Name, p.IfExists, p.Cascade)
+	if err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	return s.ok(req.ID, map[string]any{"sql": sqlText})
+}
+
+func (s *Server) handleDataExport(ctx context.Context, req ipc.Message) ipc.Message {
+	var p struct {
+		ConnID         uint64      `json:"conn_id"`
+		Table          string      `json:"table,omitempty"`
+		Schema         string      `json:"schema,omitempty"`
+		Database       string      `json:"database,omitempty"`
+		SQL            string      `json:"sql,omitempty"`
+		Format         string      `json:"format"`
+		WhereClause    string      `json:"where,omitempty"`
+		IncludeColumns []string    `json:"include_columns,omitempty"`
+		ExcludeColumns []string    `json:"exclude_columns,omitempty"`
+		MaxRows        *uint64     `json:"max_rows,omitempty"`
+		Params         []cellValue `json:"params,omitempty"`
+		StreamID       string      `json:"stream_id"`
+	}
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	conn, ok := s.conns[p.ConnID]
+	if !ok {
+		return s.err(req.ID, ErrUnknownConnID, fmt.Sprintf("unknown conn_id %d", p.ConnID))
+	}
+	if p.StreamID == "" {
+		return s.err(req.ID, ErrInvalidParams, "missing required parameter `stream_id`")
+	}
+	sqlText, err := buildExportSQL(s.spec, p.Table, p.Schema, p.Database, p.SQL, p.WhereClause, p.IncludeColumns, p.ExcludeColumns)
+	if err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	args, err := paramsFromWire(p.Params)
+	if err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	data, metadata, count, err := exportRows(ctx, conn.db, sqlText, p.Format, args)
+	if err != nil {
+		return s.err(req.ID, ErrNotSupported, err.Error())
+	}
+	s.streams[p.StreamID] = &streamState{data: data}
+	return s.ok(req.ID, map[string]any{"estimated_bytes": uint64(len(data)), "estimated_rows": count, "metadata": metadata})
+}
+
+func (s *Server) handleDataImportBegin(req ipc.Message) ipc.Message {
+	var p struct {
+		ConnID   uint64   `json:"conn_id"`
+		Table    string   `json:"table"`
+		Schema   string   `json:"schema,omitempty"`
+		Database string   `json:"database,omitempty"`
+		Format   string   `json:"format"`
+		Columns  []string `json:"columns,omitempty"`
+	}
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	if _, ok := s.conns[p.ConnID]; !ok {
+		return s.err(req.ID, ErrUnknownConnID, fmt.Sprintf("unknown conn_id %d", p.ConnID))
+	}
+	switch p.Format {
+	case "json", "ndjson", "csv":
+	default:
+		return s.err(req.ID, ErrNotSupported, fmt.Sprintf("import format %q is not supported by the generic database/sql driver", p.Format))
+	}
+	importID := fmt.Sprintf("%s-import-%d", s.spec.ID, s.nextImport)
+	s.nextImport++
+	s.imports[importID] = &importState{
+		connID:   p.ConnID,
+		table:    p.Table,
+		schema:   p.Schema,
+		database: p.Database,
+		columns:  p.Columns,
+		format:   p.Format,
+		started:  time.Now(),
+	}
+	return s.ok(req.ID, map[string]any{"import_id": importID})
+}
+
+func (s *Server) handleDataImportChunk(ctx context.Context, req ipc.Message) ipc.Message {
+	var p struct {
+		ImportID string        `json:"import_id"`
+		Rows     [][]cellValue `json:"rows"`
+	}
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	imp, ok := s.imports[p.ImportID]
+	if !ok {
+		return s.err(req.ID, ErrInvalidParams, fmt.Sprintf("unknown import_id `%s`", p.ImportID))
+	}
+	conn, ok := s.conns[imp.connID]
+	if !ok {
+		return s.err(req.ID, ErrUnknownConnID, fmt.Sprintf("unknown conn_id %d", imp.connID))
+	}
+	sqlText, err := buildInsertSQL(s.spec, imp)
+	if err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	var inserted uint64
+	failed := []map[string]any{}
+	for index, row := range p.Rows {
+		args, err := cellsToArgs(row)
+		if err == nil {
+			_, err = conn.db.ExecContext(ctx, sqlText, args...)
+		}
+		if err != nil {
+			failed = append(failed, map[string]any{"row_index": uint64(index), "message": err.Error(), "code": ErrSQLSyntax})
+			continue
+		}
+		inserted++
+		imp.inserted++
+	}
+	imp.failed = append(imp.failed, failed...)
+	return s.ok(req.ID, map[string]any{"inserted": inserted, "failed": failed})
+}
+
+func (s *Server) handleDataImportCommit(req ipc.Message) ipc.Message {
+	var p struct {
+		ImportID string `json:"import_id"`
+	}
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	imp, ok := s.imports[p.ImportID]
+	if !ok {
+		return s.err(req.ID, ErrInvalidParams, fmt.Sprintf("unknown import_id `%s`", p.ImportID))
+	}
+	delete(s.imports, p.ImportID)
+	return s.ok(req.ID, map[string]any{
+		"inserted":   imp.inserted,
+		"updated":    uint64(0),
+		"deleted":    uint64(0),
+		"failed":     imp.failed,
+		"elapsed_ms": uint64(time.Since(imp.started).Milliseconds()),
+	})
+}
+
+func (s *Server) handleDataImportAbort(req ipc.Message) ipc.Message {
+	var p struct {
+		ImportID string `json:"import_id"`
+	}
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	delete(s.imports, p.ImportID)
+	return s.ok(req.ID, nil)
+}
+
+func (s *Server) handleStreamRead(req ipc.Message) ipc.Message {
+	var p struct {
+		StreamID string  `json:"stream_id"`
+		MaxBytes *uint32 `json:"max_bytes,omitempty"`
+	}
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	stream, ok := s.streams[p.StreamID]
+	if !ok {
+		return s.err(req.ID, ErrInvalidParams, fmt.Sprintf("unknown stream_id `%s`", p.StreamID))
+	}
+	var maxBytes uint32
+	if p.MaxBytes != nil {
+		maxBytes = *p.MaxBytes
+	}
+	result := streamReadChunk(stream, maxBytes)
+	if done, _ := result["done"].(bool); done {
+		delete(s.streams, p.StreamID)
+	}
+	return s.ok(req.ID, result)
+}
+
+func (s *Server) handleStreamClose(req ipc.Message) ipc.Message {
+	var p struct {
+		StreamID string `json:"stream_id"`
+	}
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	delete(s.streams, p.StreamID)
+	return s.ok(req.ID, nil)
 }
 
 func (s *Server) handleSchemaDatabases(ctx context.Context, req ipc.Message) ipc.Message {
@@ -795,6 +1297,16 @@ func (s *Server) closeAll() {
 		_ = s.closeCursor(id)
 		delete(s.cursors, id)
 	}
+	for id, tx := range s.txs {
+		_ = tx.tx.Rollback()
+		delete(s.txs, id)
+	}
+	for id := range s.imports {
+		delete(s.imports, id)
+	}
+	for id := range s.streams {
+		delete(s.streams, id)
+	}
 	for id, conn := range s.conns {
 		conn.db.Close()
 		delete(s.conns, id)
@@ -806,6 +1318,23 @@ func (s *Server) closeCursorsForConn(connID uint64) {
 		if cursor.connID == connID {
 			_ = s.closeCursor(cursorID)
 			delete(s.cursors, cursorID)
+		}
+	}
+}
+
+func (s *Server) rollbackTxsForConn(connID uint64) {
+	for txID, tx := range s.txs {
+		if tx.connID == connID {
+			_ = tx.tx.Rollback()
+			delete(s.txs, txID)
+		}
+	}
+}
+
+func (s *Server) dropImportsForConn(connID uint64) {
+	for importID, imp := range s.imports {
+		if imp.connID == connID {
+			delete(s.imports, importID)
 		}
 	}
 }

@@ -15,11 +15,13 @@ func ConfigFromWire(raw map[string]any) (dbipc.Config, error) {
 
 func Spec() dbipc.DriverSpec {
 	return dbipc.DriverSpec{
-		ID:            "dm",
-		Name:          "Dameng DM",
-		SQLDriverName: "dm",
-		DefaultPort:   5236,
-		BuildDSN:      buildDSN,
+		ID:                   "dm",
+		Name:                 "Dameng DM",
+		SQLDriverName:        "dm",
+		DefaultPort:          5236,
+		IdentifierQuoteLeft:  `"`,
+		IdentifierQuoteRight: `"`,
+		BuildDSN:             buildDSN,
 		SchemaSQL: dbipc.SchemaSQL{
 			Databases:      dmDatabasesSQL,
 			Schemas:        dmSchemasSQL,

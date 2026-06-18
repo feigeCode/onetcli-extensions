@@ -22,6 +22,62 @@ test("go ipc driver metadata excludes GBase8s", () => {
   assert.deepEqual(ids, ["dm", "kingbase"]);
 });
 
+test("Go IPC driver manifests expose the full shared method surface", () => {
+  const expectedMethods = [
+    "$/ping",
+    "shutdown",
+    "conn/test",
+    "conn/open",
+    "conn/close",
+    "conn/ping",
+    "conn/use",
+    "query/start",
+    "cursor/fetch",
+    "cursor/close",
+    "cursor/cancel",
+    "exec/run",
+    "exec/batch",
+    "tx/begin",
+    "tx/commit",
+    "tx/rollback",
+    "tx/savepoint",
+    "tx/release",
+    "ddl/build",
+    "ddl/build_create_table",
+    "ddl/build_alter_table",
+    "ddl/build_drop",
+    "data/export",
+    "data/import_begin",
+    "data/import_chunk",
+    "data/import_commit",
+    "data/import_abort",
+    "stream/read",
+    "stream/close",
+    "schema/databases",
+    "schema/schemas",
+    "schema/objects",
+    "schema/columns",
+    "schema/indexes",
+    "schema/foreign_keys",
+    "schema/checks",
+    "schema/views",
+    "schema/functions",
+    "schema/procedures",
+    "schema/triggers",
+    "schema/sequences",
+    "schema/types",
+    "schema/view_definition",
+    "schema/dump_ddl",
+  ];
+
+  for (const id of ["dm", "kingbase"]) {
+    const driverJson = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, "extensions/ipc", id, "driver.json"), "utf8"),
+    );
+    assert.deepEqual(driverJson.methods, expectedMethods, `${id} methods drifted`);
+  }
+});
+
 test("package-driver creates a DuckDB package with executable entry command", () => {
   const workdir = makeTempDir();
   createPackageFixture(workdir);

@@ -11,4 +11,5 @@ const (
 	ErrUnknownCursorID  int32 = -32008
 	ErrConnectionFailed int32 = -33001
 	ErrSQLSyntax        int32 = -34001
+	ErrNotSupported     int32 = -35001
 )
