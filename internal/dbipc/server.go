@@ -137,7 +137,7 @@ func (s *Server) Handle(ctx context.Context, req ipc.Message) ipc.Message {
 	case "init":
 		s.initialized = true
 		return s.ok(req.ID, map[string]any{
-			"extension_version": "0.1.1",
+			"extension_version": "0.1.2",
 			"api_used":          map[string]string{"database": "1.0"},
 			"features":          []string{"streaming", "schema_introspection", "rich_errors"},
 			"drivers_ready":     []string{s.spec.ID},
@@ -512,14 +512,16 @@ func (s *Server) handleExecBatch(ctx context.Context, req ipc.Message) ipc.Messa
 		execer = tx
 	}
 
-	results := make([]map[string]any, 0, len(p.Statements))
+	results := make([]map[string]any, len(p.Statements))
+	for i := range results {
+		results[i] = map[string]any{"affected_rows": uint64(0), "warnings": []string{}}
+	}
 	errorsOut := make([]map[string]any, 0)
 	for index, statement := range p.Statements {
 		res, err := execer.ExecContext(ctx, statement)
 		if err != nil {
 			errorsOut = append(errorsOut, map[string]any{
 				"index":   index,
-				"sql":     statement,
 				"code":    ErrSQLSyntax,
 				"message": err.Error(),
 			})
@@ -529,7 +531,7 @@ func (s *Server) handleExecBatch(ctx context.Context, req ipc.Message) ipc.Messa
 			continue
 		}
 		affected, _ := res.RowsAffected()
-		results = append(results, map[string]any{"affected_rows": uint64(affected), "warnings": []string{}})
+		results[index] = map[string]any{"affected_rows": uint64(affected), "warnings": []string{}}
 	}
 
 	if tx != nil {

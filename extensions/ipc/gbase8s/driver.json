@@ -3,7 +3,7 @@
   "name": "GBase 8s",
   "description": "南大通用 GBase 8s Java IPC 驱动",
   "category": "domestic_database",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "entry": {
     "command": "./gbase8s-ipc-driver",
     "commands": {
@@ -324,7 +324,440 @@
         }
       ],
       "actions": {
-        "actions": []
+        "actions": [
+          {
+            "id": "RunSqlFile",
+            "label_i18n_key": "ImportExport.run_sql_file",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "Connection"
+              },
+              {
+                "node_type": "Database"
+              },
+              {
+                "node_type": "Schema"
+              }
+            ],
+            "placement": "ContextMenu",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": null
+          },
+          {
+            "id": "CloseConnection",
+            "label_i18n_key": "Connection.close_connection",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "Connection"
+              }
+            ],
+            "placement": "Both",
+            "requires_active_connection": false,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": "SelectedRow"
+          },
+          {
+            "id": "DeleteConnection",
+            "label_i18n_key": "Connection.delete_connection",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "Connection"
+              }
+            ],
+            "placement": "Both",
+            "requires_active_connection": false,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": "SelectedRow"
+          },
+          {
+            "id": "DesignTable",
+            "label_i18n_key": "Table.new_table",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "Database"
+              },
+              {
+                "node_type": "Schema"
+              },
+              {
+                "node_type": "TablesFolder"
+              }
+            ],
+            "placement": "Both",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": "CurrentNode"
+          },
+          {
+            "id": "DesignTable",
+            "label_i18n_key": "Table.design_table",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "Table"
+              }
+            ],
+            "placement": "Both",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": "CurrentNode"
+          },
+          {
+            "id": "CreateNewQuery",
+            "label_i18n_key": "Query.new_query",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "Database"
+              },
+              {
+                "node_type": "Schema"
+              },
+              {
+                "node_type": "QueriesFolder"
+              }
+            ],
+            "placement": "ContextMenu",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": null
+          },
+          {
+            "id": "CreateNewQuery",
+            "label_i18n_key": "Query.new_query",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "QueriesFolder"
+              },
+              {
+                "node_type": "NamedQuery"
+              },
+              {
+                "node_type": "Schema"
+              }
+            ],
+            "placement": "Toolbar",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": "CurrentNode"
+          },
+          {
+            "id": "OpenTableData",
+            "label_i18n_key": "Table.view_data",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "Table"
+              }
+            ],
+            "placement": "Both",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": "SelectedRow"
+          },
+          {
+            "id": "OpenTableData",
+            "label_i18n_key": "Table.view_data",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "Table"
+              }
+            ],
+            "placement": "Toolbar",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": "CurrentNode"
+          },
+          {
+            "id": "RenameTable",
+            "label_i18n_key": "Table.rename_table",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "Table"
+              }
+            ],
+            "placement": "ContextMenu",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": null
+          },
+          {
+            "id": "CopyTable",
+            "label_i18n_key": "Table.copy_table",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "Table"
+              }
+            ],
+            "placement": "ContextMenu",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": null
+          },
+          {
+            "id": "TruncateTable",
+            "label_i18n_key": "Table.truncate_table",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "Table"
+              }
+            ],
+            "placement": "ContextMenu",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": null
+          },
+          {
+            "id": "DeleteTable",
+            "label_i18n_key": "Table.delete_table",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "Table"
+              }
+            ],
+            "placement": "Both",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": "SelectedRow"
+          },
+          {
+            "id": "DeleteTable",
+            "label_i18n_key": "Table.delete_table",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "Table"
+              }
+            ],
+            "placement": "Toolbar",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": "CurrentNode"
+          },
+          {
+            "id": "DumpSqlStructure",
+            "label_i18n_key": "ImportExport.export_structure",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "Database"
+              },
+              {
+                "node_type": "Schema"
+              },
+              {
+                "node_type": "Table"
+              }
+            ],
+            "placement": "ContextMenu",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": null
+          },
+          {
+            "id": "DumpSqlData",
+            "label_i18n_key": "ImportExport.export_data",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "Database"
+              },
+              {
+                "node_type": "Schema"
+              },
+              {
+                "node_type": "Table"
+              }
+            ],
+            "placement": "ContextMenu",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": null
+          },
+          {
+            "id": "DumpSqlStructureAndData",
+            "label_i18n_key": "ImportExport.export_structure_and_data",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "Database"
+              },
+              {
+                "node_type": "Schema"
+              },
+              {
+                "node_type": "Table"
+              }
+            ],
+            "placement": "ContextMenu",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": null
+          },
+          {
+            "id": "ImportData",
+            "label_i18n_key": "ImportExport.import_data",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "Table"
+              }
+            ],
+            "placement": "ContextMenu",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": null
+          },
+          {
+            "id": "ExportData",
+            "label_i18n_key": "ImportExport.export_table",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "Table"
+              }
+            ],
+            "placement": "ContextMenu",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": null
+          },
+          {
+            "id": "OpenViewData",
+            "label_i18n_key": "View.view_data",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "View"
+              }
+            ],
+            "placement": "Both",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": "SelectedRow"
+          },
+          {
+            "id": "OpenViewData",
+            "label_i18n_key": "View.view_data",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "View"
+              }
+            ],
+            "placement": "Toolbar",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": "CurrentNode"
+          },
+          {
+            "id": "DeleteView",
+            "label_i18n_key": "View.delete_view",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "View"
+              }
+            ],
+            "placement": "Both",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": "SelectedRow"
+          },
+          {
+            "id": "DeleteView",
+            "label_i18n_key": "View.delete_view",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "View"
+              }
+            ],
+            "placement": "Toolbar",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": "CurrentNode"
+          },
+          {
+            "id": "OpenNamedQuery",
+            "label_i18n_key": "Query.open_query",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "NamedQuery"
+              }
+            ],
+            "placement": "Both",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": "SelectedRow"
+          },
+          {
+            "id": "RenameQuery",
+            "label_i18n_key": "Query.rename_query",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "NamedQuery"
+              }
+            ],
+            "placement": "Both",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": "SelectedRow"
+          },
+          {
+            "id": "DeleteQuery",
+            "label_i18n_key": "Query.delete_query",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "NamedQuery"
+              }
+            ],
+            "placement": "Both",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": "SelectedRow"
+          }
+        ]
       }
     }
   }

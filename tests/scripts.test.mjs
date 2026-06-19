@@ -373,6 +373,50 @@ test("IPC driver connection forms declare host-managed SSH and remark tabs", () 
   }
 });
 
+test("IPC driver manifests expose context menu actions for supported object workflows", () => {
+  const ids = fs
+    .readdirSync(path.join(repoRoot, "extensions/ipc"))
+    .filter((id) => fs.existsSync(path.join(repoRoot, "extensions/ipc", id, "driver.json")))
+    .sort();
+
+  for (const id of ids) {
+    const driverJson = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, "extensions/ipc", id, "driver.json"), "utf8"),
+    );
+    const actions = driverJson.ui?.form?.actions?.actions;
+    assert.ok(Array.isArray(actions), `${id} should declare ui.form.actions.actions`);
+
+    assertHasAction(actions, id, "CloseConnection", "Connection");
+    assertHasAction(actions, id, "DeleteConnection", "Connection");
+
+    if (driverJson.methods.includes("exec/batch")) {
+      assertHasAction(actions, id, "RunSqlFile", "Connection");
+      assertHasAction(actions, id, "RunSqlFile", "Database");
+      assertHasAction(actions, id, "RunSqlFile", "Schema");
+    }
+    if (driverJson.methods.includes("ddl/build_create_table")) {
+      assertHasAction(actions, id, "DesignTable", "Schema");
+      assertHasAction(actions, id, "DesignTable", "TablesFolder");
+      assertHasAction(actions, id, "DesignTable", "Table");
+    }
+    if (driverJson.methods.includes("data/export")) {
+      assertHasAction(actions, id, "OpenTableData", "Table");
+      assertHasAction(actions, id, "ExportData", "Table");
+      assertHasAction(actions, id, "OpenViewData", "View");
+    }
+    if (driverJson.methods.includes("data/import_begin")) {
+      assertHasAction(actions, id, "ImportData", "Table");
+    }
+    if (driverJson.methods.includes("schema/dump_ddl")) {
+      assertHasAction(actions, id, "DumpSqlStructure", "Database");
+      assertHasAction(actions, id, "DumpSqlStructure", "Schema");
+      assertHasAction(actions, id, "DumpSqlStructure", "Table");
+      assertHasAction(actions, id, "DumpSqlData", "Table");
+      assertHasAction(actions, id, "DumpSqlStructureAndData", "Table");
+    }
+  }
+});
+
 test("package-driver creates a DuckDB package with executable entry command", () => {
   const workdir = makeTempDir();
   createPackageFixture(workdir);
@@ -1521,6 +1565,16 @@ function escapeRegExp(value) {
 
 function isRelativeAssetPath(value) {
   return value.includes("/") || value.includes("\\");
+}
+
+function assertHasAction(actions, driverId, actionId, nodeType) {
+  assert.ok(
+    actions.some((action) =>
+      action.id === actionId
+      && action.targets?.some((target) => target.node_type === nodeType)
+    ),
+    `${driverId} should expose ${actionId} for ${nodeType}`,
+  );
 }
 
 function git(workdir, ...args) {

@@ -417,11 +417,14 @@ func TestExecBatchRunsStatementsAndStopsOnError(t *testing.T) {
 		Errors  []map[string]any `json:"errors"`
 	}
 	decodeResult(t, resp, &result)
-	if len(result.Results) != 1 {
-		t.Fatalf("results = %#v, want one successful statement before error", result.Results)
+	if len(result.Results) != 3 {
+		t.Fatalf("results = %#v, want one result placeholder per statement", result.Results)
 	}
-	if len(result.Errors) != 1 || result.Errors[0]["message"] != "batch exec failure" {
-		t.Fatalf("errors = %#v, want recorded batch exec failure", result.Errors)
+	if result.Results[0]["affected_rows"] != float64(1) || result.Results[1]["affected_rows"] != float64(0) || result.Results[2]["affected_rows"] != float64(0) {
+		t.Fatalf("results = %#v, want successful row count then zero placeholders", result.Results)
+	}
+	if len(result.Errors) != 1 || result.Errors[0]["index"] != float64(1) || result.Errors[0]["message"] != "batch exec failure" {
+		t.Fatalf("errors = %#v, want zero-based failed statement index and message", result.Errors)
 	}
 	if got := atomic.LoadInt32(&state.execCalls); got != 2 {
 		t.Fatalf("exec calls = %d, want stop after second statement", got)
