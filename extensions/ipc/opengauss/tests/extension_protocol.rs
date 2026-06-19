@@ -141,7 +141,7 @@ fn opengauss_manifest_reuses_host_postgresql_ssl_tab_contract() {
         .iter()
         .map(|tab| tab["id"].as_str().expect("tab id is string"))
         .collect::<Vec<_>>();
-    assert_eq!(tab_ids, ["general", "ssl"]);
+    assert_eq!(tab_ids, ["general", "ssl", "ssh", "remark"]);
 
     let ssl_tab = tabs
         .iter()
@@ -162,6 +162,27 @@ fn opengauss_manifest_reuses_host_postgresql_ssl_tab_contract() {
             "ssl_accept_invalid_hostnames",
         ]
     );
+}
+
+#[test]
+fn opengauss_manifest_declares_host_managed_empty_tabs() {
+    let manifest = declared_manifest();
+    let tabs = manifest["ui"]["form"]["forms"][0]["tabs"]
+        .as_array()
+        .expect("connection form tabs are an array");
+    for tab_id in ["ssh", "remark"] {
+        let tab = tabs
+            .iter()
+            .find(|tab| tab["id"] == tab_id)
+            .unwrap_or_else(|| panic!("{tab_id} tab is declared"));
+        assert!(
+            tab["fields"]
+                .as_array()
+                .expect("host-managed tab fields are an array")
+                .is_empty(),
+            "{tab_id} tab should let the host provide its managed fields",
+        );
+    }
 }
 
 fn declared_driver_methods() -> Vec<String> {

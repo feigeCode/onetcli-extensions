@@ -206,6 +206,16 @@
                   "max": null
                 }
               ]
+            },
+            {
+              "id": "ssh",
+              "label_i18n_key": "ConnectionForm.ssh",
+              "fields": []
+            },
+            {
+              "id": "remark",
+              "label_i18n_key": "ConnectionForm.remark",
+              "fields": []
             }
           ]
         }

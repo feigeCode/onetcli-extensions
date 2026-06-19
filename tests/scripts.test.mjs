@@ -303,6 +303,32 @@ test("IPC connection form extra params use raw extra parameter keys", () => {
   }
 });
 
+test("IPC driver connection forms declare host-managed SSH and remark tabs", () => {
+  const ids = fs
+    .readdirSync(path.join(repoRoot, "extensions/ipc"))
+    .filter((id) => fs.existsSync(path.join(repoRoot, "extensions/ipc", id, "driver.json")))
+    .sort();
+
+  for (const id of ids) {
+    const driverJson = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, "extensions/ipc", id, "driver.json"), "utf8"),
+    );
+    const connectionForm = driverJson.ui?.form?.forms?.find((form) => form.kind === "Connection");
+    assert.ok(connectionForm, `${id} should declare a Connection form`);
+
+    const tabs = connectionForm.tabs || [];
+    for (const tabId of ["ssh", "remark"]) {
+      const tab = tabs.find((candidate) => candidate.id === tabId);
+      assert.ok(tab, `${id} should declare the host-managed ${tabId} tab`);
+      assert.deepEqual(
+        tab.fields,
+        [],
+        `${id} ${tabId} tab should let the host provide its managed fields`,
+      );
+    }
+  }
+});
+
 test("package-driver creates a DuckDB package with executable entry command", () => {
   const workdir = makeTempDir();
   createPackageFixture(workdir);

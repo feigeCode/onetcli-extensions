@@ -104,6 +104,136 @@
     "icon": "icons/dm.svg",
     "icon_color": "icons/dm.svg",
     "locales_dir": "locales",
-    "default_port": 5236
+    "default_port": 5236,
+    "form": {
+      "schema_version": 1,
+      "forms": [
+        {
+          "kind": "Connection",
+          "title_i18n_key": "Dameng DM",
+          "submit_i18n_key": "Connect",
+          "tabs": [
+            {
+              "id": "general",
+              "label_i18n_key": "ConnectionForm.general",
+              "fields": [
+                {
+                  "id": "name",
+                  "label_i18n_key": "ConnectionForm.connection_name",
+                  "field_type": "Text",
+                  "required": true,
+                  "default_value": "Dameng DM",
+                  "placeholder_i18n_key": "Dameng DM",
+                  "help_i18n_key": null,
+                  "options": [],
+                  "options_source": null,
+                  "visible_when": [],
+                  "default_when": [],
+                  "disabled_when_editing": false,
+                  "rows": null,
+                  "min": null,
+                  "max": null
+                },
+                {
+                  "id": "host",
+                  "label_i18n_key": "ConnectionForm.host",
+                  "field_type": "Text",
+                  "required": true,
+                  "default_value": "localhost",
+                  "placeholder_i18n_key": "localhost",
+                  "help_i18n_key": null,
+                  "options": [],
+                  "options_source": null,
+                  "visible_when": [],
+                  "default_when": [],
+                  "disabled_when_editing": false,
+                  "rows": null,
+                  "min": null,
+                  "max": null
+                },
+                {
+                  "id": "port",
+                  "label_i18n_key": "ConnectionForm.port",
+                  "field_type": "Number",
+                  "required": true,
+                  "default_value": "5236",
+                  "placeholder_i18n_key": "0",
+                  "help_i18n_key": null,
+                  "options": [],
+                  "options_source": null,
+                  "visible_when": [],
+                  "default_when": [],
+                  "disabled_when_editing": false,
+                  "rows": null,
+                  "min": null,
+                  "max": null
+                },
+                {
+                  "id": "username",
+                  "label_i18n_key": "ConnectionForm.username",
+                  "field_type": "Text",
+                  "required": false,
+                  "default_value": null,
+                  "placeholder_i18n_key": null,
+                  "help_i18n_key": null,
+                  "options": [],
+                  "options_source": null,
+                  "visible_when": [],
+                  "default_when": [],
+                  "disabled_when_editing": false,
+                  "rows": null,
+                  "min": null,
+                  "max": null
+                },
+                {
+                  "id": "password",
+                  "label_i18n_key": "ConnectionForm.password",
+                  "field_type": "Password",
+                  "required": false,
+                  "default_value": null,
+                  "placeholder_i18n_key": null,
+                  "help_i18n_key": null,
+                  "options": [],
+                  "options_source": null,
+                  "visible_when": [],
+                  "default_when": [],
+                  "disabled_when_editing": false,
+                  "rows": null,
+                  "min": null,
+                  "max": null
+                },
+                {
+                  "id": "database",
+                  "label_i18n_key": "ConnectionForm.database",
+                  "field_type": "Text",
+                  "required": false,
+                  "default_value": null,
+                  "placeholder_i18n_key": null,
+                  "help_i18n_key": null,
+                  "options": [],
+                  "options_source": null,
+                  "visible_when": [],
+                  "default_when": [],
+                  "disabled_when_editing": false,
+                  "rows": null,
+                  "min": null,
+                  "max": null
+                }
+              ]
+            },
+            {
+              "id": "ssh",
+              "label_i18n_key": "ConnectionForm.ssh",
+              "fields": []
+            },
+            {
+              "id": "remark",
+              "label_i18n_key": "ConnectionForm.remark",
+              "fields": []
+            }
+          ]
+        }
+      ]
+    }
   }
 }
