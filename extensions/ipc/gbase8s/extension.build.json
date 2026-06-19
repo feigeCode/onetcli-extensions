@@ -6,6 +6,9 @@
   "binary": "gbase8s-ipc-driver",
   "jar": "gbase8s-ipc-driver.jar",
   "path": "extensions/ipc/gbase8s",
+  "source_paths": [
+    "java/gbase8s-ipc-driver"
+  ],
   "targets": [
     "universal"
   ],

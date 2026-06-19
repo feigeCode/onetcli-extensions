@@ -17,38 +17,32 @@ const changedFiles = execFileSync(
   .split(/\n/)
   .filter(Boolean);
 
-const sharedChange = changedFiles.some((file) =>
-  file.startsWith("scripts/") ||
-  file.startsWith("crates/") ||
-  file.startsWith(".github/workflows/"),
-);
-
 const changedIds = new Set();
-if (sharedChange) {
-  for (const extension of extensions) changedIds.add(extension.id);
-} else {
-  for (const file of changedFiles) {
-    for (const extension of extensions) {
-      if (file === extension.path || file.startsWith(`${extension.path}/`)) {
-        changedIds.add(extension.id);
-      }
+for (const file of changedFiles) {
+  for (const extension of extensions) {
+    if (extensionMatchesPath(extension, file)) {
+      changedIds.add(extension.id);
     }
+  }
+
+  if (isRustSharedPath(file)) {
+    addExtensionsByLanguage(changedIds, extensions, "rust");
+  }
+  if (isGoSharedPath(file)) {
+    addExtensionsByLanguage(changedIds, extensions, "go");
   }
 }
 
 const include = [];
 for (const extension of extensions) {
   if (!changedIds.has(extension.id)) continue;
-  for (const target of extension.targets) {
-    include.push({
-      extension: extension.id,
-      package: extension.package || "",
-      kind: extension.kind,
-      language: extension.language || "rust",
-      target,
-      os: runnerForTarget(target, extension.language || "rust"),
-    });
-  }
+  include.push({
+    extension: extension.id,
+    package: extension.package || "",
+    kind: extension.kind,
+    language: extension.language || "rust",
+    os: "ubuntu-latest",
+  });
 }
 
 process.stdout.write(`${JSON.stringify({ include })}\n`);
@@ -71,12 +65,37 @@ function loadExtensions() {
   return result;
 }
 
-function runnerForTarget(target, language) {
-  if (language === "go") return "ubuntu-latest";
-  if (target === "universal") return "ubuntu-latest";
-  if (target.includes("apple-darwin")) {
-    return target.startsWith("x86_64") ? "macos-15-intel" : "macos-latest";
+function extensionMatchesPath(extension, file) {
+  return extensionSourcePaths(extension).some((sourcePath) =>
+    file === sourcePath || file.startsWith(`${sourcePath}/`),
+  );
+}
+
+function extensionSourcePaths(extension) {
+  const paths = [extension.path, ...(extension.source_paths || [])];
+  if (typeof extension.package === "string" && extension.package.includes("/")) {
+    paths.push(extension.package.replace(/^\.\//, ""));
   }
-  if (target.includes("windows")) return "windows-2022";
-  return "ubuntu-latest";
+  return [...new Set(paths.filter(Boolean).map((item) => item.replace(/\/$/, "")))];
+}
+
+function addExtensionsByLanguage(changedIds, extensions, language) {
+  for (const extension of extensions) {
+    if ((extension.language || "rust") === language) {
+      changedIds.add(extension.id);
+    }
+  }
+}
+
+function isRustSharedPath(file) {
+  return file === "Cargo.toml" || file === "Cargo.lock" || file === "rustfmt.toml";
+}
+
+function isGoSharedPath(file) {
+  return (
+    file === "go.mod" ||
+    file === "go.sum" ||
+    file.startsWith("internal/") ||
+    file.startsWith("vendor/")
+  );
 }

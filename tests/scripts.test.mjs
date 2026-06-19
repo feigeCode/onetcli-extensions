@@ -1053,22 +1053,13 @@ test("changed-extensions emits matrix entries only for changed extension paths",
         package: "duckdb_driver",
         kind: "database_driver",
         language: "rust",
-        target: "x86_64-unknown-linux-gnu",
         os: "ubuntu-latest",
-      },
-      {
-        extension: "duckdb",
-        package: "duckdb_driver",
-        kind: "database_driver",
-        language: "rust",
-        target: "x86_64-pc-windows-msvc",
-        os: "windows-2022",
       },
     ],
   });
 });
 
-test("changed-extensions runs Go package builds on Ubuntu for cross compilation", () => {
+test("changed-extensions emits one Ubuntu test entry for Go extensions", () => {
   const workdir = makeTempDir();
   copyScript("changed-extensions.mjs", workdir);
   writeJson(path.join(workdir, "extensions/ipc/dm/extension.build.json"), {
@@ -1103,11 +1094,93 @@ test("changed-extensions runs Go package builds on Ubuntu for cross compilation"
   );
 
   const matrix = JSON.parse(output);
-  assert.equal(matrix.include.length, 5);
-  assert.deepEqual(
-    matrix.include.map((entry) => entry.os),
-    ["ubuntu-latest", "ubuntu-latest", "ubuntu-latest", "ubuntu-latest", "ubuntu-latest"],
+  assert.deepEqual(matrix.include, [
+    {
+      extension: "dm",
+      package: "./cmd/dm-ipc-driver",
+      kind: "database_driver",
+      language: "go",
+      os: "ubuntu-latest",
+    },
+  ]);
+});
+
+test("changed-extensions maps declared source paths to the owning extension", () => {
+  const workdir = makeTempDir();
+  copyScript("changed-extensions.mjs", workdir);
+  writeJson(path.join(workdir, "extensions/ipc/gbase8s/extension.build.json"), {
+    id: "gbase8s",
+    kind: "database_driver",
+    language: "java",
+    package: "java/gbase8s-ipc-driver",
+    binary: "gbase8s-ipc-driver",
+    path: "extensions/ipc/gbase8s",
+    source_paths: ["java/gbase8s-ipc-driver"],
+    targets: ["universal"],
+  });
+  writeJson(path.join(workdir, "extensions/ipc/duckdb/extension.build.json"), {
+    id: "duckdb",
+    kind: "database_driver",
+    package: "duckdb_driver",
+    path: "extensions/ipc/duckdb",
+    targets: ["x86_64-unknown-linux-gnu"],
+  });
+  fs.mkdirSync(path.join(workdir, "java/gbase8s-ipc-driver/src"), { recursive: true });
+  fs.writeFileSync(path.join(workdir, "java/gbase8s-ipc-driver/src/Main.java"), "class Main {}\n");
+  git(workdir, "init");
+  git(workdir, "add", ".");
+  git(workdir, "commit", "-m", "base");
+  const base = git(workdir, "rev-parse", "HEAD").trim();
+  fs.writeFileSync(path.join(workdir, "java/gbase8s-ipc-driver/src/Main.java"), "class Main2 {}\n");
+  git(workdir, "add", ".");
+  git(workdir, "commit", "-m", "change gbase java");
+  const head = git(workdir, "rev-parse", "HEAD").trim();
+
+  const output = execFileSync(
+    "node",
+    [path.join(workdir, "scripts/changed-extensions.mjs"), base, head],
+    { cwd: workdir, encoding: "utf8" },
   );
+
+  assert.deepEqual(JSON.parse(output).include, [
+    {
+      extension: "gbase8s",
+      package: "java/gbase8s-ipc-driver",
+      kind: "database_driver",
+      language: "java",
+      os: "ubuntu-latest",
+    },
+  ]);
+});
+
+test("changed-extensions does not expand workflow-only changes into extension tests", () => {
+  const workdir = makeTempDir();
+  copyScript("changed-extensions.mjs", workdir);
+  writeJson(path.join(workdir, "extensions/ipc/duckdb/extension.build.json"), {
+    id: "duckdb",
+    kind: "database_driver",
+    package: "duckdb_driver",
+    path: "extensions/ipc/duckdb",
+    targets: ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"],
+  });
+  fs.mkdirSync(path.join(workdir, ".github/workflows"), { recursive: true });
+  fs.writeFileSync(path.join(workdir, ".github/workflows/ci.yml"), "name: CI\n");
+  git(workdir, "init");
+  git(workdir, "add", ".");
+  git(workdir, "commit", "-m", "base");
+  const base = git(workdir, "rev-parse", "HEAD").trim();
+  fs.writeFileSync(path.join(workdir, ".github/workflows/ci.yml"), "name: CI changed\n");
+  git(workdir, "add", ".");
+  git(workdir, "commit", "-m", "change workflow");
+  const head = git(workdir, "rev-parse", "HEAD").trim();
+
+  const output = execFileSync(
+    "node",
+    [path.join(workdir, "scripts/changed-extensions.mjs"), base, head],
+    { cwd: workdir, encoding: "utf8" },
+  );
+
+  assert.deepEqual(JSON.parse(output), { include: [] });
 });
 
 test("generate-marketplace-manifest writes lightweight artifacts without fallback assets", () => {
@@ -1315,22 +1388,26 @@ test("CI workflow routes Rust, Go, and Java extension jobs by language", () => {
   const workflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/ci.yml"), "utf8");
   const releaseWorkflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/release.yml"), "utf8");
 
+  assert.match(workflow, /name: Repository checks/);
+  assert.match(workflow, /node --test tests\/scripts\.test\.mjs/);
+  assert.match(workflow, /Validate workflow YAML/);
   assert.match(workflow, /matrix\.language == 'rust'/);
   assert.match(workflow, /matrix\.language == 'go'/);
   assert.match(workflow, /matrix\.language == 'java'/);
   assert.match(workflow, /actions\/setup-go@v5/);
   assert.match(workflow, /actions\/setup-java@v4/);
-  assert.match(workflow, /scripts\/build-go-driver\.sh/);
-  assert.match(workflow, /scripts\/build-java-driver\.sh/);
-  assert.match(workflow, /if: \$\{\{ matrix\.language == 'java' \}\}\n\s+run: bash scripts\/build-java-driver\.sh/);
+  assert.match(workflow, /run: cargo test -p \$\{\{ matrix\.package \}\} -- --nocapture/);
+  assert.match(workflow, /run: go test \.\/\.\.\./);
+  assert.match(workflow, /run: mvn -f "\$\{\{ matrix\.package \}\}\/pom\.xml" test/);
+  assert.doesNotMatch(workflow, /name: Package/);
+  assert.doesNotMatch(workflow, /cargo build --release/);
+  assert.doesNotMatch(workflow, /scripts\/build-go-driver\.sh/);
+  assert.doesNotMatch(workflow, /scripts\/build-java-driver\.sh/);
+  assert.doesNotMatch(workflow, /scripts\/package-driver\.sh/);
+  assert.doesNotMatch(workflow, /scripts\/verify-package\.sh/);
+  assert.doesNotMatch(workflow, /aarch64-unknown-linux-gnu/);
   assert.match(releaseWorkflow, /if: \$\{\{ matrix\.language == 'java' \}\}\n\s+run: bash scripts\/build-java-driver\.sh/);
-  assert.match(workflow, /matrix\.language == 'rust' && matrix\.target == 'aarch64-unknown-linux-gnu'/);
-  assert.match(workflow, /gcc-aarch64-linux-gnu/);
-  assert.match(workflow, /g\+\+-aarch64-linux-gnu/);
-  assert.match(workflow, /CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER/);
-  assert.match(workflow, /CXX_aarch64_unknown_linux_gnu/);
   assert.doesNotMatch(workflow, /DUCKDB_DOWNLOAD_LIB/);
-  assert.doesNotMatch(workflow, /name: Test Rust package\n\s+if: \$\{\{ matrix\.package != '' \}\}\n\s+run: cargo test -p \$\{\{ matrix\.package \}\}/);
   assert.match(releaseWorkflow, /if \(language === "go"\) return "ubuntu-latest";/);
   assert.match(
     releaseWorkflow,

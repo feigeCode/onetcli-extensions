@@ -13,6 +13,16 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  repo-checks:
+    name: Repository checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test repository scripts
+        run: node --test tests/scripts.test.mjs
+      - name: Validate workflow YAML
+        run: ruby -e 'require "yaml"; YAML.load_file(".github/workflows/ci.yml"); YAML.load_file(".github/workflows/release.yml"); YAML.load_file(".github/workflows/upload-r2.yml"); puts "workflow yaml ok"'
+
   detect:
     name: Detect changed extensions
     runs-on: ubuntu-latest
@@ -33,7 +43,7 @@ jobs:
           echo "has_changes=$(node -e 'const fs = require("fs"); const m = JSON.parse(fs.readFileSync("matrix.json", "utf8")); process.stdout.write(m.include.length > 0 ? "true" : "false");')" >> "$GITHUB_OUTPUT"
 
   test:
-    name: Test changed packages
+    name: Test changed extensions
     needs: detect
     if: ${{ needs.detect.outputs.has_changes == 'true' }}
     strategy:
@@ -62,57 +72,3 @@ jobs:
       - name: Test Java driver
         if: ${{ matrix.language == 'java' }}
         run: mvn -f "${{ matrix.package }}/pom.xml" test
-
-  package:
-    name: Package (${{ matrix.extension }} / ${{ matrix.target }})
-    needs: detect
-    if: ${{ needs.detect.outputs.has_changes == 'true' }}
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.detect.outputs.matrix) }}
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        if: ${{ matrix.language == 'rust' && matrix.target != 'universal' }}
-        with:
-          target: ${{ matrix.target }}
-      - uses: actions/setup-go@v5
-        if: ${{ matrix.language == 'go' && matrix.target != 'universal' }}
-        with:
-          go-version-file: go.mod
-      - uses: actions/setup-java@v4
-        if: ${{ matrix.language == 'java' }}
-        with:
-          distribution: temurin
-          java-version: '11'
-      - name: Install Linux Rust cross toolchain
-        if: ${{ matrix.language == 'rust' && matrix.target == 'aarch64-unknown-linux-gnu' }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-      - name: Build
-        if: ${{ matrix.language == 'rust' && matrix.package != '' && matrix.target != 'universal' }}
-        env:
-          CC_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '' }}
-          CXX_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-g++' || '' }}
-          AR_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-ar' || '' }}
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '' }}
-        run: cargo build --release -p ${{ matrix.package }} --target ${{ matrix.target }}
-      - name: Build Go driver
-        if: ${{ matrix.language == 'go' && matrix.target != 'universal' }}
-        run: bash scripts/build-go-driver.sh "${{ matrix.extension }}" "${{ matrix.target }}"
-      - name: Build Java driver
-        if: ${{ matrix.language == 'java' }}
-        run: bash scripts/build-java-driver.sh "${{ matrix.extension }}" "${{ matrix.target }}"
-      - name: Package
-        shell: bash
-        run: |
-          mkdir -p artifacts
-          if [ "${{ matrix.kind }}" = "database_driver" ]; then
-            bash scripts/package-driver.sh "${{ matrix.extension }}" "${{ matrix.target }}" artifacts 1.0.0-ci
-            bash scripts/verify-package.sh "artifacts/${{ matrix.extension }}-driver-${{ matrix.target }}.tar.gz"
-          else
-            echo "::error::Unsupported extension kind in CI package workflow: ${{ matrix.kind }}"
-            exit 1
-          fi
