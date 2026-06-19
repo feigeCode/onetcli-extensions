@@ -550,7 +550,8 @@ public final class GBase8sIpcServer {
     private List<Map<String, Object>> objectViewColumns(String... values) {
         List<Map<String, Object>> columns = new ArrayList<Map<String, Object>>();
         for (int i = 0; i + 1 < values.length; i += 2) {
-            columns.add(objectViewColumn(values[i], values[i + 1], 0, ""));
+            int width = "name".equals(values[i]) ? 220 : 0;
+            columns.add(objectViewColumn(values[i], values[i + 1], width, ""));
         }
         return columns;
     }

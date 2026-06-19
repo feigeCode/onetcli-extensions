@@ -100,8 +100,14 @@ public class GBase8sIpcServerTest {
         assertEquals("Columns", columnView.get("result").get("title").asText());
         assertEquals("name", columnView.get("result").get("columns").get(0).get("key").asText());
         assertEquals("Field", columnView.get("result").get("columns").get(0).get("name").asText());
+        assertEquals(220, columnView.get("result").get("columns").get(0).get("width_px").asInt());
         assertEquals("id", columnView.get("result").get("rows").get(0).get(0).asText());
         assertEquals("INTEGER", columnView.get("result").get("rows").get(0).get(1).asText());
+
+        JsonNode tableView = server.handle(request(8, "schema/object_view", "{\"conn_id\":" + connId + ",\"view\":\"tables\",\"database\":\"stores\",\"schema\":\"gbasedbt\"}"));
+        assertEquals("Tables", tableView.get("result").get("title").asText());
+        assertEquals("name", tableView.get("result").get("columns").get(0).get("key").asText());
+        assertEquals(220, tableView.get("result").get("columns").get(0).get("width_px").asInt());
     }
 
     private GBase8sIpcServer newServer() {

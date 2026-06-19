@@ -1152,7 +1152,11 @@ func indexObjectViewColumns() []objectViewColumn {
 func objectViewColumns(values ...string) []objectViewColumn {
 	columns := make([]objectViewColumn, 0, len(values)/2)
 	for i := 0; i+1 < len(values); i += 2 {
-		columns = append(columns, objectViewColumnWithWidth(values[i], values[i+1], 0, ""))
+		width := 0.0
+		if values[i] == "name" {
+			width = 220
+		}
+		columns = append(columns, objectViewColumnWithWidth(values[i], values[i+1], width, ""))
 	}
 	return columns
 }

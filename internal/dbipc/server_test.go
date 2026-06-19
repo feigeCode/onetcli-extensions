@@ -704,6 +704,44 @@ func TestSchemaObjectsUsesDriverSQLAndReturnsKind(t *testing.T) {
 	}
 }
 
+func TestSchemaObjectViewTablesSetsNameColumnWidth(t *testing.T) {
+	driverName, state := registerStreamingDriver(t, [][]driver.Value{
+		{"demo", "table", "demo table"},
+	})
+	state.columns = []string{"object_name", "kind", "comment"}
+	spec := testSpecWithSQLDriver(driverName)
+	spec.SchemaSQL.Objects = func(cfg Config, database, schema string, kinds []string) string {
+		return "SELECT object_name, kind, comment FROM test_objects"
+	}
+	server := NewServer(spec, nil)
+	server.initialized = true
+
+	connID := openTestConn(t, server)
+	resp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "schema/object_view",
+		Params:  []byte(fmt.Sprintf(`{"conn_id":%d,"view":"tables","database":"main","schema":"app"}`, connID)),
+	})
+	if resp.Error != nil {
+		t.Fatalf("schema/object_view returned error: %#v", resp.Error)
+	}
+
+	var result struct {
+		Columns []struct {
+			Key     string   `json:"key"`
+			WidthPx *float64 `json:"width_px"`
+		} `json:"columns"`
+	}
+	decodeResult(t, resp, &result)
+	if len(result.Columns) == 0 || result.Columns[0].Key != "name" {
+		t.Fatalf("columns = %#v", result.Columns)
+	}
+	if result.Columns[0].WidthPx == nil || *result.Columns[0].WidthPx != 220 {
+		t.Fatalf("name column width = %v, want 220", result.Columns[0].WidthPx)
+	}
+}
+
 func TestSchemaObjectViewColumnsUsesDriverSQL(t *testing.T) {
 	driverName, state := registerStreamingDriver(t, [][]driver.Value{
 		{int64(1), "id", "BIGINT", "NO", nil},
