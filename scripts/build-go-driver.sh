@@ -13,6 +13,7 @@ REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SOURCE_DIR="${REPO_DIR}/extensions/ipc/${EXTENSION_ID}"
 BUILD_METADATA="${SOURCE_DIR}/extension.build.json"
 BUILD_TMP_DIR="${TMPDIR:-/tmp}/onetcli-go-driver-build.$$"
+VENDOR_DIR="${REPO_DIR}/vendor"
 
 cleanup() {
   rm -rf "$BUILD_TMP_DIR"
@@ -103,6 +104,11 @@ prepare_driver_module() {
 }
 
 MODFILE_ARG=""
+USE_VENDOR=false
+if [[ -d "$VENDOR_DIR" ]]; then
+  USE_VENDOR=true
+fi
+
 prepare_modfile() {
   local name="$1"
   local modfile="$BUILD_TMP_DIR/$name-build.mod"
@@ -117,10 +123,17 @@ prepare_modfile() {
 
 case "$EXTENSION_ID" in
   dm)
-    if source_path="$(driver_path DM_DRIVER_PATH gitee.com/chunanyong/dm 2>/dev/null)"; then
+    if [[ "$USE_VENDOR" != true ]] && source_path="$(driver_path DM_DRIVER_PATH gitee.com/chunanyong/dm 2>/dev/null)"; then
       dm_module_path="$(prepare_driver_module dm gitee.com/chunanyong/dm "$source_path")"
       modfile="$(prepare_modfile dm)"
       go mod edit -modfile="$modfile" "-replace=gitee.com/chunanyong/dm=$dm_module_path"
+    fi
+    ;;
+  kingbase)
+    if [[ "$USE_VENDOR" != true ]] && source_path="$(driver_path KINGBASE_DRIVER_PATH gitea.com/kingbase/gokb 2>/dev/null)"; then
+      kingbase_module_path="$(prepare_driver_module kingbase gitea.com/kingbase/gokb "$source_path")"
+      modfile="$(prepare_modfile kingbase)"
+      go mod edit -modfile="$modfile" "-replace=gitea.com/kingbase/gokb=$kingbase_module_path"
     fi
     ;;
 esac
@@ -164,7 +177,9 @@ GO_BUILD_ARGS=()
 if [ -n "$BUILD_TAGS" ]; then
   GO_BUILD_ARGS+=("-tags" "$BUILD_TAGS")
 fi
-if [ -n "$MODFILE_ARG" ]; then
+if [[ "$USE_VENDOR" == true ]]; then
+  GO_BUILD_ARGS+=("-mod=vendor")
+elif [ -n "$MODFILE_ARG" ]; then
   GO_BUILD_ARGS+=("$MODFILE_ARG")
 fi
 

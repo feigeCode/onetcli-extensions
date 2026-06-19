@@ -1,0 +1,42 @@
+# gitea.com/kingbase/gokb v0.0.0-20201021123113-29bd62a876c3
+## explicit; go 1.13
+gitea.com/kingbase/gokb
+gitea.com/kingbase/gokb/oid
+gitea.com/kingbase/gokb/scram
+# gitee.com/chunanyong/dm v1.8.23
+## explicit; go 1.13
+gitee.com/chunanyong/dm
+gitee.com/chunanyong/dm/i18n
+gitee.com/chunanyong/dm/parser
+gitee.com/chunanyong/dm/security
+gitee.com/chunanyong/dm/util
+# github.com/golang/snappy v1.0.0
+## explicit
+github.com/golang/snappy
+# golang.org/x/text v0.37.0
+## explicit; go 1.25.0
+golang.org/x/text/encoding
+golang.org/x/text/encoding/charmap
+golang.org/x/text/encoding/ianaindex
+golang.org/x/text/encoding/internal
+golang.org/x/text/encoding/internal/identifier
+golang.org/x/text/encoding/japanese
+golang.org/x/text/encoding/korean
+golang.org/x/text/encoding/simplifiedchinese
+golang.org/x/text/encoding/traditionalchinese
+golang.org/x/text/encoding/unicode
+golang.org/x/text/feature/plural
+golang.org/x/text/internal
+golang.org/x/text/internal/catmsg
+golang.org/x/text/internal/format
+golang.org/x/text/internal/language
+golang.org/x/text/internal/language/compact
+golang.org/x/text/internal/number
+golang.org/x/text/internal/stringset
+golang.org/x/text/internal/tag
+golang.org/x/text/internal/utf8internal
+golang.org/x/text/language
+golang.org/x/text/message
+golang.org/x/text/message/catalog
+golang.org/x/text/runes
+golang.org/x/text/transform

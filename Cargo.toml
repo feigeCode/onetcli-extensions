@@ -14,14 +14,14 @@ edition = "2024"
 anyhow = "1.0.102"
 base64 = "0.22"
 chrono = { version = "0.4.23", features = ["serde"] }
-duckdb = { version = "1.10501.0", default-features = false }
+duckdb = { version = "1.10501.0", features = ["bundled"] }
 extension-driver = { git = "https://github.com/feigeCode/onetcli", branch = "dev-ipc", package = "extension-driver" }
 extension-host = { git = "https://github.com/feigeCode/onetcli", branch = "dev-ipc", package = "extension-host" }
 extension-protocol = { git = "https://github.com/feigeCode/onetcli", branch = "dev-ipc", package = "extension-protocol" }
 hex = "0.4"
 interprocess = { version = "2.4.0", features = ["tokio"] }
 iotdb = "0.0.7"
-native-tls = "0.2"
+native-tls = { version = "0.2", features = ["vendored"] }
 opengauss-native-tls = "0.1.0"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1"

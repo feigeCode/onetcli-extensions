@@ -774,6 +774,79 @@ test("build-go-driver builds a Go command into the target release directory", ()
   );
 });
 
+test("build-go-driver prefers vendored Go driver dependencies", () => {
+  const workdir = makeTempDir();
+  copyScript("build-go-driver.sh", workdir);
+  fs.writeFileSync(
+    path.join(workdir, "go.mod"),
+    [
+      "module example.com/go-driver-fixture",
+      "",
+      "go 1.23",
+      "",
+      "require gitee.com/chunanyong/dm v1.8.23",
+      "",
+    ].join("\n"),
+  );
+  fs.mkdirSync(path.join(workdir, "cmd/dm-ipc-driver"), { recursive: true });
+  fs.writeFileSync(
+    path.join(workdir, "cmd/dm-ipc-driver/main.go"),
+    [
+      "package main",
+      "",
+      'import _ "gitee.com/chunanyong/dm"',
+      "",
+      "func main() {}",
+      "",
+    ].join("\n"),
+  );
+  fs.mkdirSync(path.join(workdir, "vendor/gitee.com/chunanyong/dm"), { recursive: true });
+  fs.writeFileSync(
+    path.join(workdir, "vendor/gitee.com/chunanyong/dm/dm.go"),
+    "package dm\n",
+  );
+  fs.writeFileSync(
+    path.join(workdir, "vendor/modules.txt"),
+    [
+      "# gitee.com/chunanyong/dm v1.8.23",
+      "## explicit; go 1.23",
+      "gitee.com/chunanyong/dm",
+      "",
+    ].join("\n"),
+  );
+  writeJson(path.join(workdir, "extensions/ipc/dm/extension.build.json"), {
+    id: "dm",
+    kind: "database_driver",
+    language: "go",
+    package: "./cmd/dm-ipc-driver",
+    binary: "dm-ipc-driver",
+    path: "extensions/ipc/dm",
+    targets: ["x86_64-unknown-linux-gnu"],
+  });
+
+  execFileSync(
+    "bash",
+    [
+      path.join(workdir, "scripts/build-go-driver.sh"),
+      "dm",
+      "x86_64-unknown-linux-gnu",
+    ],
+    {
+      cwd: workdir,
+      env: {
+        ...process.env,
+        DM_DRIVER_PATH: path.join(workdir, "missing-dm-driver"),
+        GOCACHE: path.join(workdir, "go-cache"),
+        CGO_ENABLED: "0",
+      },
+    },
+  );
+
+  assert.ok(
+    fs.existsSync(path.join(workdir, "target/x86_64-unknown-linux-gnu/release/dm-ipc-driver")),
+  );
+});
+
 test("changed-extensions emits matrix entries only for changed extension paths", () => {
   const workdir = makeTempDir();
   copyScript("changed-extensions.mjs", workdir);
