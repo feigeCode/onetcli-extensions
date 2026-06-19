@@ -137,7 +137,7 @@ func (s *Server) Handle(ctx context.Context, req ipc.Message) ipc.Message {
 	case "init":
 		s.initialized = true
 		return s.ok(req.ID, map[string]any{
-			"extension_version": "0.1.0",
+			"extension_version": "0.1.1",
 			"api_used":          map[string]string{"database": "1.0"},
 			"features":          []string{"streaming", "schema_introspection", "rich_errors"},
 			"drivers_ready":     []string{s.spec.ID},

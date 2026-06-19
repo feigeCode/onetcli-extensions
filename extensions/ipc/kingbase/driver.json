@@ -3,7 +3,7 @@
   "name": "KingbaseES",
   "description": "金仓 KingbaseES 数据库 IPC 驱动",
   "category": "domestic_database",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "MIT",
   "dependencies": {
     "go": ">=1.25",
