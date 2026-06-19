@@ -4,3 +4,4 @@
 .DS_Store
 *.log
 java/gbase8s-ipc-driver/target/
+java/gbase8s-ipc-driver/bin/lib/gbase8s-ipc-driver.jar
