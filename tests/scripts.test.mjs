@@ -1137,8 +1137,19 @@ test("CI workflow routes Rust, Go, and Java extension jobs by language", () => {
   assert.match(workflow, /actions\/setup-java@v4/);
   assert.match(workflow, /scripts\/build-go-driver\.sh/);
   assert.match(workflow, /scripts\/build-java-driver\.sh/);
+  assert.match(workflow, /matrix\.language == 'rust' && matrix\.target == 'aarch64-unknown-linux-gnu'/);
+  assert.match(workflow, /gcc-aarch64-linux-gnu/);
+  assert.match(workflow, /CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER/);
+  assert.doesNotMatch(workflow, /DUCKDB_DOWNLOAD_LIB/);
   assert.doesNotMatch(workflow, /name: Test Rust package\n\s+if: \$\{\{ matrix\.package != '' \}\}\n\s+run: cargo test -p \$\{\{ matrix\.package \}\}/);
   assert.match(releaseWorkflow, /if \(language === "go"\) return "ubuntu-latest";/);
+  assert.match(
+    releaseWorkflow,
+    /matrix\.language == 'rust' && matrix\.target == 'aarch64-unknown-linux-gnu'/,
+  );
+  assert.match(releaseWorkflow, /gcc-aarch64-linux-gnu/);
+  assert.match(releaseWorkflow, /CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER/);
+  assert.doesNotMatch(releaseWorkflow, /DUCKDB_DOWNLOAD_LIB/);
 });
 
 test("Java workflows use a runner-available JDK while preserving Java 8 bytecode target", () => {
