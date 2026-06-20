@@ -7,8 +7,8 @@ First-party extension repository for `onetcli`.
 This repository builds and publishes official extension packages independently
 from the main `onetcli` application. The host app owns the extension runtime,
 marketplace client, update client, and SDK/runtime contracts. This repository
-owns concrete official extensions, release artifacts, marketplace manifest
-entries, and Cloudflare R2 upload automation.
+owns concrete official extensions, release artifacts, the repository-maintained
+marketplace manifest, and Cloudflare R2 upload automation.
 
 ## Current Contents
 
@@ -20,12 +20,12 @@ extensions/
     dm/           Go Dameng DM IPC database driver
     kingbase/     Go KingbaseES IPC database driver
     gbase8s/      Java GBase 8s IPC database driver
+    opengauss/    Rust openGauss IPC database driver
 java/
   gbase8s-ipc-driver/
 internal/
   dbipc/          shared Go IPC database server runtime
-manifest/
-  entries/
+manifest.json     lightweight marketplace index
 scripts/
   build-go-driver.sh
   build-java-driver.sh
@@ -192,12 +192,20 @@ libraries.
 
 ## Marketplace Manifest
 
-Release jobs generate a current-extension manifest at
-`artifacts/extension-manifest.json` from:
+The repository root `manifest.json` is the global marketplace index. It is
+maintained and committed directly in this repository, then uploaded unchanged to
+R2 as `extensions/manifest.json`.
+
+Release jobs generate one plugin manifest:
+
+- `artifacts/extension-manifest.json`: the current extension manifest published
+  to that extension's GitHub Release. It contains target artifact file names and
+  checksums.
+
+The plugin manifest is generated from:
 
 - package filenames
 - `artifacts/sha256sums.txt`
-- `manifest/entries/*.json`
 - release environment variables
 
 Required environment variables:
@@ -209,14 +217,14 @@ EXTENSION_ID=duckdb
 RELEASE_TAG=duckdb-v1.0.0
 ```
 
-The extension-scoped GitHub Release keeps this file as the manifest entry for
-that extension release. After the Release workflow succeeds, the upload workflow
-serializes marketplace publication, scans extension release manifests, and
-publishes one accumulated `extension-manifest.json` to both R2 and the dedicated
-GitHub `extensions-manifest` release.
+The extension-scoped GitHub Release keeps `extension-manifest.json` as the
+current extension's plugin manifest. After the Release workflow succeeds, the
+upload workflow serializes marketplace publication, uploads that plugin manifest
+to R2 at `extensions/<id>/manifest.json`, and uploads the committed root
+`manifest.json` to R2 at `extensions/manifest.json` with `no-cache`.
 
-The manifest is schema v2 and contains artifact file names plus checksums, not
-download URLs. A DuckDB entry looks like:
+The global marketplace entry is schema v2 and contains metadata plus a manifest
+path, not artifact files or download URLs:
 
 ```json
 {
@@ -225,19 +233,41 @@ download URLs. A DuckDB entry looks like:
   "name": "DuckDB",
   "version": "1.0.0",
   "release_tag": "duckdb-v1.0.0",
-  "artifacts": {
-    "x86_64-unknown-linux-gnu": {
-      "file": "duckdb-driver-x86_64-unknown-linux-gnu.tar.gz",
-      "sha256": "<sha256>"
-    }
-  }
+  "description": "DuckDB embedded analytical database IPC driver",
+  "file_extensions": [],
+  "manifest": "duckdb/manifest.json"
 }
 ```
 
-The `onetcli` client owns download source policy. It resolves the primary
-package URL from the manifest directory using `<id>/<version>/<file>`, and
-derives GitHub Release fallback URLs from its configured GitHub marketplace
-manifest URL plus each entry's `release_tag` and artifact `file`.
+The plugin manifest is also schema v2 and contains artifact file names plus
+checksums, not full download URLs:
+
+```json
+{
+  "schema_version": 2,
+  "release_version": "duckdb-v1.0.0",
+  "extensions": [{
+    "id": "duckdb",
+    "kind": "database_driver",
+    "name": "DuckDB",
+    "version": "1.0.0",
+    "release_tag": "duckdb-v1.0.0",
+    "artifacts": {
+      "x86_64-unknown-linux-gnu": {
+        "file": "duckdb-driver-x86_64-unknown-linux-gnu.tar.gz",
+        "sha256": "<sha256>"
+      }
+    }
+  }]
+}
+```
+
+The `onetcli` client owns download source policy. It first loads the global
+marketplace index, then loads the selected extension's plugin manifest. For R2,
+package URLs are resolved from the plugin manifest directory using
+`<version>/<file>`. If the R2 plugin manifest or package is unavailable, the
+client derives GitHub Release fallback URLs from its configured GitHub manifest
+base, the entry's `release_tag`, and the plugin manifest or artifact file name.
 
 ## CI
 
@@ -266,7 +296,7 @@ The Release workflow:
 2. Builds every target listed in `extension.build.json`.
 3. Packages and verifies each archive.
 4. Generates checksums.
-5. Generates the current extension marketplace manifest.
+5. Generates the current extension plugin manifest.
 6. Publishes a GitHub Release with packages, checksums, and the current
    extension `extension-manifest.json`.
 
@@ -294,14 +324,14 @@ concurrency group. For DuckDB `1.0.0`, R2 receives:
 
 ```text
 extensions/duckdb/1.0.0/<package>.tar.gz
-extensions/duckdb/latest/<package>.tar.gz
+extensions/duckdb/manifest.json
 extensions/manifest.json
 ```
 
-Versioned packages are uploaded with immutable caching. The global manifest is
-rebuilt from GitHub extension releases and uploaded with `no-cache`. The same
-global manifest is also published as `extension-manifest.json` on the dedicated
-GitHub release tag `extensions-manifest`.
+Versioned packages are uploaded with immutable caching. Plugin manifests and the
+global marketplace index are uploaded with `no-cache`. The global manifest is
+the repository-maintained root `manifest.json`, uploaded unchanged to
+`extensions/manifest.json`.
 
 ## Adding Another IPC Driver
 
@@ -348,13 +378,13 @@ the existing metadata and package shape.
 
 ## Host App Integration
 
-The main `onetcli` repository should consume the published marketplace manifest
-from R2 first and use the dedicated GitHub manifest release in this repository as
-fallback. R2 and GitHub fallback receive the same generated global manifest:
-
-```text
-https://github.com/feigeCode/onetcli-extensions/releases/download/extensions-manifest/extension-manifest.json
-```
+The main `onetcli` repository should consume the published global marketplace
+manifest from R2 first. Each global entry points to an extension plugin manifest
+such as `duckdb/manifest.json`; the host loads that file before selecting a
+platform artifact. GitHub fallback is extension-scoped: the host derives
+`https://github.com/feigeCode/onetcli-extensions/releases/download/<release_tag>/extension-manifest.json`
+for the plugin manifest, then derives package fallback URLs from the same
+release tag and artifact file name.
 
 Do not make the main application release depend on this repository's extension
 builds. The main app owns runtime consumption; this repository owns extension

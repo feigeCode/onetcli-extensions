@@ -15,14 +15,11 @@ on:
 
 permissions:
   actions: read
-  contents: write
+  contents: read
 
 concurrency:
   group: extension-marketplace-publish
   cancel-in-progress: false
-
-env:
-  MANIFEST_RELEASE_TAG: extensions-manifest
 
 jobs:
   upload:
@@ -161,12 +158,10 @@ jobs:
           node -e 'const targets = JSON.parse(process.env.TARGETS_JSON); for (const target of targets) console.log(`${process.env.EXTENSION_ID}-driver-${target}.tar.gz`);' > upload-assets.txt
           while read -r file; do
             upload_object "artifacts/${file}" "${R2_PREFIX}/${EXTENSION_VERSION}/${file}" "application/gzip" "public, max-age=31536000, immutable"
-            upload_object "artifacts/${file}" "${R2_PREFIX}/latest/${file}" "application/gzip" "public, max-age=300"
           done < upload-assets.txt
 
       - name: Publish marketplace manifests
         env:
-          GH_TOKEN: ${{ github.token }}
           AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
@@ -174,6 +169,7 @@ jobs:
           AWS_EC2_METADATA_DISABLED: true
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_R2_BUCKET: ${{ secrets.CLOUDFLARE_R2_BUCKET }}
+          R2_PREFIX: ${{ steps.extension.outputs.r2_prefix }}
         run: |
           set -euo pipefail
           endpoint="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
@@ -188,48 +184,6 @@ jobs:
               --cache-control "$cache_control"
           }
           current_manifest="artifacts/current-extension-manifest.json"
-          merged_manifest="artifacts/extension-manifest.json"
-          manifest_root="artifacts/github-release-manifests"
-          cp "$merged_manifest" "$current_manifest"
-          mkdir -p "$manifest_root"
-          gh release list \
-            --repo "$GITHUB_REPOSITORY" \
-            --limit 100 \
-            --json tagName,isDraft \
-            --jq '.[] | select(.isDraft == false and .tagName != env.MANIFEST_RELEASE_TAG) | .tagName' \
-            | tac \
-            > "$manifest_root/manifest-tags.txt"
-          rm -f "$merged_manifest"
-          while read -r manifest_tag; do
-            if [ -z "$manifest_tag" ]; then
-              continue
-            fi
-            manifest_dir="$manifest_root/$manifest_tag"
-            mkdir -p "$manifest_dir"
-            gh release download "$manifest_tag" \
-              --repo "$GITHUB_REPOSITORY" \
-              --pattern "extension-manifest.json" \
-              --dir "$manifest_dir" || true
-            if [ -s "$manifest_dir/extension-manifest.json" ]; then
-              CURRENT_MANIFEST="$manifest_dir/extension-manifest.json" \
-                EXISTING_MANIFEST="$merged_manifest" \
-                OUTPUT_MANIFEST="$merged_manifest.next" \
-                node scripts/merge-marketplace-manifest.mjs
-              mv "$merged_manifest.next" "$merged_manifest"
-            fi
-          done < "$manifest_root/manifest-tags.txt"
-          CURRENT_MANIFEST="$current_manifest" \
-            EXISTING_MANIFEST="$merged_manifest" \
-            OUTPUT_MANIFEST="$merged_manifest.next" \
-            node scripts/merge-marketplace-manifest.mjs
-          mv "$merged_manifest.next" "$merged_manifest"
-          if ! gh release view "$MANIFEST_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$MANIFEST_RELEASE_TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "Extension Marketplace Manifest" \
-              --notes "Mutable marketplace manifest for onetcli extension fallback."
-          fi
-          gh release upload "$MANIFEST_RELEASE_TAG" "$merged_manifest" \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
-          upload_object "$merged_manifest" "extensions/manifest.json" "application/json; charset=utf-8" "no-cache"
+          cp artifacts/extension-manifest.json "$current_manifest"
+          upload_object "$current_manifest" "${R2_PREFIX}/manifest.json" "application/json; charset=utf-8" "no-cache"
+          upload_object "manifest.json" "extensions/manifest.json" "application/json; charset=utf-8" "no-cache"

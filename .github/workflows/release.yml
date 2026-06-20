@@ -160,7 +160,7 @@ jobs:
           cd artifacts
           sha256sum *.tar.gz > sha256sums.txt
           cat sha256sums.txt
-      - name: Generate marketplace manifest
+      - name: Generate plugin manifest
         env:
           ARTIFACT_DIR: artifacts
           EXTENSION_ID: ${{ needs.prepare.outputs.extension_id }}

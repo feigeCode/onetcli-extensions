@@ -23,13 +23,12 @@ for (const target of targets) {
   };
 }
 
-const manifest = {
+const extensionManifest = {
   schema_version: 2,
   release_version: releaseTag,
-  extensions: [],
 };
 
-const currentEntry = {
+const extensionEntry = {
   id: extensionId,
   kind: metadata.kind,
   name: driverJson.name || extensionId,
@@ -38,25 +37,12 @@ const currentEntry = {
   description: driverJson.description || "",
   artifacts,
 };
+extensionManifest.extensions = [extensionEntry];
 
 fs.mkdirSync(artifactDir, { recursive: true });
-fs.mkdirSync("manifest/entries", { recursive: true });
-fs.writeFileSync(
-  `manifest/entries/${extensionId}.json`,
-  `${JSON.stringify(currentEntry, null, 2)}\n`,
-);
-
-manifest.extensions = fs
-  .readdirSync("manifest/entries")
-  .filter((fileName) => fileName.endsWith(".json"))
-  .sort()
-  .map((fileName) =>
-    JSON.parse(fs.readFileSync(path.join("manifest/entries", fileName), "utf8")),
-  );
-
 fs.writeFileSync(
   path.join(artifactDir, "extension-manifest.json"),
-  `${JSON.stringify(manifest, null, 2)}\n`,
+  `${JSON.stringify(extensionManifest, null, 2)}\n`,
 );
 
 function requiredEnv(name) {

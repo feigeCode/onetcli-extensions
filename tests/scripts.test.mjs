@@ -1227,7 +1227,38 @@ test("changed-extensions does not expand workflow-only changes into extension te
   assert.deepEqual(JSON.parse(output), { include: [] });
 });
 
-test("generate-marketplace-manifest writes lightweight artifacts without fallback assets", () => {
+test("repository manifest is maintained as a lightweight marketplace index", () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifest.json"), "utf8"));
+  const ids = fs
+    .readdirSync(path.join(repoRoot, "extensions/ipc"))
+    .filter((id) =>
+      fs.existsSync(path.join(repoRoot, "extensions/ipc", id, "extension.build.json")),
+    )
+    .sort();
+
+  assert.equal(manifest.schema_version, 2);
+  assert.deepEqual(
+    manifest.extensions.map((entry) => entry.id).sort(),
+    ids,
+  );
+
+  for (const entry of manifest.extensions) {
+    const driverJson = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, "extensions/ipc", entry.id, "driver.json"), "utf8"),
+    );
+    assert.equal(entry.kind, "database_driver");
+    assert.equal(entry.name, driverJson.name || entry.id);
+    assert.equal(entry.version, driverJson.version);
+    assert.equal(entry.release_tag, `${entry.id}-v${entry.version}`);
+    assert.equal(entry.manifest, `${entry.id}/manifest.json`);
+    assert.equal(Object.hasOwn(entry, "artifacts"), false);
+    assert.equal(Object.hasOwn(entry, "asset_urls"), false);
+    assert.equal(Object.hasOwn(entry, "fallback_asset_urls"), false);
+    assert.equal(Object.hasOwn(entry, "sha256s"), false);
+  }
+});
+
+test("generate-marketplace-manifest writes only the current plugin manifest", () => {
   const workdir = makeTempDir();
   copyScript("generate-marketplace-manifest.mjs", workdir);
   fs.mkdirSync(path.join(workdir, "artifacts"), { recursive: true });
@@ -1272,24 +1303,23 @@ test("generate-marketplace-manifest writes lightweight artifacts without fallbac
     },
   });
 
-  const manifest = JSON.parse(
+  const extensionManifest = JSON.parse(
     fs.readFileSync(path.join(workdir, "artifacts/extension-manifest.json"), "utf8"),
   );
-  assert.equal(manifest.schema_version, 2);
-  assert.equal(manifest.release_version, "duckdb-v1.2.3");
-  assert.equal(manifest.extensions.length, 1);
-  assert.equal(manifest.extensions[0].release_tag, "duckdb-v1.2.3");
+  assert.equal(extensionManifest.schema_version, 2);
+  assert.equal(extensionManifest.release_version, "duckdb-v1.2.3");
+  assert.equal(extensionManifest.extensions.length, 1);
+  assert.equal(extensionManifest.extensions[0].release_tag, "duckdb-v1.2.3");
   assert.equal(
-    manifest.extensions[0].artifacts["x86_64-unknown-linux-gnu"].file,
+    extensionManifest.extensions[0].artifacts["x86_64-unknown-linux-gnu"].file,
     "duckdb-driver-x86_64-unknown-linux-gnu.tar.gz",
   );
   assert.match(
-    manifest.extensions[0].artifacts["x86_64-unknown-linux-gnu"].sha256,
+    extensionManifest.extensions[0].artifacts["x86_64-unknown-linux-gnu"].sha256,
     /^[0-9a-f]{64}$/,
   );
-  assert.equal(Object.hasOwn(manifest.extensions[0], "asset_urls"), false);
-  assert.equal(Object.hasOwn(manifest.extensions[0], "fallback_asset_urls"), false);
-  assert.equal(Object.hasOwn(manifest.extensions[0], "sha256s"), false);
+  assert.equal(fs.existsSync(path.join(workdir, "artifacts/marketplace-manifest.json")), false);
+  assert.equal(fs.existsSync(path.join(workdir, "manifest/entries/duckdb.json")), false);
 });
 
 test("generate-marketplace-manifest uses selected extension metadata", () => {
@@ -1324,80 +1354,22 @@ test("generate-marketplace-manifest uses selected extension metadata", () => {
     },
   });
 
-  const manifest = JSON.parse(
+  const extensionManifest = JSON.parse(
     fs.readFileSync(path.join(workdir, "artifacts/extension-manifest.json"), "utf8"),
   );
-  assert.equal(manifest.extensions[0].id, "iotdb");
-  assert.equal(manifest.extensions[0].name, "Apache IoTDB");
+  assert.equal(extensionManifest.extensions[0].id, "iotdb");
+  assert.equal(extensionManifest.extensions[0].name, "Apache IoTDB");
   assert.equal(
-    manifest.extensions[0].artifacts["x86_64-unknown-linux-gnu"].file,
+    extensionManifest.extensions[0].artifacts["x86_64-unknown-linux-gnu"].file,
     "iotdb-driver-x86_64-unknown-linux-gnu.tar.gz",
   );
-});
-
-test("merge-marketplace-manifest replaces current extension and preserves others", () => {
-  const workdir = makeTempDir();
-  copyScript("merge-marketplace-manifest.mjs", workdir);
-  writeJson(path.join(workdir, "existing.json"), {
-    schema_version: 1,
-    release_version: "duckdb-v1.0.0",
-    extensions: [
-      { id: "duckdb", version: "1.0.0" },
-      { id: "dm", version: "0.1.0-old" },
-    ],
-  });
-  writeJson(path.join(workdir, "current.json"), {
-    schema_version: 1,
-    release_version: "dm-v0.1.0",
-    extensions: [{ id: "dm", version: "0.1.0" }],
-  });
-
-  execFileSync("node", [path.join(workdir, "scripts/merge-marketplace-manifest.mjs")], {
-    cwd: workdir,
-    env: {
-      ...process.env,
-      EXISTING_MANIFEST: "existing.json",
-      CURRENT_MANIFEST: "current.json",
-      OUTPUT_MANIFEST: "merged/manifest.json",
-    },
-  });
-
-  const merged = JSON.parse(fs.readFileSync(path.join(workdir, "merged/manifest.json"), "utf8"));
-  assert.equal(merged.release_version, "dm-v0.1.0");
-  assert.deepEqual(merged.extensions, [
-    { id: "dm", version: "0.1.0" },
-    { id: "duckdb", version: "1.0.0" },
-  ]);
-});
-
-test("merge-marketplace-manifest works when no existing R2 manifest is present", () => {
-  const workdir = makeTempDir();
-  copyScript("merge-marketplace-manifest.mjs", workdir);
-  writeJson(path.join(workdir, "current.json"), {
-    schema_version: 1,
-    release_version: "gbase8s-v0.1.0",
-    extensions: [{ id: "gbase8s", version: "0.1.0" }],
-  });
-
-  execFileSync("node", [path.join(workdir, "scripts/merge-marketplace-manifest.mjs")], {
-    cwd: workdir,
-    env: {
-      ...process.env,
-      EXISTING_MANIFEST: "missing.json",
-      CURRENT_MANIFEST: "current.json",
-      OUTPUT_MANIFEST: "manifest.json",
-    },
-  });
-
-  const merged = JSON.parse(fs.readFileSync(path.join(workdir, "manifest.json"), "utf8"));
-  assert.deepEqual(merged.extensions, [{ id: "gbase8s", version: "0.1.0" }]);
 });
 
 test("upload-r2 workflow exports R2 credentials without AWS STS configuration", () => {
   const workflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/upload-r2.yml"), "utf8");
 
   assert.doesNotMatch(workflow, /aws-actions\/configure-aws-credentials/);
-  assert.match(workflow, /contents:\s+write/);
+  assert.match(workflow, /contents:\s+read/);
   assert.match(workflow, /concurrency:/);
   assert.match(workflow, /group:\s+extension-marketplace-publish/);
   assert.match(workflow, /cancel-in-progress:\s+false/);
@@ -1407,15 +1379,17 @@ test("upload-r2 workflow exports R2 credentials without AWS STS configuration", 
     /AWS_SECRET_ACCESS_KEY:\s+\$\{\{\s*secrets\.CLOUDFLARE_R2_SECRET_ACCESS_KEY\s*\}\}/,
   );
   assert.match(workflow, /AWS_DEFAULT_REGION:\s+auto\b/);
-  assert.match(workflow, /merge-marketplace-manifest\.mjs/);
-  assert.match(workflow, /MANIFEST_RELEASE_TAG:\s+extensions-manifest/);
-  assert.match(workflow, /gh release list/);
-  assert.match(workflow, /tagName != env\.MANIFEST_RELEASE_TAG/);
-  assert.match(workflow, /gh release download "\$manifest_tag"/);
-  assert.match(workflow, /gh release create "\$MANIFEST_RELEASE_TAG"/);
-  assert.match(workflow, /gh release upload "\$MANIFEST_RELEASE_TAG"/);
-  assert.match(workflow, /--clobber/);
-  assert.match(workflow, /upload_object "\$merged_manifest" "extensions\/manifest\.json"/);
+  assert.match(workflow, /upload_object "\$current_manifest" "\$\{R2_PREFIX\}\/manifest\.json"/);
+  assert.match(workflow, /upload_object "manifest\.json" "extensions\/manifest\.json"/);
+  assert.doesNotMatch(workflow, /merge-marketplace-manifest\.mjs/);
+  assert.doesNotMatch(workflow, /r2-extension-manifest\.json/);
+  assert.doesNotMatch(workflow, /CURRENT_MANIFEST=/);
+  assert.doesNotMatch(workflow, /EXISTING_MANIFEST=/);
+  assert.doesNotMatch(workflow, /\/latest\/\$\{file\}/);
+  assert.doesNotMatch(workflow, /MANIFEST_RELEASE_TAG:\s+extensions-manifest/);
+  assert.doesNotMatch(workflow, /gh release list/);
+  assert.doesNotMatch(workflow, /gh release create "\$MANIFEST_RELEASE_TAG"/);
+  assert.doesNotMatch(workflow, /gh release upload "\$MANIFEST_RELEASE_TAG"/);
   assert.doesNotMatch(workflow, /aws s3 cp "s3:\/\/\$\{CLOUDFLARE_R2_BUCKET\}\/extensions\/manifest\.json"/);
 });
 

@@ -1,0 +1,66 @@
+{
+  "schema_version": 2,
+  "release_version": "",
+  "extensions": [
+    {
+      "id": "dm",
+      "kind": "database_driver",
+      "name": "Dameng DM",
+      "version": "0.1.2",
+      "release_tag": "dm-v0.1.2",
+      "description": "达梦 DM 数据库 IPC 驱动",
+      "file_extensions": [],
+      "manifest": "dm/manifest.json"
+    },
+    {
+      "id": "duckdb",
+      "kind": "database_driver",
+      "name": "DuckDB",
+      "version": "0.1.0",
+      "release_tag": "duckdb-v0.1.0",
+      "description": "DuckDB embedded analytical database IPC driver",
+      "file_extensions": [],
+      "manifest": "duckdb/manifest.json"
+    },
+    {
+      "id": "gbase8s",
+      "kind": "database_driver",
+      "name": "GBase 8s",
+      "version": "0.1.2",
+      "release_tag": "gbase8s-v0.1.2",
+      "description": "南大通用 GBase 8s Java IPC 驱动",
+      "file_extensions": [],
+      "manifest": "gbase8s/manifest.json"
+    },
+    {
+      "id": "iotdb",
+      "kind": "database_driver",
+      "name": "Apache IoTDB",
+      "version": "0.1.1",
+      "release_tag": "iotdb-v0.1.1",
+      "description": "Apache IoTDB time-series database IPC driver",
+      "file_extensions": [],
+      "manifest": "iotdb/manifest.json"
+    },
+    {
+      "id": "kingbase",
+      "kind": "database_driver",
+      "name": "KingbaseES",
+      "version": "0.1.2",
+      "release_tag": "kingbase-v0.1.2",
+      "description": "金仓 KingbaseES 数据库 IPC 驱动",
+      "file_extensions": [],
+      "manifest": "kingbase/manifest.json"
+    },
+    {
+      "id": "opengauss",
+      "kind": "database_driver",
+      "name": "openGauss",
+      "version": "0.1.1",
+      "release_tag": "opengauss-v0.1.1",
+      "description": "openGauss 数据库 IPC 驱动",
+      "file_extensions": [],
+      "manifest": "opengauss/manifest.json"
+    }
+  ]
+}
