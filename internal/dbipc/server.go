@@ -31,8 +31,9 @@ type Server struct {
 }
 
 type connectionState struct {
-	config Config
-	db     *sql.DB
+	config    Config
+	db        *sql.DB
+	schemaSQL SchemaSQL
 }
 
 type cursorState struct {
@@ -235,12 +236,12 @@ func (s *Server) Handle(ctx context.Context, req ipc.Message) ipc.Message {
 }
 
 func (s *Server) handleConnTest(ctx context.Context, req ipc.Message) ipc.Message {
-	cfg, dsn, err := s.parseConfig(req.Params)
+	cfg, connSpec, err := s.parseConfig(ctx, req.Params)
 	if err != nil {
 		return s.err(req.ID, ErrInvalidParams, err.Error())
 	}
 	start := time.Now()
-	db, err := s.opener(s.spec.SQLDriverName, dsn)
+	db, err := s.opener(connSpec.DriverName, connSpec.DSN)
 	if err != nil {
 		return s.err(req.ID, ErrConnectionFailed, err.Error())
 	}
@@ -257,11 +258,11 @@ func (s *Server) handleConnTest(ctx context.Context, req ipc.Message) ipc.Messag
 }
 
 func (s *Server) handleConnOpen(ctx context.Context, req ipc.Message) ipc.Message {
-	cfg, dsn, err := s.parseConfig(req.Params)
+	cfg, connSpec, err := s.parseConfig(ctx, req.Params)
 	if err != nil {
 		return s.err(req.ID, ErrInvalidParams, err.Error())
 	}
-	db, err := s.opener(s.spec.SQLDriverName, dsn)
+	db, err := s.opener(connSpec.DriverName, connSpec.DSN)
 	if err != nil {
 		return s.err(req.ID, ErrConnectionFailed, err.Error())
 	}
@@ -272,7 +273,7 @@ func (s *Server) handleConnOpen(ctx context.Context, req ipc.Message) ipc.Messag
 
 	connID := s.nextConnID
 	s.nextConnID++
-	s.conns[connID] = &connectionState{config: cfg, db: db}
+	s.conns[connID] = &connectionState{config: cfg, db: db, schemaSQL: connSpec.SchemaSQL}
 	return s.ok(req.ID, map[string]any{
 		"conn_id": connID,
 		"server_info": map[string]any{
@@ -995,10 +996,10 @@ func (s *Server) handleSchemaObjectView(ctx context.Context, req ipc.Message) ip
 
 	switch p.View {
 	case "databases":
-		if s.spec.SchemaSQL.Databases == nil {
+		if conn.schemaSQL.Databases == nil {
 			return s.ok(req.ID, objectViewResult("Databases", objectViewColumns("name", "Name"), [][]string{{conn.config.Database}}))
 		}
-		rows, err := queryObjectViewRows(ctx, conn.db, s.spec.SchemaSQL.Databases(conn.config), func(cols []any) []string {
+		rows, err := queryObjectViewRows(ctx, conn.db, conn.schemaSQL.Databases(conn.config), func(cols []any) []string {
 			return []string{stringCell(cols, 0)}
 		})
 		if err != nil {
@@ -1006,10 +1007,10 @@ func (s *Server) handleSchemaObjectView(ctx context.Context, req ipc.Message) ip
 		}
 		return s.ok(req.ID, objectViewResult("Databases", objectViewColumns("name", "Name"), rows))
 	case "schemas":
-		if s.spec.SchemaSQL.Schemas == nil {
+		if conn.schemaSQL.Schemas == nil {
 			return s.ok(req.ID, objectViewResult("Schemas", objectViewColumns("name", "Name"), [][]string{{conn.config.Username}}))
 		}
-		rows, err := queryObjectViewRows(ctx, conn.db, s.spec.SchemaSQL.Schemas(conn.config, p.Database), func(cols []any) []string {
+		rows, err := queryObjectViewRows(ctx, conn.db, conn.schemaSQL.Schemas(conn.config, p.Database), func(cols []any) []string {
 			return []string{stringCell(cols, 0), stringCell(cols, 1)}
 		})
 		if err != nil {
@@ -1019,10 +1020,10 @@ func (s *Server) handleSchemaObjectView(ctx context.Context, req ipc.Message) ip
 	case "tables":
 		return s.handleObjectListView(ctx, req.ID, conn, p, "Tables", []string{"table"})
 	case "views":
-		if s.spec.SchemaSQL.Views == nil {
+		if conn.schemaSQL.Views == nil {
 			return s.ok(req.ID, objectViewResult("Views", objectViewColumns("name", "Name", "kind", "Kind", "comment", "Comment"), [][]string{}))
 		}
-		rows, err := queryObjectViewRows(ctx, conn.db, s.spec.SchemaSQL.Views(conn.config, p.Database, p.Schema), func(cols []any) []string {
+		rows, err := queryObjectViewRows(ctx, conn.db, conn.schemaSQL.Views(conn.config, p.Database, p.Schema), func(cols []any) []string {
 			return []string{stringCell(cols, 0), stringCell(cols, 1), stringCell(cols, 2)}
 		})
 		if err != nil {
@@ -1033,10 +1034,10 @@ func (s *Server) handleSchemaObjectView(ctx context.Context, req ipc.Message) ip
 		if p.Table == "" {
 			return s.err(req.ID, ErrInvalidParams, "missing required parameter `table`")
 		}
-		if s.spec.SchemaSQL.Columns == nil {
+		if conn.schemaSQL.Columns == nil {
 			return s.ok(req.ID, objectViewResult("Columns", columnObjectViewColumns(), [][]string{}))
 		}
-		rows, err := queryObjectViewRows(ctx, conn.db, s.spec.SchemaSQL.Columns(conn.config, p.Database, p.Schema, p.Table), func(cols []any) []string {
+		rows, err := queryObjectViewRows(ctx, conn.db, conn.schemaSQL.Columns(conn.config, p.Database, p.Schema, p.Table), func(cols []any) []string {
 			return []string{
 				stringCell(cols, 1),
 				stringCell(cols, 2),
@@ -1053,10 +1054,10 @@ func (s *Server) handleSchemaObjectView(ctx context.Context, req ipc.Message) ip
 		if p.Table == "" {
 			return s.err(req.ID, ErrInvalidParams, "missing required parameter `table`")
 		}
-		if s.spec.SchemaSQL.Indexes == nil {
+		if conn.schemaSQL.Indexes == nil {
 			return s.ok(req.ID, objectViewResult("Indexes", indexObjectViewColumns(), [][]string{}))
 		}
-		rows, err := queryObjectViewRows(ctx, conn.db, s.spec.SchemaSQL.Indexes(conn.config, p.Database, p.Schema, p.Table), func(cols []any) []string {
+		rows, err := queryObjectViewRows(ctx, conn.db, conn.schemaSQL.Indexes(conn.config, p.Database, p.Schema, p.Table), func(cols []any) []string {
 			return []string{
 				stringCell(cols, 0),
 				strings.Join(splitListCell(cols, 1), ", "),
@@ -1070,10 +1071,10 @@ func (s *Server) handleSchemaObjectView(ctx context.Context, req ipc.Message) ip
 		}
 		return s.ok(req.ID, objectViewResult("Indexes", indexObjectViewColumns(), rows))
 	case "functions":
-		if s.spec.SchemaSQL.Functions == nil {
+		if conn.schemaSQL.Functions == nil {
 			return s.ok(req.ID, objectViewResult("Functions", objectViewColumns("name", "Name", "returns", "Returns", "language", "Language", "comment", "Comment"), [][]string{}))
 		}
-		rows, err := queryObjectViewRows(ctx, conn.db, s.spec.SchemaSQL.Functions(conn.config, p.Database, p.Schema), func(cols []any) []string {
+		rows, err := queryObjectViewRows(ctx, conn.db, conn.schemaSQL.Functions(conn.config, p.Database, p.Schema), func(cols []any) []string {
 			return []string{stringCell(cols, 0), stringCell(cols, 2), stringCell(cols, 3), stringCell(cols, 4)}
 		})
 		if err != nil {
@@ -1089,10 +1090,10 @@ func (s *Server) handleSchemaObjectView(ctx context.Context, req ipc.Message) ip
 
 func (s *Server) handleObjectListView(ctx context.Context, id json.RawMessage, conn *connectionState, p objectViewParams, title string, kinds []string) ipc.Message {
 	columns := objectViewColumns("name", "Name", "kind", "Kind", "comment", "Comment")
-	if s.spec.SchemaSQL.Objects == nil {
+	if conn.schemaSQL.Objects == nil {
 		return s.ok(id, objectViewResult(title, columns, [][]string{}))
 	}
-	rows, err := queryObjectViewRows(ctx, conn.db, s.spec.SchemaSQL.Objects(conn.config, p.Database, p.Schema, kinds), func(cols []any) []string {
+	rows, err := queryObjectViewRows(ctx, conn.db, conn.schemaSQL.Objects(conn.config, p.Database, p.Schema, kinds), func(cols []any) []string {
 		return []string{stringCell(cols, 0), stringCell(cols, 1), stringCell(cols, 2)}
 	})
 	if err != nil {
@@ -1184,8 +1185,8 @@ func (s *Server) handleSchemaDatabases(ctx context.Context, req ipc.Message) ipc
 		return *errResp
 	}
 	sqlText := ""
-	if s.spec.SchemaSQL.Databases != nil {
-		sqlText = s.spec.SchemaSQL.Databases(conn.config)
+	if conn.schemaSQL.Databases != nil {
+		sqlText = conn.schemaSQL.Databases(conn.config)
 	}
 	if sqlText == "" {
 		return s.ok(req.ID, []map[string]any{{"name": conn.config.Database}})
@@ -1211,10 +1212,10 @@ func (s *Server) handleSchemaSchemas(ctx context.Context, req ipc.Message) ipc.M
 	if !ok {
 		return s.err(req.ID, ErrUnknownConnID, fmt.Sprintf("unknown conn_id %d", p.ConnID))
 	}
-	if s.spec.SchemaSQL.Schemas == nil {
+	if conn.schemaSQL.Schemas == nil {
 		return s.ok(req.ID, []map[string]any{{"name": conn.config.Username}})
 	}
-	rows, err := queryObjects(ctx, conn.db, s.spec.SchemaSQL.Schemas(conn.config, p.Database), func(cols []any) map[string]any {
+	rows, err := queryObjects(ctx, conn.db, conn.schemaSQL.Schemas(conn.config, p.Database), func(cols []any) map[string]any {
 		return map[string]any{"name": stringCell(cols, 0), "owner": stringCell(cols, 1)}
 	})
 	if err != nil {
@@ -1237,10 +1238,10 @@ func (s *Server) handleSchemaObjects(ctx context.Context, req ipc.Message) ipc.M
 	if !ok {
 		return s.err(req.ID, ErrUnknownConnID, fmt.Sprintf("unknown conn_id %d", p.ConnID))
 	}
-	if s.spec.SchemaSQL.Objects == nil {
+	if conn.schemaSQL.Objects == nil {
 		return s.ok(req.ID, []map[string]any{})
 	}
-	rows, err := queryObjects(ctx, conn.db, s.spec.SchemaSQL.Objects(conn.config, p.Database, p.Schema, p.Kinds), func(cols []any) map[string]any {
+	rows, err := queryObjects(ctx, conn.db, conn.schemaSQL.Objects(conn.config, p.Database, p.Schema, p.Kinds), func(cols []any) map[string]any {
 		return map[string]any{"name": stringCell(cols, 0), "kind": stringCell(cols, 1), "comment": stringCell(cols, 2)}
 	})
 	if err != nil {
@@ -1266,10 +1267,10 @@ func (s *Server) handleSchemaColumns(ctx context.Context, req ipc.Message) ipc.M
 	if p.Table == "" {
 		return s.err(req.ID, ErrInvalidParams, "missing required parameter `table`")
 	}
-	if s.spec.SchemaSQL.Columns == nil {
+	if conn.schemaSQL.Columns == nil {
 		return s.ok(req.ID, []map[string]any{})
 	}
-	rows, err := queryObjects(ctx, conn.db, s.spec.SchemaSQL.Columns(conn.config, p.Database, p.Schema, p.Table), func(cols []any) map[string]any {
+	rows, err := queryObjects(ctx, conn.db, conn.schemaSQL.Columns(conn.config, p.Database, p.Schema, p.Table), func(cols []any) map[string]any {
 		return map[string]any{
 			"ordinal":    uint32(intCell(cols, 0)),
 			"name":       stringCell(cols, 1),
@@ -1304,10 +1305,10 @@ func (s *Server) handleSchemaIndexes(ctx context.Context, req ipc.Message) ipc.M
 	if p.Table == "" {
 		return s.err(req.ID, ErrInvalidParams, "missing required parameter `table`")
 	}
-	if s.spec.SchemaSQL.Indexes == nil {
+	if conn.schemaSQL.Indexes == nil {
 		return s.ok(req.ID, []map[string]any{})
 	}
-	rows, err := queryObjects(ctx, conn.db, s.spec.SchemaSQL.Indexes(conn.config, p.Database, p.Schema, p.Table), func(cols []any) map[string]any {
+	rows, err := queryObjects(ctx, conn.db, conn.schemaSQL.Indexes(conn.config, p.Database, p.Schema, p.Table), func(cols []any) map[string]any {
 		kind := stringCell(cols, 4)
 		return map[string]any{
 			"name":       stringCell(cols, 0),
@@ -1341,10 +1342,10 @@ func (s *Server) handleSchemaForeignKeys(ctx context.Context, req ipc.Message) i
 	if p.Table == "" {
 		return s.err(req.ID, ErrInvalidParams, "missing required parameter `table`")
 	}
-	if s.spec.SchemaSQL.ForeignKeys == nil {
+	if conn.schemaSQL.ForeignKeys == nil {
 		return s.ok(req.ID, []map[string]any{})
 	}
-	rows, err := queryObjects(ctx, conn.db, s.spec.SchemaSQL.ForeignKeys(conn.config, p.Database, p.Schema, p.Table), func(cols []any) map[string]any {
+	rows, err := queryObjects(ctx, conn.db, conn.schemaSQL.ForeignKeys(conn.config, p.Database, p.Schema, p.Table), func(cols []any) map[string]any {
 		return map[string]any{
 			"name":               stringCell(cols, 0),
 			"columns":            splitListCell(cols, 1),
@@ -1374,10 +1375,10 @@ func (s *Server) handleSchemaViews(ctx context.Context, req ipc.Message) ipc.Mes
 	if !ok {
 		return s.err(req.ID, ErrUnknownConnID, fmt.Sprintf("unknown conn_id %d", p.ConnID))
 	}
-	if s.spec.SchemaSQL.Views == nil {
+	if conn.schemaSQL.Views == nil {
 		return s.ok(req.ID, []map[string]any{})
 	}
-	rows, err := queryObjects(ctx, conn.db, s.spec.SchemaSQL.Views(conn.config, p.Database, p.Schema), func(cols []any) map[string]any {
+	rows, err := queryObjects(ctx, conn.db, conn.schemaSQL.Views(conn.config, p.Database, p.Schema), func(cols []any) map[string]any {
 		isMaterialized := boolCell(cols, 3)
 		kind := "view"
 		if isMaterialized {
@@ -1411,10 +1412,10 @@ func (s *Server) handleSchemaFunctions(ctx context.Context, req ipc.Message) ipc
 	if !ok {
 		return s.err(req.ID, ErrUnknownConnID, fmt.Sprintf("unknown conn_id %d", p.ConnID))
 	}
-	if s.spec.SchemaSQL.Functions == nil {
+	if conn.schemaSQL.Functions == nil {
 		return s.ok(req.ID, []map[string]any{})
 	}
-	rows, err := queryObjects(ctx, conn.db, s.spec.SchemaSQL.Functions(conn.config, p.Database, p.Schema), func(cols []any) map[string]any {
+	rows, err := queryObjects(ctx, conn.db, conn.schemaSQL.Functions(conn.config, p.Database, p.Schema), func(cols []any) map[string]any {
 		return map[string]any{
 			"name":     stringCell(cols, 0),
 			"schema":   stringCell(cols, 1),
@@ -1446,10 +1447,10 @@ func (s *Server) handleSchemaViewDefinition(ctx context.Context, req ipc.Message
 	if p.View == "" {
 		return s.err(req.ID, ErrInvalidParams, "missing required parameter `view`")
 	}
-	if s.spec.SchemaSQL.ViewDefinition == nil {
+	if conn.schemaSQL.ViewDefinition == nil {
 		return s.ok(req.ID, map[string]any{"sql": "", "is_materialized": false})
 	}
-	rows, err := queryObjects(ctx, conn.db, s.spec.SchemaSQL.ViewDefinition(conn.config, p.Database, p.Schema, p.View), func(cols []any) map[string]any {
+	rows, err := queryObjects(ctx, conn.db, conn.schemaSQL.ViewDefinition(conn.config, p.Database, p.Schema, p.View), func(cols []any) map[string]any {
 		return map[string]any{
 			"sql":             stringCell(cols, 0),
 			"is_materialized": boolCell(cols, 1),
@@ -1488,23 +1489,67 @@ func (s *Server) handleEmptyDumpDDL(req ipc.Message) ipc.Message {
 	return s.ok(req.ID, map[string]any{"statements": []string{}})
 }
 
-func (s *Server) parseConfig(params json.RawMessage) (Config, string, error) {
+func (s *Server) parseConfig(ctx context.Context, params json.RawMessage) (Config, ConnectionSpec, error) {
 	var p struct {
 		DriverID string         `json:"driver_id"`
 		Config   map[string]any `json:"config"`
 	}
 	if err := decodeParams(params, &p); err != nil {
-		return Config{}, "", err
+		return Config{}, ConnectionSpec{}, err
 	}
 	if p.DriverID != "" && p.DriverID != s.spec.ID {
-		return Config{}, "", fmt.Errorf("unsupported driver_id `%s`", p.DriverID)
+		return Config{}, ConnectionSpec{}, fmt.Errorf("unsupported driver_id `%s`", p.DriverID)
 	}
 	cfg, err := ConfigFromWire(p.Config, s.spec.DefaultPort)
 	if err != nil {
-		return Config{}, "", err
+		return Config{}, ConnectionSpec{}, err
+	}
+	connSpec, err := s.resolveConnection(ctx, cfg)
+	return cfg, connSpec, err
+}
+
+func (s *Server) resolveConnection(ctx context.Context, cfg Config) (ConnectionSpec, error) {
+	if s.spec.ResolveConnection != nil {
+		connSpec, err := s.spec.ResolveConnection(ctx, cfg)
+		if err != nil {
+			return ConnectionSpec{}, err
+		}
+		return s.normalizeConnectionSpec(connSpec)
 	}
 	dsn, err := s.spec.BuildDSN(cfg)
-	return cfg, dsn, err
+	if err != nil {
+		return ConnectionSpec{}, err
+	}
+	return s.normalizeConnectionSpec(ConnectionSpec{
+		DriverName: s.spec.SQLDriverName,
+		DSN:        dsn,
+		SchemaSQL:  s.spec.SchemaSQL,
+	})
+}
+
+func (s *Server) normalizeConnectionSpec(connSpec ConnectionSpec) (ConnectionSpec, error) {
+	if connSpec.DriverName == "" {
+		connSpec.DriverName = s.spec.SQLDriverName
+	}
+	if schemaSQLIsEmpty(connSpec.SchemaSQL) {
+		connSpec.SchemaSQL = s.spec.SchemaSQL
+	}
+	if connSpec.DriverName == "" {
+		return ConnectionSpec{}, fmt.Errorf("missing SQL driver name")
+	}
+	return connSpec, nil
+}
+
+func schemaSQLIsEmpty(schemaSQL SchemaSQL) bool {
+	return schemaSQL.Databases == nil &&
+		schemaSQL.Schemas == nil &&
+		schemaSQL.Objects == nil &&
+		schemaSQL.Columns == nil &&
+		schemaSQL.Indexes == nil &&
+		schemaSQL.ForeignKeys == nil &&
+		schemaSQL.Views == nil &&
+		schemaSQL.Functions == nil &&
+		schemaSQL.ViewDefinition == nil
 }
 
 func (s *Server) connFromParams(req ipc.Message) (*connectionState, *ipc.Message) {

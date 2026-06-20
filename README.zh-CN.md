@@ -174,8 +174,8 @@ bash scripts/install-local-drivers.sh
 bash scripts/install-local-drivers.sh dm
 ```
 
-默认安装到 `$XDG_CONFIG_HOME/onetcli/extensions/database_drivers` 或
-`$HOME/.config/onetcli/extensions/database_drivers`。如需改目标目录，可设置
+默认安装到 `$XDG_CONFIG_HOME/one-hub/extensions/database_drivers` 或
+`$HOME/.config/one-hub/extensions/database_drivers`。如需改目标目录，可设置
 `ONETCLI_DATABASE_DRIVER_DIR=/path/to/database_drivers`。
 
 本地准备某个 driver 的发版产物：

@@ -10,6 +10,9 @@ gitee.com/chunanyong/dm/i18n
 gitee.com/chunanyong/dm/parser
 gitee.com/chunanyong/dm/security
 gitee.com/chunanyong/dm/util
+# github.com/go-sql-driver/mysql v1.7.0
+## explicit; go 1.13
+github.com/go-sql-driver/mysql
 # github.com/golang/snappy v1.0.0
 ## explicit
 github.com/golang/snappy

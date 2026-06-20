@@ -1,6 +1,6 @@
 {
-  "id": "oracle",
-  "name": "Oracle",
+  "id": "oracle-go",
+  "name": "Oracle Go",
   "description": "Oracle 数据库纯 Go IPC 驱动",
   "version": "0.1.0",
   "license": "MIT",
@@ -9,12 +9,12 @@
     "go-ora": "github.com/sijms/go-ora/v2 v2.9.0"
   },
   "entry": {
-    "command": "./oracle-ipc-driver",
+    "command": "./oracle-go-ipc-driver",
     "args": [],
     "working_dir": null
   },
   "transport": {
-    "name": "oracle-driver.sock",
+    "name": "oracle-go-driver.sock",
     "connect_timeout_ms": 5000
   },
   "connection": {
@@ -79,11 +79,11 @@
     "compatible_database_type": "Oracle",
     "supports_schema": true,
     "supports_sequences": false,
-    "uses_schema_as_database": false
+    "uses_schema_as_database": true
   },
   "capabilities": {
     "supports_schema": true,
-    "uses_schema_as_database": false,
+    "uses_schema_as_database": true,
     "supports_sequences": false,
     "supports_functions": true,
     "supports_procedures": false,
@@ -109,8 +109,8 @@
       "forms": [
         {
           "kind": "Connection",
-          "title_i18n_key": "Oracle",
-          "submit_i18n_key": "Connect",
+          "title_i18n_key": "database.oracle_go.name",
+          "submit_i18n_key": "common.connect",
           "tabs": [
             {
               "id": "general",
@@ -121,8 +121,8 @@
                   "label_i18n_key": "ConnectionForm.connection_name",
                   "field_type": "Text",
                   "required": true,
-                  "default_value": "Oracle",
-                  "placeholder_i18n_key": "Oracle",
+                  "default_value": "Oracle Go",
+                  "placeholder_i18n_key": "database.oracle_go.name",
                   "help_i18n_key": null,
                   "options": [],
                   "options_source": null,
@@ -225,23 +225,6 @@
                   "required": false,
                   "default_value": null,
                   "placeholder_i18n_key": "XE",
-                  "help_i18n_key": null,
-                  "options": [],
-                  "options_source": null,
-                  "visible_when": [],
-                  "default_when": [],
-                  "disabled_when_editing": false,
-                  "rows": null,
-                  "min": null,
-                  "max": null
-                },
-                {
-                  "id": "database",
-                  "label_i18n_key": "ConnectionForm.database",
-                  "field_type": "Text",
-                  "required": false,
-                  "default_value": null,
-                  "placeholder_i18n_key": null,
                   "help_i18n_key": null,
                   "options": [],
                   "options_source": null,

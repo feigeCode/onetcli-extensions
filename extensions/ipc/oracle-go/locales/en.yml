@@ -1,0 +1,25 @@
+name: Oracle Go
+description: Pure Go Oracle database IPC driver
+database.oracle_go.name: Oracle Go
+common.connect: Connect
+ConnectionForm.general: General
+ConnectionForm.connection_name: Connection name
+ConnectionForm.host: Host
+ConnectionForm.port: Port
+ConnectionForm.username: Username
+ConnectionForm.password: Password
+ConnectionForm.service_name: Service name
+ConnectionForm.sid: SID
+ConnectionForm.ssh: SSH
+ConnectionForm.remark: Remark
+ImportExport.run_sql_file: Run SQL file
+Table.design_table: Design table
+Table.open_data: Open data
+ImportExport.export_data: Export data
+View.open_data: Open data
+ImportExport.import_data: Import data
+ImportExport.dump_sql_structure: Dump SQL structure
+ImportExport.dump_sql_data: Dump SQL data
+ImportExport.dump_sql_structure_and_data: Dump SQL structure and data
+Connection.close: Close connection
+Connection.delete: Delete connection

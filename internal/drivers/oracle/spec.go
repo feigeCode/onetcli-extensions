@@ -16,8 +16,8 @@ func ConfigFromWire(raw map[string]any) (dbipc.Config, error) {
 
 func Spec() dbipc.DriverSpec {
 	return dbipc.DriverSpec{
-		ID:                   "oracle",
-		Name:                 "Oracle",
+		ID:                   "oracle-go",
+		Name:                 "Oracle Go",
 		SQLDriverName:        "oracle",
 		DefaultPort:          1521,
 		IdentifierQuoteLeft:  `"`,
@@ -46,14 +46,14 @@ func buildDSN(cfg dbipc.Config) (string, error) {
 		service = strings.TrimSpace(cfg.SID)
 	}
 	if service == "" {
-		service = strings.TrimSpace(cfg.Database)
-	}
-	if service == "" {
-		return "", fmt.Errorf("missing required config field service_name, sid, or database")
+		return "", fmt.Errorf("missing required config field service_name or sid")
 	}
 
 	values := url.Values{}
 	for key, value := range cfg.Extra {
+		if isHostManagedExtraParam(key) {
+			continue
+		}
 		values.Set(key, value)
 	}
 	rawURL := url.URL{
@@ -66,12 +66,16 @@ func buildDSN(cfg dbipc.Config) (string, error) {
 	return rawURL.String(), nil
 }
 
+func isHostManagedExtraParam(key string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(key)), "ssh_")
+}
+
 func oracleDatabasesSQL(cfg dbipc.Config) string {
 	return "SELECT COALESCE(NULLIF(SYS_CONTEXT('USERENV', 'CON_NAME'), ''), SYS_CONTEXT('USERENV', 'DB_NAME')) AS NAME FROM DUAL"
 }
 
 func oracleSchemasSQL(cfg dbipc.Config, database string) string {
-	return "SELECT USERNAME, USERNAME FROM ALL_USERS ORDER BY USERNAME"
+	return "SELECT USERNAME AS NAME, USERNAME AS OWNER FROM ALL_USERS ORDER BY 1"
 }
 
 func oracleObjectsSQL(cfg dbipc.Config, database, schema string, kinds []string) string {

@@ -53,14 +53,24 @@
       "manifest": "kingbase/manifest.json"
     },
     {
-      "id": "oracle",
+      "id": "oceanbase",
       "kind": "database_driver",
-      "name": "Oracle",
+      "name": "OceanBase",
       "version": "0.1.0",
-      "release_tag": "oracle-v0.1.0",
+      "release_tag": "oceanbase-v0.1.0",
+      "description": "OceanBase 数据库 Go IPC 驱动",
+      "file_extensions": [],
+      "manifest": "oceanbase/manifest.json"
+    },
+    {
+      "id": "oracle-go",
+      "kind": "database_driver",
+      "name": "Oracle Go",
+      "version": "0.1.0",
+      "release_tag": "oracle-go-v0.1.0",
       "description": "Oracle 数据库纯 Go IPC 驱动",
       "file_extensions": [],
-      "manifest": "oracle/manifest.json"
+      "manifest": "oracle-go/manifest.json"
     },
     {
       "id": "opengauss",

@@ -1,4 +1,4 @@
-//go:build oracle_driver
+//go:build oracle_go_driver
 
 package main
 

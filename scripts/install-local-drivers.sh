@@ -6,13 +6,13 @@ usage() {
 Usage: scripts/install-local-drivers.sh [extension-id]
 
 Build, package, verify, and install IPC database driver extensions into the
-local onetcli database driver directory. Passing an extension id installs only
+local one-hub database driver directory. Passing an extension id installs only
 that driver; omitting it installs every driver under extensions/ipc.
 
 Environment:
   ONETCLI_DATABASE_DRIVER_DIR  Override install root. Defaults to
-                               $XDG_CONFIG_HOME/onetcli/extensions/database_drivers
-                               or $HOME/.config/onetcli/extensions/database_drivers.
+                               $XDG_CONFIG_HOME/one-hub/extensions/database_drivers
+                               or $HOME/.config/one-hub/extensions/database_drivers.
 EOF
 }
 
@@ -32,7 +32,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ARTIFACT_DIR="${REPO_DIR}/target/local-extension-artifacts"
 CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME}/.config}"
-INSTALL_ROOT="${ONETCLI_DATABASE_DRIVER_DIR:-${CONFIG_HOME}/onetcli/extensions/database_drivers}"
+INSTALL_ROOT="${ONETCLI_DATABASE_DRIVER_DIR:-${CONFIG_HOME}/one-hub/extensions/database_drivers}"
 
 fail() {
   printf 'error: %s\n' "$*" >&2

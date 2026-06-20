@@ -1,6 +1,7 @@
 package dbipc
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"sort"
@@ -15,6 +16,7 @@ type Config struct {
 	Database string
 	Service  string
 	SID      string
+	Protocol string
 	Extra    map[string]string
 }
 
@@ -26,7 +28,14 @@ type DriverSpec struct {
 	IdentifierQuoteLeft  string
 	IdentifierQuoteRight string
 	BuildDSN             func(Config) (string, error)
+	ResolveConnection    func(context.Context, Config) (ConnectionSpec, error)
 	SchemaSQL            SchemaSQL
+}
+
+type ConnectionSpec struct {
+	DriverName string
+	DSN        string
+	SchemaSQL  SchemaSQL
 }
 
 type SchemaSQL struct {
@@ -55,6 +64,7 @@ func ConfigFromWire(raw map[string]any, defaultPort int) (Config, error) {
 	cfg.Database = stringValue(raw, "database")
 	cfg.Service = stringValue(raw, "service_name")
 	cfg.SID = stringValue(raw, "sid")
+	cfg.Protocol = stringValue(raw, "protocol")
 
 	if extra, ok := raw["extra_params"].(map[string]any); ok {
 		for k, v := range extra {

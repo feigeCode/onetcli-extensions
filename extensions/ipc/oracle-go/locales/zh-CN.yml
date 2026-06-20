@@ -1,0 +1,25 @@
+name: Oracle Go
+description: Oracle 数据库纯 Go IPC 驱动
+database.oracle_go.name: Oracle Go
+common.connect: 连接
+ConnectionForm.general: 常规
+ConnectionForm.connection_name: 连接名称
+ConnectionForm.host: 主机
+ConnectionForm.port: 端口
+ConnectionForm.username: 用户名
+ConnectionForm.password: 密码
+ConnectionForm.service_name: 服务名
+ConnectionForm.sid: SID
+ConnectionForm.ssh: SSH
+ConnectionForm.remark: 备注
+ImportExport.run_sql_file: 运行 SQL 文件
+Table.design_table: 设计表
+Table.open_data: 打开数据
+ImportExport.export_data: 导出数据
+View.open_data: 打开数据
+ImportExport.import_data: 导入数据
+ImportExport.dump_sql_structure: 转储 SQL 结构
+ImportExport.dump_sql_data: 转储 SQL 数据
+ImportExport.dump_sql_structure_and_data: 转储 SQL 结构和数据
+Connection.close: 关闭连接
+Connection.delete: 删除连接

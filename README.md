@@ -200,8 +200,8 @@ bash scripts/install-local-drivers.sh dm
 ```
 
 By default this installs into
-`$XDG_CONFIG_HOME/onetcli/extensions/database_drivers` or
-`$HOME/.config/onetcli/extensions/database_drivers`. Override the target with
+`$XDG_CONFIG_HOME/one-hub/extensions/database_drivers` or
+`$HOME/.config/one-hub/extensions/database_drivers`. Override the target with
 `ONETCLI_DATABASE_DRIVER_DIR=/path/to/database_drivers`.
 
 Prepare release artifacts for one driver locally:

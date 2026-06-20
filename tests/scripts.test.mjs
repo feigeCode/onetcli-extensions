@@ -19,7 +19,7 @@ test("go ipc driver metadata excludes GBase8s", () => {
     })
     .sort();
 
-  assert.deepEqual(ids, ["dm", "kingbase", "oracle"]);
+  assert.deepEqual(ids, ["dm", "kingbase", "oceanbase", "oracle-go"]);
 });
 
 test("Go IPC driver manifests expose the full shared method surface", () => {
@@ -71,7 +71,7 @@ test("Go IPC driver manifests expose the full shared method surface", () => {
     "schema/dump_ddl",
   ];
 
-  for (const id of ["dm", "kingbase", "oracle"]) {
+  for (const id of ["dm", "kingbase", "oceanbase", "oracle-go"]) {
     const driverJson = JSON.parse(
       fs.readFileSync(path.join(repoRoot, "extensions/ipc", id, "driver.json"), "utf8"),
     );
@@ -88,7 +88,7 @@ test("Go IPC driver metadata declares all cross-compiled release targets", () =>
     "x86_64-pc-windows-msvc",
   ];
 
-  for (const id of ["dm", "kingbase", "oracle"]) {
+  for (const id of ["dm", "kingbase", "oceanbase", "oracle-go"]) {
     const metadata = JSON.parse(
       fs.readFileSync(path.join(repoRoot, "extensions/ipc", id, "extension.build.json"), "utf8"),
     );
@@ -245,6 +245,73 @@ test("IPC driver locales define every manifest i18n key", () => {
       ),
     );
     if (keys.size === 0) continue;
+
+    const localesDir = path.join(repoRoot, "extensions/ipc", id, driverJson.ui?.locales_dir || "locales");
+    for (const locale of ["en.yml", "zh-CN.yml", "zh-HK.yml"]) {
+      const localePath = path.join(localesDir, locale);
+      assert.ok(fs.existsSync(localePath), `${id} missing locale ${locale}`);
+      const localeText = fs.readFileSync(localePath, "utf8");
+      for (const key of keys) {
+        assert.ok(
+          localeDefinesKey(localeText, key),
+          `${id} ${locale} missing i18n key ${key}`,
+        );
+      }
+    }
+  }
+});
+
+test("Oracle Go IPC driver uses an external-driver id that cannot collide with built-in Oracle", () => {
+  const driverDir = path.join(repoRoot, "extensions/ipc/oracle-go");
+  const metadata = JSON.parse(
+    fs.readFileSync(path.join(driverDir, "extension.build.json"), "utf8"),
+  );
+  const driverJson = JSON.parse(fs.readFileSync(path.join(driverDir, "driver.json"), "utf8"));
+
+  assert.equal(fs.existsSync(path.join(repoRoot, "extensions/ipc/oracle")), false);
+  assert.equal(metadata.id, "oracle-go");
+  assert.equal(metadata.path, "extensions/ipc/oracle-go");
+  assert.equal(metadata.binary, "oracle-go-ipc-driver");
+  assert.equal(metadata.releaseTagPrefix, "oracle-go-v");
+  assert.equal(metadata.r2Prefix, "extensions/oracle-go");
+  assert.equal(driverJson.id, "oracle-go");
+  assert.equal(driverJson.entry.command, "./oracle-go-ipc-driver");
+  assert.equal(driverJson.transport.name, "oracle-go-driver.sock");
+});
+
+test("Oracle Go connection form does not expose a generic database field", () => {
+  const driverJson = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, "extensions/ipc/oracle-go/driver.json"), "utf8"),
+  );
+  const connectionForm = driverJson.ui?.form?.forms?.find((form) => form.kind === "Connection");
+  assert.ok(connectionForm, "oracle-go should declare a Connection form");
+  const fieldIds = connectionForm.tabs.flatMap((tab) =>
+    (tab.fields || []).map((field) => field.id),
+  );
+
+  assert.equal(fieldIds.includes("database"), false);
+  assert.deepEqual(
+    fieldIds.filter((id) => id === "service_name" || id === "sid"),
+    ["service_name", "sid"],
+  );
+});
+
+test("Oracle Go declares schemas as database-level nodes", () => {
+  const driverJson = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, "extensions/ipc/oracle-go/driver.json"), "utf8"),
+  );
+
+  assert.equal(driverJson.dialect.uses_schema_as_database, true);
+  assert.equal(driverJson.capabilities.uses_schema_as_database, true);
+});
+
+test("Oracle Go and OceanBase plugin locales define all packaged UI i18n keys", () => {
+  for (const id of ["oracle-go", "oceanbase"]) {
+    const driverJson = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, "extensions/ipc", id, "driver.json"), "utf8"),
+    );
+    const keys = [...collectI18nKeys(driverJson)].filter(isPackagedUiI18nKey);
+    assert.ok(keys.length > 0, `${id} should declare packaged i18n keys`);
 
     const localesDir = path.join(repoRoot, "extensions/ipc", id, driverJson.ui?.locales_dir || "locales");
     for (const locale of ["en.yml", "zh-CN.yml", "zh-HK.yml"]) {
@@ -1498,6 +1565,14 @@ test("install-local-drivers builds and replaces one selected local driver", () =
   );
 });
 
+test("install-local-drivers defaults to the one-hub driver directory", () => {
+  const script = fs.readFileSync(path.join(repoRoot, "scripts/install-local-drivers.sh"), "utf8");
+
+  assert.match(script, /\$XDG_CONFIG_HOME\/one-hub\/extensions\/database_drivers/);
+  assert.match(script, /\$HOME\/\.config\/one-hub\/extensions\/database_drivers/);
+  assert.match(script, /\$\{CONFIG_HOME\}\/one-hub\/extensions\/database_drivers/);
+});
+
 test("install-local-drivers installs all local drivers when no id is passed", () => {
   const workdir = makeTempDir();
   copyScript("install-local-drivers.sh", workdir);
@@ -1823,6 +1898,16 @@ function collectI18nKeys(value, keys = new Set()) {
     }
   }
   return keys;
+}
+
+function isPackagedUiI18nKey(key) {
+  return key.startsWith("database.")
+    || key.startsWith("common.")
+    || key.startsWith("ConnectionForm.")
+    || key.startsWith("ImportExport.")
+    || key.startsWith("Table.")
+    || key.startsWith("View.")
+    || key.startsWith("Connection.");
 }
 
 function localeDefinesKey(localeText, key) {

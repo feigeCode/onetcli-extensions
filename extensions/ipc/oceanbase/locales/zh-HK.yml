@@ -1,0 +1,29 @@
+name: OceanBase
+description: OceanBase 數據庫 IPC 驅動
+database.oceanbase.name: OceanBase
+database.oceanbase.protocol.mysql: MySQL
+database.oceanbase.protocol.oracle: Oracle
+common.connect: 連線
+ConnectionForm.general: 一般
+ConnectionForm.connection_name: 連線名稱
+ConnectionForm.host: 主機
+ConnectionForm.port: 連接埠
+ConnectionForm.username: 使用者名稱
+ConnectionForm.password: 密碼
+ConnectionForm.service_name: 服務名稱
+ConnectionForm.sid: SID
+ConnectionForm.database: 數據庫
+ConnectionForm.protocol: 協議
+ConnectionForm.ssh: SSH
+ConnectionForm.remark: 備註
+ImportExport.run_sql_file: 執行 SQL 檔案
+Table.design_table: 設計資料表
+Table.open_data: 開啟資料
+ImportExport.export_data: 匯出資料
+View.open_data: 開啟資料
+ImportExport.import_data: 匯入資料
+ImportExport.dump_sql_structure: 轉儲 SQL 結構
+ImportExport.dump_sql_data: 轉儲 SQL 資料
+ImportExport.dump_sql_structure_and_data: 轉儲 SQL 結構和資料
+Connection.close: 關閉連線
+Connection.delete: 刪除連線

@@ -7,6 +7,20 @@ import (
 	"onetcli-db-ipc-drivers/internal/dbipc"
 )
 
+func TestSpecExposesOracleGoExternalIDWhileUsingGoOraSQLDriver(t *testing.T) {
+	spec := Spec()
+
+	if spec.ID != "oracle-go" {
+		t.Fatalf("spec.ID = %q, want oracle-go", spec.ID)
+	}
+	if spec.Name != "Oracle Go" {
+		t.Fatalf("spec.Name = %q, want Oracle Go", spec.Name)
+	}
+	if spec.SQLDriverName != "oracle" {
+		t.Fatalf("spec.SQLDriverName = %q, want oracle", spec.SQLDriverName)
+	}
+}
+
 func TestSpecBuildsGoOraV2DSNFromOnetcliConfig(t *testing.T) {
 	cfg, err := ConfigFromWire(map[string]any{
 		"host":         "db.example.test",
@@ -38,6 +52,36 @@ func TestSpecBuildsGoOraV2DSNFromOnetcliConfig(t *testing.T) {
 	}
 }
 
+func TestSpecBuildsGoOraV2DSNWithoutHostManagedSSHOptions(t *testing.T) {
+	cfg, err := ConfigFromWire(map[string]any{
+		"host":         "10.2.4.53",
+		"port":         float64(1521),
+		"username":     "COMI_SERVER2112",
+		"password":     "oracle",
+		"service_name": "ORCL",
+		"extra_params": map[string]any{
+			"SERVER":             "dedicated",
+			"ssh_tunnel_enabled": false,
+			"ssh_port":           22,
+		},
+	})
+	if err != nil {
+		t.Fatalf("ConfigFromWire returned error: %v", err)
+	}
+
+	dsn, err := Spec().BuildDSN(cfg)
+	if err != nil {
+		t.Fatalf("BuildDSN returned error: %v", err)
+	}
+
+	if strings.Contains(dsn, "ssh_tunnel_enabled") || strings.Contains(dsn, "ssh_port") {
+		t.Fatalf("dsn leaked host-managed ssh options: %q", dsn)
+	}
+	if !strings.Contains(dsn, "SERVER=dedicated") {
+		t.Fatalf("dsn %q does not contain SERVER=dedicated", dsn)
+	}
+}
+
 func TestSpecBuildsGoOraV2DSNFromSIDWhenServiceIsMissing(t *testing.T) {
 	cfg, err := ConfigFromWire(map[string]any{
 		"host":     "127.0.0.1",
@@ -57,6 +101,26 @@ func TestSpecBuildsGoOraV2DSNFromSIDWhenServiceIsMissing(t *testing.T) {
 	want := "oracle://system:oracle@127.0.0.1:1521/XE"
 	if dsn != want {
 		t.Fatalf("dsn = %q, want %q", dsn, want)
+	}
+}
+
+func TestSpecDoesNotUseGenericDatabaseAsOracleService(t *testing.T) {
+	cfg, err := ConfigFromWire(map[string]any{
+		"host":     "127.0.0.1",
+		"username": "system",
+		"password": "oracle",
+		"database": "ORCL",
+	})
+	if err != nil {
+		t.Fatalf("ConfigFromWire returned error: %v", err)
+	}
+
+	_, err = Spec().BuildDSN(cfg)
+	if err == nil {
+		t.Fatalf("BuildDSN returned nil error for database-only Oracle config")
+	}
+	if !strings.Contains(err.Error(), "service_name or sid") {
+		t.Fatalf("BuildDSN error = %q, want service_name or sid", err.Error())
 	}
 }
 
@@ -130,6 +194,25 @@ func TestSpecBuildsOracleMetadataSQLWithOwnerFilters(t *testing.T) {
 		if !strings.Contains(viewSQL, want) {
 			t.Fatalf("view definition SQL %q does not contain %q", viewSQL, want)
 		}
+	}
+}
+
+func TestSpecBuildsOracleSchemasSQLWithDistinctColumnAliases(t *testing.T) {
+	cfg := ConfigFromWireNoError(t, map[string]any{
+		"host":         "127.0.0.1",
+		"username":     "system",
+		"password":     "oracle",
+		"service_name": "orclpdb1",
+	})
+
+	schemasSQL := Spec().SchemaSQL.Schemas(cfg, "ORCLPDB1")
+	for _, want := range []string{"USERNAME AS NAME", "USERNAME AS OWNER", "ORDER BY 1"} {
+		if !strings.Contains(schemasSQL, want) {
+			t.Fatalf("schemas SQL %q does not contain %q", schemasSQL, want)
+		}
+	}
+	if strings.Contains(schemasSQL, "SELECT USERNAME, USERNAME") {
+		t.Fatalf("schemas SQL %q uses duplicate unaliased USERNAME columns", schemasSQL)
 	}
 }
 

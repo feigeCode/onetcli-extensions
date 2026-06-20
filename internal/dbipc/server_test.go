@@ -115,6 +115,56 @@ func TestServerAllowsBusinessMethodsAfterInit(t *testing.T) {
 	}
 }
 
+func TestServerUsesResolvedConnectionDriverAndDSN(t *testing.T) {
+	var openedDriver string
+	var openedDSN string
+	actualDriver, _ := registerStreamingDriver(t, nil)
+	spec := testSpecWithSQLDriver("default-driver")
+	spec.ResolveConnection = func(ctx context.Context, cfg Config) (ConnectionSpec, error) {
+		if cfg.Host != "127.0.0.1" {
+			t.Fatalf("resolved cfg host = %q", cfg.Host)
+		}
+		return ConnectionSpec{
+			DriverName: "resolved-driver",
+			DSN:        "resolved-dsn",
+			SchemaSQL: SchemaSQL{
+				Databases: func(Config) string { return "SELECT 'resolved_catalog'" },
+			},
+		}, nil
+	}
+	server := NewServer(spec, func(driverName, dsn string) (*sql.DB, error) {
+		openedDriver = driverName
+		openedDSN = dsn
+		return sql.Open(actualDriver, dsn)
+	})
+	server.initialized = true
+
+	resp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  "conn/open",
+		Params:  json.RawMessage(`{"driver_id":"testdb","config":{"host":"127.0.0.1"}}`),
+	})
+
+	if resp.Error != nil {
+		t.Fatalf("conn/open returned error: %#v", resp.Error)
+	}
+	if openedDriver != "resolved-driver" || openedDSN != "resolved-dsn" {
+		t.Fatalf("opened driver/dsn = %q/%q", openedDriver, openedDSN)
+	}
+	var opened struct {
+		ConnID uint64 `json:"conn_id"`
+	}
+	decodeResult(t, resp, &opened)
+	conn := server.conns[opened.ConnID]
+	if conn.schemaSQL.Databases == nil {
+		t.Fatal("connection did not keep resolved schema SQL")
+	}
+	if got := conn.schemaSQL.Databases(conn.config); got != "SELECT 'resolved_catalog'" {
+		t.Fatalf("resolved schema SQL = %q", got)
+	}
+}
+
 func TestServerHandlesConnectionUseAsNoop(t *testing.T) {
 	server := NewServer(testSpec(), nil)
 	server.initialized = true
