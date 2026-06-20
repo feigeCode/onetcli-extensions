@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	gitea.com/kingbase/gokb v0.0.0-20201021123113-29bd62a876c3
 	gitee.com/chunanyong/dm v1.8.23
+	github.com/sijms/go-ora/v2 v2.9.0
 )
 
 require (

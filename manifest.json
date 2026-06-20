@@ -53,6 +53,16 @@
       "manifest": "kingbase/manifest.json"
     },
     {
+      "id": "oracle",
+      "kind": "database_driver",
+      "name": "Oracle",
+      "version": "0.1.0",
+      "release_tag": "oracle-v0.1.0",
+      "description": "Oracle 数据库纯 Go IPC 驱动",
+      "file_extensions": [],
+      "manifest": "oracle/manifest.json"
+    },
+    {
       "id": "opengauss",
       "kind": "database_driver",
       "name": "openGauss",

@@ -19,7 +19,7 @@ test("go ipc driver metadata excludes GBase8s", () => {
     })
     .sort();
 
-  assert.deepEqual(ids, ["dm", "kingbase"]);
+  assert.deepEqual(ids, ["dm", "kingbase", "oracle"]);
 });
 
 test("Go IPC driver manifests expose the full shared method surface", () => {
@@ -71,7 +71,7 @@ test("Go IPC driver manifests expose the full shared method surface", () => {
     "schema/dump_ddl",
   ];
 
-  for (const id of ["dm", "kingbase"]) {
+  for (const id of ["dm", "kingbase", "oracle"]) {
     const driverJson = JSON.parse(
       fs.readFileSync(path.join(repoRoot, "extensions/ipc", id, "driver.json"), "utf8"),
     );
@@ -88,7 +88,7 @@ test("Go IPC driver metadata declares all cross-compiled release targets", () =>
     "x86_64-pc-windows-msvc",
   ];
 
-  for (const id of ["dm", "kingbase"]) {
+  for (const id of ["dm", "kingbase", "oracle"]) {
     const metadata = JSON.parse(
       fs.readFileSync(path.join(repoRoot, "extensions/ipc", id, "extension.build.json"), "utf8"),
     );
