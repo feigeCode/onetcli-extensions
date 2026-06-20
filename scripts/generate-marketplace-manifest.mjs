@@ -10,7 +10,7 @@ const driverJson = JSON.parse(
   fs.readFileSync(path.join(metadata.path, "driver.json"), "utf8"),
 );
 
-const targets = metadata.targets;
+const targets = selectedTargets(metadata.targets);
 
 const checksums = readChecksums(path.join(artifactDir, "sha256sums.txt"));
 const artifacts = {};
@@ -81,4 +81,22 @@ function loadExtensionMetadata(id) {
     return data;
   }
   throw new Error(`unknown extension id: ${id}`);
+}
+
+function selectedTargets(defaultTargets) {
+  const rawTargets = process.env.TARGETS;
+  if (!rawTargets || !rawTargets.trim()) {
+    return defaultTargets;
+  }
+
+  const requested = [...new Set(rawTargets.split(",").map((target) => target.trim()).filter(Boolean))];
+  const known = new Set(defaultTargets);
+  const unknown = requested.filter((target) => !known.has(target));
+  if (unknown.length > 0) {
+    throw new Error(`unknown target(s) for ${extensionId}: ${unknown.join(", ")}`);
+  }
+  if (requested.length === 0) {
+    throw new Error("TARGETS did not contain any targets");
+  }
+  return requested;
 }

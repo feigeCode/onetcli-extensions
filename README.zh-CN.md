@@ -29,6 +29,7 @@ scripts/
   generate-marketplace-manifest.mjs
   install-local-drivers.sh
   package-driver.sh
+  release-driver.mjs
   verify-package.sh
 tests/
   scripts.test.mjs
@@ -176,6 +177,25 @@ bash scripts/install-local-drivers.sh dm
 默认安装到 `$XDG_CONFIG_HOME/onetcli/extensions/database_drivers` 或
 `$HOME/.config/onetcli/extensions/database_drivers`。如需改目标目录，可设置
 `ONETCLI_DATABASE_DRIVER_DIR=/path/to/database_drivers`。
+
+本地准备某个 driver 的发版产物：
+
+```bash
+node scripts/release-driver.mjs duckdb 1.0.0
+node scripts/release-driver.mjs dm 0.4.0 --target x86_64-unknown-linux-gnu
+node scripts/release-driver.mjs gbase8s 0.7.0 --artifact-dir artifacts/gbase8s-0.7.0
+```
+
+发版脚本会读取 `extensions/ipc/<driver-id>/extension.build.json`，按运行时选择
+对应构建命令，为每个选中的 target 打包并校验 archive，然后写出：
+
+- `artifacts/<driver-id>-driver-<target>.tar.gz`
+- `artifacts/sha256sums.txt`
+- `artifacts/extension-manifest.json`
+- `artifacts/release-metadata.json`
+
+如果二进制已经提前放在 `target/<target>/release`，可以加 `--skip-build` 只做组包和
+manifest 生成。
 
 ## 扩展市场 Manifest
 

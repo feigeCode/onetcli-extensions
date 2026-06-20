@@ -1556,6 +1556,124 @@ test("install-local-drivers installs universal drivers without requiring rustc",
   );
 });
 
+test("release-driver packages selected targets and writes release artifacts", () => {
+  const workdir = makeTempDir();
+  copyScript("release-driver.mjs", workdir);
+  copyScript("package-driver.sh", workdir);
+  copyScript("verify-package.sh", workdir);
+  copyScript("generate-marketplace-manifest.mjs", workdir);
+  createPackageFixture(workdir, {
+    id: "duckdb",
+    binary: "duckdb_driver",
+    binaryContents: "fake duckdb release binary\n",
+    metadata: {
+      path: "extensions/ipc/duckdb",
+      targets: ["x86_64-unknown-linux-gnu"],
+      releaseTagPrefix: "duckdb-v",
+      r2Prefix: "extensions/duckdb",
+    },
+    driverJson: {
+      id: "duckdb",
+      name: "DuckDB",
+      version: "0.0.0",
+      description: "DuckDB embedded analytical database IPC driver",
+      entry: {},
+    },
+  });
+
+  const output = execFileSync(
+    "node",
+    [
+      path.join(workdir, "scripts/release-driver.mjs"),
+      "duckdb",
+      "1.2.3",
+      "--target",
+      "x86_64-unknown-linux-gnu",
+      "--skip-build",
+      "--artifact-dir",
+      "artifacts",
+    ],
+    { cwd: workdir, encoding: "utf8" },
+  );
+
+  assert.match(output, /Packaging duckdb \(x86_64-unknown-linux-gnu\)/);
+  assert.match(output, /Release artifacts ready:/);
+  assert.ok(fs.existsSync(path.join(workdir, "artifacts/duckdb-driver-x86_64-unknown-linux-gnu.tar.gz")));
+  assert.match(
+    fs.readFileSync(path.join(workdir, "artifacts/sha256sums.txt"), "utf8"),
+    /^[0-9a-f]{64}\s+duckdb-driver-x86_64-unknown-linux-gnu\.tar\.gz\n$/,
+  );
+
+  const extensionManifest = JSON.parse(
+    fs.readFileSync(path.join(workdir, "artifacts/extension-manifest.json"), "utf8"),
+  );
+  assert.equal(extensionManifest.release_version, "duckdb-v1.2.3");
+  assert.equal(extensionManifest.extensions[0].id, "duckdb");
+  assert.equal(extensionManifest.extensions[0].version, "1.2.3");
+  assert.equal(
+    extensionManifest.extensions[0].artifacts["x86_64-unknown-linux-gnu"].file,
+    "duckdb-driver-x86_64-unknown-linux-gnu.tar.gz",
+  );
+
+  const releaseMetadata = JSON.parse(
+    fs.readFileSync(path.join(workdir, "artifacts/release-metadata.json"), "utf8"),
+  );
+  assert.deepEqual(releaseMetadata, {
+    release_tag: "duckdb-v1.2.3",
+    extension_id: "duckdb",
+    extension_version: "1.2.3",
+  });
+});
+
+test("release-driver delegates Go driver builds to the existing build script", () => {
+  const workdir = makeTempDir();
+  copyScript("release-driver.mjs", workdir);
+  copyScript("package-driver.sh", workdir);
+  copyScript("verify-package.sh", workdir);
+  copyScript("generate-marketplace-manifest.mjs", workdir);
+  createPackageFixture(workdir, {
+    id: "dm",
+    binary: "dm-ipc-driver",
+    binaryContents: "fake dm go binary\n",
+    language: "go",
+    package: "./cmd/dm-ipc-driver",
+    metadata: {
+      path: "extensions/ipc/dm",
+      targets: ["x86_64-unknown-linux-gnu"],
+      releaseTagPrefix: "dm-v",
+      r2Prefix: "extensions/dm",
+    },
+  });
+  fs.writeFileSync(
+    path.join(workdir, "scripts/build-go-driver.sh"),
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "printf '%s %s\\n' \"$1\" \"$2\" >> build-go-driver.calls",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+
+  execFileSync(
+    "node",
+    [
+      path.join(workdir, "scripts/release-driver.mjs"),
+      "dm",
+      "0.4.0",
+      "--target",
+      "x86_64-unknown-linux-gnu",
+    ],
+    { cwd: workdir, encoding: "utf8" },
+  );
+
+  assert.equal(
+    fs.readFileSync(path.join(workdir, "build-go-driver.calls"), "utf8"),
+    "dm x86_64-unknown-linux-gnu\n",
+  );
+  assert.ok(fs.existsSync(path.join(workdir, "artifacts/dm-driver-x86_64-unknown-linux-gnu.tar.gz")));
+});
+
 function makeTempDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "onetcli-extensions-test-"));
   fs.mkdirSync(path.join(dir, "unpacked"), { recursive: true });
@@ -1576,6 +1694,9 @@ function createPackageFixture(workdir, options = {}) {
     language,
     package: packageName,
     binary,
+    path: `extensions/ipc/${id}`,
+    targets: ["x86_64-unknown-linux-gnu"],
+    ...options.metadata,
   });
   writeJson(path.join(workdir, `extensions/ipc/${id}/driver.json`), options.driverJson || {
     id,

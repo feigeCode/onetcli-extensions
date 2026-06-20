@@ -33,6 +33,7 @@ scripts/
   generate-marketplace-manifest.mjs
   install-local-drivers.sh
   package-driver.sh
+  release-driver.mjs
   verify-package.sh
 tests/
   scripts.test.mjs
@@ -202,6 +203,26 @@ By default this installs into
 `$XDG_CONFIG_HOME/onetcli/extensions/database_drivers` or
 `$HOME/.config/onetcli/extensions/database_drivers`. Override the target with
 `ONETCLI_DATABASE_DRIVER_DIR=/path/to/database_drivers`.
+
+Prepare release artifacts for one driver locally:
+
+```bash
+node scripts/release-driver.mjs duckdb 1.0.0
+node scripts/release-driver.mjs dm 0.4.0 --target x86_64-unknown-linux-gnu
+node scripts/release-driver.mjs gbase8s 0.7.0 --artifact-dir artifacts/gbase8s-0.7.0
+```
+
+The release script reads `extensions/ipc/<driver-id>/extension.build.json`,
+builds each selected target with the runtime-specific build command, packages
+and verifies each archive, then writes:
+
+- `artifacts/<driver-id>-driver-<target>.tar.gz`
+- `artifacts/sha256sums.txt`
+- `artifacts/extension-manifest.json`
+- `artifacts/release-metadata.json`
+
+Use `--skip-build` when binaries have already been staged under
+`target/<target>/release`.
 
 ## Marketplace Manifest
 
