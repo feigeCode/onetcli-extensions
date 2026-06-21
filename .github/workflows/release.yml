@@ -107,11 +107,21 @@ jobs:
         with:
           distribution: temurin
           java-version: '11'
+      - name: Install Linux Rust audio dependencies
+        if: ${{ matrix.language == 'rust' && matrix.kind == 'remote_desktop_provider' && matrix.target == 'x86_64-unknown-linux-gnu' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
       - name: Install Linux Rust cross toolchain
         if: ${{ matrix.language == 'rust' && matrix.target == 'aarch64-unknown-linux-gnu' }}
         run: |
+          sudo dpkg --add-architecture arm64
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu pkg-config libasound2-dev:arm64 libssl-dev:arm64
+      - name: Install Windows Rust CMake dependencies
+        if: ${{ matrix.language == 'rust' && matrix.kind == 'remote_desktop_provider' && contains(matrix.target, 'windows') }}
+        shell: pwsh
+        run: choco install ninja -y --no-progress
       - name: Build
         if: ${{ matrix.language == 'rust' && matrix.package != '' && matrix.target != 'universal' }}
         env:
@@ -119,6 +129,10 @@ jobs:
           CXX_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-g++' || '' }}
           AR_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-ar' || '' }}
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '' }}
+          CARGO_TARGET_DIR: ${{ matrix.kind == 'remote_desktop_provider' && format('{0}/cargo-target', runner.temp) || '' }}
+          CMAKE_GENERATOR: ${{ matrix.kind == 'remote_desktop_provider' && contains(matrix.target, 'windows') && 'Ninja' || '' }}
+          PKG_CONFIG_ALLOW_CROSS: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && '1' || '' }}
+          PKG_CONFIG_LIBDIR: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && '/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig' || '' }}
         shell: bash
         run: |
           if [ -n "${{ matrix.manifest_path }}" ]; then
@@ -134,6 +148,8 @@ jobs:
         run: bash scripts/build-java-driver.sh "${{ matrix.extension }}" "${{ matrix.target }}"
       - name: Package
         shell: bash
+        env:
+          CARGO_TARGET_DIR: ${{ matrix.kind == 'remote_desktop_provider' && format('{0}/cargo-target', runner.temp) || '' }}
         run: |
           mkdir -p artifacts
           if [ "${{ matrix.kind }}" = "database_driver" ]; then

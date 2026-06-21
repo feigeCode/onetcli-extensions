@@ -215,6 +215,17 @@ test("extension descriptions include implementation language", () => {
   }
 });
 
+test("RDP helper keeps native TLS backend for RDP compatibility", () => {
+  const cargoToml = fs.readFileSync(
+    path.join(repoRoot, "extensions/remote-desktop/rdp-helper/Cargo.toml"),
+    "utf8",
+  );
+
+  assert.match(cargoToml, /ironrdp-client\s*=\s*\{[^}]*default-features\s*=\s*false/s);
+  assert.match(cargoToml, /ironrdp-client\s*=\s*\{[^}]*"native-tls"/s);
+  assert.doesNotMatch(cargoToml, /"rustls"/);
+});
+
 test("IPC driver form fields include host-required defaults", () => {
   const ids = fs
     .readdirSync(path.join(repoRoot, "extensions/ipc"))
@@ -609,6 +620,37 @@ test("package-remote-desktop-provider finds manifest-path helper target output",
       "1.2.3",
     ],
     { cwd: workdir, encoding: "utf8" },
+  ).trim();
+
+  execFileSync("tar", ["xzf", archivePath, "-C", path.join(workdir, "unpacked")]);
+  assert.equal(
+    fs.readFileSync(path.join(workdir, "unpacked/onetcli-rdp-helper"), "utf8"),
+    "fake rdp helper\n",
+  );
+});
+
+test("package-remote-desktop-provider finds helper output in CARGO_TARGET_DIR", () => {
+  const workdir = makeTempDir();
+  const targetDir = path.join(workdir, "short-target");
+  createRemoteDesktopProviderFixture(workdir, {
+    manifestPath: "extensions/remote-desktop/rdp-helper/Cargo.toml",
+    targetRoot: "short-target",
+  });
+
+  const archivePath = execFileSync(
+    "bash",
+    [
+      path.join(workdir, "scripts/package-remote-desktop-provider.sh"),
+      "rdp",
+      "x86_64-unknown-linux-gnu",
+      path.join(workdir, "artifacts"),
+      "1.2.3",
+    ],
+    {
+      cwd: workdir,
+      encoding: "utf8",
+      env: { ...process.env, CARGO_TARGET_DIR: targetDir },
+    },
   ).trim();
 
   execFileSync("tar", ["xzf", archivePath, "-C", path.join(workdir, "unpacked")]);
@@ -1660,6 +1702,14 @@ test("release workflow keeps extension releases scoped to current extension", ()
   assert.doesNotMatch(workflow, /gh release list/);
   assert.doesNotMatch(workflow, /previous-github-manifests/);
   assert.match(workflow, /artifacts\/extension-manifest\.json/);
+  assert.match(workflow, /CARGO_TARGET_DIR:\s+\$\{\{\s*matrix\.kind == 'remote_desktop_provider'/);
+  assert.match(workflow, /CMAKE_GENERATOR:\s+\$\{\{\s*matrix\.kind == 'remote_desktop_provider'/);
+  assert.match(workflow, /choco install ninja -y --no-progress/);
+  assert.match(workflow, /sudo apt-get install -y libasound2-dev/);
+  assert.match(workflow, /sudo dpkg --add-architecture arm64/);
+  assert.match(workflow, /sudo apt-get install -y gcc-aarch64-linux-gnu g\+\+-aarch64-linux-gnu pkg-config libasound2-dev:arm64 libssl-dev:arm64/);
+  assert.match(workflow, /PKG_CONFIG_ALLOW_CROSS:\s+\$\{\{\s*matrix\.target == 'aarch64-unknown-linux-gnu'/);
+  assert.match(workflow, /PKG_CONFIG_LIBDIR:\s+\$\{\{\s*matrix\.target == 'aarch64-unknown-linux-gnu'/);
 });
 
 test("CI workflow routes Rust, Go, and Java extension jobs by language", () => {

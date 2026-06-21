@@ -32,10 +32,16 @@ PROVIDER_DIR="${PACKAGE_ROOT}/${PROVIDER_ID}"
 ARCHIVE_NAME="${PROVIDER_ID}-remote-desktop-provider-${TARGET}.tar.gz"
 
 SOURCE_BIN=""
-SOURCE_CANDIDATES=("${REPO_DIR}/target/${TARGET}/release/${BIN_NAME}")
+SOURCE_CANDIDATES=()
+if [ -n "${CARGO_TARGET_DIR:-}" ]; then
+  SOURCE_CANDIDATES+=("${CARGO_TARGET_DIR}/${TARGET}/release/${BIN_NAME}")
+fi
+SOURCE_CANDIDATES+=("${REPO_DIR}/target/${TARGET}/release/${BIN_NAME}")
 if [ -n "$MANIFEST_PATH" ]; then
-  MANIFEST_DIR="$(cd "${REPO_DIR}/$(dirname "$MANIFEST_PATH")" && pwd)"
-  SOURCE_CANDIDATES+=("${MANIFEST_DIR}/target/${TARGET}/release/${BIN_NAME}")
+  MANIFEST_DIR="${REPO_DIR}/$(dirname "$MANIFEST_PATH")"
+  if [ -d "$MANIFEST_DIR" ]; then
+    SOURCE_CANDIDATES+=("${MANIFEST_DIR}/target/${TARGET}/release/${BIN_NAME}")
+  fi
 fi
 for CANDIDATE in "${SOURCE_CANDIDATES[@]}"; do
   if [ -f "$CANDIDATE" ]; then
