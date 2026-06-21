@@ -126,13 +126,14 @@ jobs:
         run: choco install ninja -y --no-progress
       - name: Build
         if: ${{ matrix.language == 'rust' && matrix.package != '' && matrix.target != 'universal' }}
-        env:
-          CC_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && matrix.kind != 'remote_desktop_provider' && 'aarch64-linux-gnu-gcc' || '' }}
-          CXX_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && matrix.kind != 'remote_desktop_provider' && 'aarch64-linux-gnu-g++' || '' }}
-          AR_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && matrix.kind != 'remote_desktop_provider' && 'aarch64-linux-gnu-ar' || '' }}
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && matrix.kind != 'remote_desktop_provider' && 'aarch64-linux-gnu-gcc' || '' }}
         shell: bash
         run: |
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ] && [ "${{ matrix.kind }}" != "remote_desktop_provider" ]; then
+            export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
+            export CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
+            export AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+          fi
           if [ "${{ matrix.kind }}" = "remote_desktop_provider" ]; then
             export CARGO_TARGET_DIR="${RUNNER_TEMP}/cargo-target"
           fi

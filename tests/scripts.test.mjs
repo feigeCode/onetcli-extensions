@@ -1709,7 +1709,9 @@ test("release workflow keeps extension releases scoped to current extension", ()
   assert.match(workflow, /choco install ninja -y --no-progress/);
   assert.match(workflow, /sudo apt-get install -y pkg-config libasound2-dev libssl-dev/);
   assert.match(workflow, /matrix\.target == 'aarch64-unknown-linux-gnu' && matrix\.kind != 'remote_desktop_provider'/);
+  assert.match(workflow, /export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc/);
   assert.doesNotMatch(workflow, /CMAKE_GENERATOR:\s+\$\{\{/);
+  assert.doesNotMatch(workflow, /CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER:\s+\$\{\{/);
   assert.doesNotMatch(workflow, /sudo dpkg --add-architecture arm64/);
 });
 
