@@ -91,6 +91,10 @@ fn request_to_input(request: HelperRequest) -> Option<RemoteDesktopInput> {
             key: RemoteKey::Scancode(scancode_value(code, extended)),
             pressed,
         },
+        HelperRequest::KeySym { keysym, pressed } => RemoteDesktopInput::Key {
+            key: RemoteKey::KeySym(keysym),
+            pressed,
+        },
         HelperRequest::Text { text } => RemoteDesktopInput::Text { text },
         HelperRequest::ClipboardText { text } => RemoteDesktopInput::ClipboardText { text },
         HelperRequest::Close => RemoteDesktopInput::Close,
@@ -208,6 +212,22 @@ mod tests {
             Some(RemoteDesktopInput::Key {
                 key: RemoteKey::Scancode(0xe048),
                 pressed: true
+            })
+        );
+    }
+
+    #[test]
+    fn converts_keysym_request_to_remote_keysym() {
+        let input = request_to_input(HelperRequest::KeySym {
+            keysym: b':' as u32,
+            pressed: true,
+        });
+
+        assert_eq!(
+            input,
+            Some(RemoteDesktopInput::Key {
+                key: RemoteKey::KeySym(b':' as u32),
+                pressed: true,
             })
         );
     }

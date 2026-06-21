@@ -33,6 +33,10 @@ pub enum HelperRequest {
         extended: bool,
         pressed: bool,
     },
+    KeySym {
+        keysym: u32,
+        pressed: bool,
+    },
     Text {
         text: String,
     },
@@ -174,6 +178,21 @@ mod tests {
             request,
             HelperRequest::ClipboardText {
                 text: "local 中文".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn decodes_keysym_request_shape_from_main_process() {
+        let line = r#"{"type":"KeySym","keysym":58,"pressed":true}"#;
+
+        let request = decode_request_line(line).expect("request decodes");
+
+        assert_eq!(
+            request,
+            HelperRequest::KeySym {
+                keysym: b':' as u32,
+                pressed: true,
             }
         );
     }
