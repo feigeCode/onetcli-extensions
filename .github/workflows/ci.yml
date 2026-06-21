@@ -63,6 +63,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '11'
+      - name: Install Linux remote desktop audio dependencies
+        if: ${{ matrix.language == 'rust' && matrix.kind == 'remote_desktop_provider' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libasound2-dev libssl-dev
       - name: Test Rust manifest package
         if: ${{ matrix.language == 'rust' && matrix.manifest_path != '' }}
         run: cargo test --manifest-path "${{ matrix.manifest_path }}" -- --nocapture
