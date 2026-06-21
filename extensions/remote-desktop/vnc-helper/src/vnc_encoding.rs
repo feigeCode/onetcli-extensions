@@ -12,7 +12,7 @@ pub(crate) struct ConnectedVncSession {
     pub(crate) client: VncClient,
     pub(crate) pointer: VncPointerState,
     pub(crate) was_connected: bool,
-    framebuffer: Option<RgbaFramebuffer>,
+    framebuffer: VncFramebufferState,
     last_refresh: Instant,
 }
 
@@ -22,7 +22,7 @@ impl ConnectedVncSession {
             client,
             pointer: VncPointerState::default(),
             was_connected: false,
-            framebuffer: None,
+            framebuffer: VncFramebufferState::default(),
             last_refresh: Instant::now(),
         }
     }
@@ -34,7 +34,10 @@ impl ConnectedVncSession {
         loop {
             match self.client.poll_event().await {
                 Ok(Some(event)) => self.handle_event(event, output_tx)?,
-                Ok(None) => return Ok(()),
+                Ok(None) => {
+                    self.framebuffer.flush_frame(output_tx);
+                    return Ok(());
+                }
                 Err(error) => return Err(error.to_string()),
             }
         }
@@ -59,8 +62,8 @@ impl ConnectedVncSession {
     ) -> Result<(), String> {
         match event {
             VncEvent::SetResolution(screen) => self.set_resolution(screen, output_tx),
-            VncEvent::RawImage(rect, data) => self.patch_rect(rect, &data, output_tx)?,
-            VncEvent::Copy(dst, src) => self.copy_rect(dst, src, output_tx)?,
+            VncEvent::RawImage(rect, data) => self.patch_rect(rect, &data)?,
+            VncEvent::Copy(dst, src) => self.copy_rect(dst, src)?,
             VncEvent::Text(text) => send_clipboard(output_tx, text),
             VncEvent::Error(message) => return Err(message),
             VncEvent::JpegImage(_, _) => {
@@ -77,8 +80,33 @@ impl ConnectedVncSession {
         screen: vnc_client::Screen,
         output_tx: &std::sync::mpsc::Sender<RemoteDesktopOutput>,
     ) {
-        self.framebuffer = Some(RgbaFramebuffer::new(screen.width, screen.height));
+        self.framebuffer.set_resolution(screen, output_tx);
         self.was_connected = true;
+    }
+
+    fn patch_rect(&mut self, rect: Rect, data: &[u8]) -> Result<(), String> {
+        self.framebuffer.patch_rect(rect, data)
+    }
+
+    fn copy_rect(&mut self, dst: Rect, src: Rect) -> Result<(), String> {
+        self.framebuffer.copy_rect(dst, src)
+    }
+}
+
+#[derive(Default)]
+struct VncFramebufferState {
+    framebuffer: Option<RgbaFramebuffer>,
+    dirty: bool,
+}
+
+impl VncFramebufferState {
+    fn set_resolution(
+        &mut self,
+        screen: vnc_client::Screen,
+        output_tx: &std::sync::mpsc::Sender<RemoteDesktopOutput>,
+    ) {
+        self.framebuffer = Some(RgbaFramebuffer::new(screen.width, screen.height));
+        self.dirty = false;
         let _ = output_tx.send(RemoteDesktopOutput::Connected {
             width: screen.width,
             height: screen.height,
@@ -86,48 +114,42 @@ impl ConnectedVncSession {
         });
     }
 
-    fn patch_rect(
-        &mut self,
-        rect: Rect,
-        data: &[u8],
-        output_tx: &std::sync::mpsc::Sender<RemoteDesktopOutput>,
-    ) -> Result<(), String> {
+    fn patch_rect(&mut self, rect: Rect, data: &[u8]) -> Result<(), String> {
         let Some(framebuffer) = &mut self.framebuffer else {
             return Ok(());
         };
         framebuffer
             .patch_rgba_rect(rect.x, rect.y, rect.width, rect.height, data)
             .map_err(|error| error.to_string())?;
-        send_frame(framebuffer, output_tx);
+        self.dirty = true;
         Ok(())
     }
 
-    fn copy_rect(
-        &mut self,
-        dst: Rect,
-        src: Rect,
-        output_tx: &std::sync::mpsc::Sender<RemoteDesktopOutput>,
-    ) -> Result<(), String> {
+    fn copy_rect(&mut self, dst: Rect, src: Rect) -> Result<(), String> {
         let Some(framebuffer) = &mut self.framebuffer else {
             return Ok(());
         };
         framebuffer
             .copy_rect(src.x, src.y, dst.x, dst.y, dst.width, dst.height)
             .map_err(|error| error.to_string())?;
-        send_frame(framebuffer, output_tx);
+        self.dirty = true;
         Ok(())
     }
-}
 
-fn send_frame(
-    framebuffer: &RgbaFramebuffer,
-    output_tx: &std::sync::mpsc::Sender<RemoteDesktopOutput>,
-) {
-    let _ = output_tx.send(RemoteDesktopOutput::Frame {
-        width: framebuffer.width(),
-        height: framebuffer.height(),
-        rgba: framebuffer.clone_rgba(),
-    });
+    fn flush_frame(&mut self, output_tx: &std::sync::mpsc::Sender<RemoteDesktopOutput>) {
+        let Some(framebuffer) = &self.framebuffer else {
+            return;
+        };
+        if !self.dirty {
+            return;
+        }
+        let _ = output_tx.send(RemoteDesktopOutput::Frame {
+            width: framebuffer.width(),
+            height: framebuffer.height(),
+            rgba: framebuffer.clone_rgba(),
+        });
+        self.dirty = false;
+    }
 }
 
 fn send_clipboard(output_tx: &std::sync::mpsc::Sender<RemoteDesktopOutput>, text: String) {
@@ -144,4 +166,67 @@ fn vnc_capabilities() -> RemoteDesktopCapabilities {
 
 fn send_status(output_tx: &std::sync::mpsc::Sender<RemoteDesktopOutput>, message: &str) {
     let _ = output_tx.send(RemoteDesktopOutput::Status(message.to_string()));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coalesces_multiple_rectangles_into_one_flushed_frame() {
+        let (output_tx, output_rx) = std::sync::mpsc::channel();
+        let mut framebuffer = VncFramebufferState::default();
+        framebuffer.set_resolution(
+            vnc_client::Screen {
+                width: 2,
+                height: 1,
+            },
+            &output_tx,
+        );
+
+        framebuffer
+            .patch_rect(
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 1,
+                    height: 1,
+                },
+                &[255, 0, 0, 255],
+            )
+            .unwrap();
+        framebuffer
+            .patch_rect(
+                Rect {
+                    x: 1,
+                    y: 0,
+                    width: 1,
+                    height: 1,
+                },
+                &[0, 0, 255, 255],
+            )
+            .unwrap();
+
+        assert_eq!(
+            output_rx.try_recv().unwrap(),
+            RemoteDesktopOutput::Connected {
+                width: 2,
+                height: 1,
+                capabilities: vnc_capabilities(),
+            }
+        );
+        assert!(output_rx.try_recv().is_err());
+
+        framebuffer.flush_frame(&output_tx);
+
+        assert_eq!(
+            output_rx.try_recv().unwrap(),
+            RemoteDesktopOutput::Frame {
+                width: 2,
+                height: 1,
+                rgba: vec![255, 0, 0, 255, 0, 0, 255, 255],
+            }
+        );
+        assert!(output_rx.try_recv().is_err());
+    }
 }
