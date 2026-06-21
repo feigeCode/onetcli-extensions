@@ -36,9 +36,9 @@
       "id": "iotdb",
       "kind": "database_driver",
       "name": "Apache IoTDB",
-      "version": "0.1.2",
-      "release_tag": "iotdb-v0.1.2",
-      "description": "使用 Rust 开发的 Apache IoTDB 时序数据库 IPC 驱动",
+      "version": "0.1.3",
+      "release_tag": "iotdb-v0.1.3",
+      "description": "使用 Apache IoTDB Go 客户端开发的时序数据库 IPC 驱动",
       "file_extensions": [],
       "manifest": "iotdb/manifest.json"
     },
