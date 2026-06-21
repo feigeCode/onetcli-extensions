@@ -1702,14 +1702,15 @@ test("release workflow keeps extension releases scoped to current extension", ()
   assert.doesNotMatch(workflow, /gh release list/);
   assert.doesNotMatch(workflow, /previous-github-manifests/);
   assert.match(workflow, /artifacts\/extension-manifest\.json/);
-  assert.match(workflow, /CARGO_TARGET_DIR:\s+\$\{\{\s*matrix\.kind == 'remote_desktop_provider'/);
-  assert.match(workflow, /CMAKE_GENERATOR:\s+\$\{\{\s*matrix\.kind == 'remote_desktop_provider'/);
+  assert.match(workflow, /target === "aarch64-unknown-linux-gnu" && kind === "remote_desktop_provider"/);
+  assert.match(workflow, /return "ubuntu-24\.04-arm"/);
+  assert.match(workflow, /export CARGO_TARGET_DIR="\$\{RUNNER_TEMP\}\/cargo-target"/);
+  assert.match(workflow, /export CMAKE_GENERATOR=Ninja/);
   assert.match(workflow, /choco install ninja -y --no-progress/);
-  assert.match(workflow, /sudo apt-get install -y libasound2-dev/);
-  assert.match(workflow, /sudo dpkg --add-architecture arm64/);
-  assert.match(workflow, /sudo apt-get install -y gcc-aarch64-linux-gnu g\+\+-aarch64-linux-gnu pkg-config libasound2-dev:arm64 libssl-dev:arm64/);
-  assert.match(workflow, /PKG_CONFIG_ALLOW_CROSS:\s+\$\{\{\s*matrix\.target == 'aarch64-unknown-linux-gnu'/);
-  assert.match(workflow, /PKG_CONFIG_LIBDIR:\s+\$\{\{\s*matrix\.target == 'aarch64-unknown-linux-gnu'/);
+  assert.match(workflow, /sudo apt-get install -y pkg-config libasound2-dev libssl-dev/);
+  assert.match(workflow, /matrix\.target == 'aarch64-unknown-linux-gnu' && matrix\.kind != 'remote_desktop_provider'/);
+  assert.doesNotMatch(workflow, /CMAKE_GENERATOR:\s+\$\{\{/);
+  assert.doesNotMatch(workflow, /sudo dpkg --add-architecture arm64/);
 });
 
 test("CI workflow routes Rust, Go, and Java extension jobs by language", () => {

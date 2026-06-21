@@ -66,14 +66,17 @@ jobs:
             kind: metadata.kind,
             language: metadata.language || "rust",
             target,
-            os: runnerForTarget(target, metadata.language || "rust"),
+            os: runnerForTarget(target, metadata.language || "rust", metadata.kind),
           }));
           process.stdout.write(JSON.stringify({ include }));
-          function runnerForTarget(target, language) {
+          function runnerForTarget(target, language, kind) {
             if (language === "go") return "ubuntu-latest";
             if (target === "universal") return "ubuntu-latest";
             if (target.includes("apple-darwin")) {
               return target.startsWith("x86_64") ? "macos-15-intel" : "macos-latest";
+            }
+            if (target === "aarch64-unknown-linux-gnu" && kind === "remote_desktop_provider") {
+              return "ubuntu-24.04-arm";
             }
             if (target.includes("windows")) return "windows-2022";
             return "ubuntu-latest";
@@ -108,16 +111,15 @@ jobs:
           distribution: temurin
           java-version: '11'
       - name: Install Linux Rust audio dependencies
-        if: ${{ matrix.language == 'rust' && matrix.kind == 'remote_desktop_provider' && matrix.target == 'x86_64-unknown-linux-gnu' }}
+        if: ${{ matrix.language == 'rust' && matrix.kind == 'remote_desktop_provider' && contains(matrix.target, 'linux') }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev
+          sudo apt-get install -y pkg-config libasound2-dev libssl-dev
       - name: Install Linux Rust cross toolchain
-        if: ${{ matrix.language == 'rust' && matrix.target == 'aarch64-unknown-linux-gnu' }}
+        if: ${{ matrix.language == 'rust' && matrix.target == 'aarch64-unknown-linux-gnu' && matrix.kind != 'remote_desktop_provider' }}
         run: |
-          sudo dpkg --add-architecture arm64
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu pkg-config libasound2-dev:arm64 libssl-dev:arm64
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
       - name: Install Windows Rust CMake dependencies
         if: ${{ matrix.language == 'rust' && matrix.kind == 'remote_desktop_provider' && contains(matrix.target, 'windows') }}
         shell: pwsh
@@ -125,16 +127,18 @@ jobs:
       - name: Build
         if: ${{ matrix.language == 'rust' && matrix.package != '' && matrix.target != 'universal' }}
         env:
-          CC_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '' }}
-          CXX_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-g++' || '' }}
-          AR_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-ar' || '' }}
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '' }}
-          CARGO_TARGET_DIR: ${{ matrix.kind == 'remote_desktop_provider' && format('{0}/cargo-target', runner.temp) || '' }}
-          CMAKE_GENERATOR: ${{ matrix.kind == 'remote_desktop_provider' && contains(matrix.target, 'windows') && 'Ninja' || '' }}
-          PKG_CONFIG_ALLOW_CROSS: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && '1' || '' }}
-          PKG_CONFIG_LIBDIR: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && '/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig' || '' }}
+          CC_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && matrix.kind != 'remote_desktop_provider' && 'aarch64-linux-gnu-gcc' || '' }}
+          CXX_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && matrix.kind != 'remote_desktop_provider' && 'aarch64-linux-gnu-g++' || '' }}
+          AR_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && matrix.kind != 'remote_desktop_provider' && 'aarch64-linux-gnu-ar' || '' }}
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && matrix.kind != 'remote_desktop_provider' && 'aarch64-linux-gnu-gcc' || '' }}
         shell: bash
         run: |
+          if [ "${{ matrix.kind }}" = "remote_desktop_provider" ]; then
+            export CARGO_TARGET_DIR="${RUNNER_TEMP}/cargo-target"
+          fi
+          if [ "${{ matrix.kind }}" = "remote_desktop_provider" ] && [[ "${{ matrix.target }}" == *windows* ]]; then
+            export CMAKE_GENERATOR=Ninja
+          fi
           if [ -n "${{ matrix.manifest_path }}" ]; then
             cargo build --release --manifest-path "${{ matrix.manifest_path }}" --target "${{ matrix.target }}"
           else
@@ -148,9 +152,10 @@ jobs:
         run: bash scripts/build-java-driver.sh "${{ matrix.extension }}" "${{ matrix.target }}"
       - name: Package
         shell: bash
-        env:
-          CARGO_TARGET_DIR: ${{ matrix.kind == 'remote_desktop_provider' && format('{0}/cargo-target', runner.temp) || '' }}
         run: |
+          if [ "${{ matrix.kind }}" = "remote_desktop_provider" ]; then
+            export CARGO_TARGET_DIR="${RUNNER_TEMP}/cargo-target"
+          fi
           mkdir -p artifacts
           if [ "${{ matrix.kind }}" = "database_driver" ]; then
             bash scripts/package-driver.sh "${{ matrix.extension }}" "${{ matrix.target }}" artifacts "${{ needs.prepare.outputs.version }}"
