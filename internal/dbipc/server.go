@@ -33,6 +33,7 @@ type Server struct {
 type connectionState struct {
 	config    Config
 	db        *sql.DB
+	ddlSpec   DriverSpec
 	schemaSQL SchemaSQL
 }
 
@@ -279,7 +280,7 @@ func (s *Server) handleConnOpen(ctx context.Context, req ipc.Message) ipc.Messag
 
 	connID := s.nextConnID
 	s.nextConnID++
-	s.conns[connID] = &connectionState{config: cfg, db: db, schemaSQL: connSpec.SchemaSQL}
+	s.conns[connID] = &connectionState{config: cfg, db: db, ddlSpec: s.ddlSpecForConnection(connSpec), schemaSQL: connSpec.SchemaSQL}
 	return s.ok(req.ID, map[string]any{
 		"conn_id": connID,
 		"server_info": map[string]any{
@@ -690,11 +691,16 @@ func isolationLevel(value string) sql.IsolationLevel {
 
 func (s *Server) handleDdlBuild(req ipc.Message) ipc.Message {
 	var p struct {
+		ConnID  uint64          `json:"conn_id,omitempty"`
 		Op      string          `json:"op"`
 		Payload json.RawMessage `json:"payload"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
 		return s.err(req.ID, ErrInvalidParams, err.Error())
+	}
+	spec, errResp := s.ddlSpecForRequest(req.ID, p.ConnID)
+	if errResp != nil {
+		return *errResp
 	}
 	switch p.Op {
 	case "create_table":
@@ -705,7 +711,7 @@ func (s *Server) handleDdlBuild(req ipc.Message) ipc.Message {
 		if err := decodePayload(p.Payload, &payload); err != nil {
 			return s.err(req.ID, ErrInvalidParams, err.Error())
 		}
-		_, statements, err := buildCreateTableSQL(s.spec, payload.Spec, payload.Options)
+		_, statements, err := buildCreateTableSQL(spec, payload.Spec, payload.Options)
 		if err != nil {
 			return s.err(req.ID, ErrInvalidParams, err.Error())
 		}
@@ -729,7 +735,7 @@ func (s *Server) handleDdlBuild(req ipc.Message) ipc.Message {
 				payload.Kind = "table"
 			}
 		}
-		sqlText, err := buildDropSQL(s.spec, payload.Kind, payload.Database, payload.Schema, payload.Name, payload.IfExists, payload.Cascade)
+		sqlText, err := buildDropSQL(spec, payload.Kind, payload.Database, payload.Schema, payload.Name, payload.IfExists, payload.Cascade)
 		if err != nil {
 			return s.err(req.ID, ErrInvalidParams, err.Error())
 		}
@@ -741,13 +747,18 @@ func (s *Server) handleDdlBuild(req ipc.Message) ipc.Message {
 
 func (s *Server) handleDdlBuildCreateTable(req ipc.Message) ipc.Message {
 	var p struct {
+		ConnID  uint64             `json:"conn_id,omitempty"`
 		Spec    tableSpec          `json:"spec"`
 		Options createTableOptions `json:"options"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
 		return s.err(req.ID, ErrInvalidParams, err.Error())
 	}
-	sqlText, statements, err := buildCreateTableSQL(s.spec, p.Spec, p.Options)
+	spec, errResp := s.ddlSpecForRequest(req.ID, p.ConnID)
+	if errResp != nil {
+		return *errResp
+	}
+	sqlText, statements, err := buildCreateTableSQL(spec, p.Spec, p.Options)
 	if err != nil {
 		return s.err(req.ID, ErrInvalidParams, err.Error())
 	}
@@ -756,6 +767,7 @@ func (s *Server) handleDdlBuildCreateTable(req ipc.Message) ipc.Message {
 
 func (s *Server) handleDdlBuildAlterTable(req ipc.Message) ipc.Message {
 	var p struct {
+		ConnID        uint64            `json:"conn_id,omitempty"`
 		FromSpec      tableSpec         `json:"from_spec"`
 		ToSpec        tableSpec         `json:"to_spec"`
 		ColumnRenames []columnRenameDDL `json:"column_renames"`
@@ -764,7 +776,11 @@ func (s *Server) handleDdlBuildAlterTable(req ipc.Message) ipc.Message {
 	if err := decodeParams(req.Params, &p); err != nil {
 		return s.err(req.ID, ErrInvalidParams, err.Error())
 	}
-	statements, rollback, warnings, err := buildAlterTableSQL(s.spec, p.FromSpec, p.ToSpec, p.ColumnRenames, p.Options)
+	spec, errResp := s.ddlSpecForRequest(req.ID, p.ConnID)
+	if errResp != nil {
+		return *errResp
+	}
+	statements, rollback, warnings, err := buildAlterTableSQL(spec, p.FromSpec, p.ToSpec, p.ColumnRenames, p.Options)
 	if err != nil {
 		return s.err(req.ID, ErrInvalidParams, err.Error())
 	}
@@ -773,6 +789,7 @@ func (s *Server) handleDdlBuildAlterTable(req ipc.Message) ipc.Message {
 
 func (s *Server) handleDdlBuildDrop(req ipc.Message) ipc.Message {
 	var p struct {
+		ConnID   uint64 `json:"conn_id,omitempty"`
 		Kind     string `json:"kind"`
 		Name     string `json:"name"`
 		Schema   string `json:"schema,omitempty"`
@@ -783,7 +800,11 @@ func (s *Server) handleDdlBuildDrop(req ipc.Message) ipc.Message {
 	if err := decodeParams(req.Params, &p); err != nil {
 		return s.err(req.ID, ErrInvalidParams, err.Error())
 	}
-	sqlText, err := buildDropSQL(s.spec, p.Kind, p.Database, p.Schema, p.Name, p.IfExists, p.Cascade)
+	spec, errResp := s.ddlSpecForRequest(req.ID, p.ConnID)
+	if errResp != nil {
+		return *errResp
+	}
+	sqlText, err := buildDropSQL(spec, p.Kind, p.Database, p.Schema, p.Name, p.IfExists, p.Cascade)
 	if err != nil {
 		return s.err(req.ID, ErrInvalidParams, err.Error())
 	}
@@ -1674,6 +1695,27 @@ func (s *Server) normalizeConnectionSpec(connSpec ConnectionSpec) (ConnectionSpe
 		return ConnectionSpec{}, fmt.Errorf("missing SQL driver name")
 	}
 	return connSpec, nil
+}
+
+func (s *Server) ddlSpecForConnection(connSpec ConnectionSpec) DriverSpec {
+	spec := s.spec
+	if connSpec.IdentifierQuoteLeft != "" || connSpec.IdentifierQuoteRight != "" {
+		spec.IdentifierQuoteLeft = connSpec.IdentifierQuoteLeft
+		spec.IdentifierQuoteRight = connSpec.IdentifierQuoteRight
+	}
+	return spec
+}
+
+func (s *Server) ddlSpecForRequest(id json.RawMessage, connID uint64) (DriverSpec, *ipc.Message) {
+	if connID == 0 {
+		return s.spec, nil
+	}
+	conn, ok := s.conns[connID]
+	if !ok {
+		resp := s.err(id, ErrInvalidParams, fmt.Sprintf("unknown conn_id %d", connID))
+		return DriverSpec{}, &resp
+	}
+	return conn.ddlSpec, nil
 }
 
 func schemaSQLIsEmpty(schemaSQL SchemaSQL) bool {

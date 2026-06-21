@@ -72,6 +72,9 @@ func TestSpecResolvesOracleProtocolOverOceanBaseMySQLWireToDedicatedDriver(t *te
 	if connSpec.SchemaSQL.Databases == nil || !strings.Contains(connSpec.SchemaSQL.Databases(cfg), "SYS_CONTEXT('USERENV', 'CON_NAME')") {
 		t.Fatalf("oracle mysql-wire protocol did not select Oracle metadata SQL")
 	}
+	if connSpec.IdentifierQuoteLeft != `"` || connSpec.IdentifierQuoteRight != `"` {
+		t.Fatalf("identifier quotes = %q/%q, want Oracle quotes", connSpec.IdentifierQuoteLeft, connSpec.IdentifierQuoteRight)
+	}
 }
 
 func TestSpecResolvesOracleProtocolWithoutMySQLWireToGoOraDriver(t *testing.T) {
@@ -103,6 +106,9 @@ func TestSpecResolvesOracleProtocolWithoutMySQLWireToGoOraDriver(t *testing.T) {
 	}
 	if connSpec.SchemaSQL.Databases == nil || !strings.Contains(connSpec.SchemaSQL.Databases(cfg), "SYS_CONTEXT('USERENV', 'CON_NAME')") {
 		t.Fatalf("oracle protocol did not select Oracle metadata SQL")
+	}
+	if connSpec.IdentifierQuoteLeft != `"` || connSpec.IdentifierQuoteRight != `"` {
+		t.Fatalf("identifier quotes = %q/%q, want Oracle quotes", connSpec.IdentifierQuoteLeft, connSpec.IdentifierQuoteRight)
 	}
 }
 

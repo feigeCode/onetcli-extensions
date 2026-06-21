@@ -65,6 +65,7 @@ func resolveConnection(ctx context.Context, cfg dbipc.Config) (dbipc.ConnectionS
 		}
 		return dbipc.ConnectionSpec{DriverName: "mysql", DSN: dsn, SchemaSQL: Spec().SchemaSQL}, nil
 	case protocolOracle:
+		oracleSpec := oracle.Spec()
 		isOBMySQLWire, err := probeOceanBaseMySQLWire(ctx, cfg.Host, cfg.Port)
 		if err != nil {
 			return dbipc.ConnectionSpec{}, err
@@ -74,13 +75,25 @@ func resolveConnection(ctx context.Context, cfg dbipc.Config) (dbipc.ConnectionS
 			if err != nil {
 				return dbipc.ConnectionSpec{}, err
 			}
-			return dbipc.ConnectionSpec{DriverName: oracleMySQLWireDriverName(cfg), DSN: dsn, SchemaSQL: oracle.Spec().SchemaSQL}, nil
+			return dbipc.ConnectionSpec{
+				DriverName:           oracleMySQLWireDriverName(cfg),
+				DSN:                  dsn,
+				IdentifierQuoteLeft:  oracleSpec.IdentifierQuoteLeft,
+				IdentifierQuoteRight: oracleSpec.IdentifierQuoteRight,
+				SchemaSQL:            oracleSpec.SchemaSQL,
+			}, nil
 		}
-		dsn, err := oracle.Spec().BuildDSN(cfg)
+		dsn, err := oracleSpec.BuildDSN(cfg)
 		if err != nil {
 			return dbipc.ConnectionSpec{}, err
 		}
-		return dbipc.ConnectionSpec{DriverName: "oracle", DSN: dsn, SchemaSQL: oracle.Spec().SchemaSQL}, nil
+		return dbipc.ConnectionSpec{
+			DriverName:           "oracle",
+			DSN:                  dsn,
+			IdentifierQuoteLeft:  oracleSpec.IdentifierQuoteLeft,
+			IdentifierQuoteRight: oracleSpec.IdentifierQuoteRight,
+			SchemaSQL:            oracleSpec.SchemaSQL,
+		}, nil
 	default:
 		return dbipc.ConnectionSpec{}, fmt.Errorf("unsupported OceanBase protocol %q", cfg.Protocol)
 	}

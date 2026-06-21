@@ -607,6 +607,49 @@ func TestDdlBuildersProduceDialectSQL(t *testing.T) {
 	}
 }
 
+func TestDdlBuilderUsesResolvedConnectionIdentifierQuotes(t *testing.T) {
+	driverName, _ := registerStreamingDriver(t, nil)
+	spec := testSpecWithSQLDriver(driverName)
+	spec.IdentifierQuoteLeft = "`"
+	spec.IdentifierQuoteRight = "`"
+	spec.ResolveConnection = func(context.Context, Config) (ConnectionSpec, error) {
+		return ConnectionSpec{
+			DriverName:           driverName,
+			DSN:                  "test",
+			IdentifierQuoteLeft:  `"`,
+			IdentifierQuoteRight: `"`,
+		}, nil
+	}
+	server := NewServer(spec, nil)
+	server.initialized = true
+	connID := openTestConn(t, server)
+
+	createResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  "ddl/build_create_table",
+		Params: []byte(fmt.Sprintf(`{
+			"conn_id": %d,
+			"spec": {
+				"schema": "app",
+				"name": "demo",
+				"columns": [{"name":"id","type":"NUMBER","nullable":false}]
+			},
+			"options": {}
+		}`, connID)),
+	})
+	if createResp.Error != nil {
+		t.Fatalf("ddl/build_create_table returned error: %#v", createResp.Error)
+	}
+	var createResult struct {
+		SQL string `json:"sql"`
+	}
+	decodeResult(t, createResp, &createResult)
+	if createResult.SQL != `CREATE TABLE "app"."demo" ("id" NUMBER NOT NULL)` {
+		t.Fatalf("create SQL = %q", createResult.SQL)
+	}
+}
+
 func TestDataExportStreamsNdjsonAndClosesStream(t *testing.T) {
 	driverName, _ := registerStreamingDriver(t, [][]driver.Value{
 		{int64(1), "first"},

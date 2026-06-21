@@ -33,9 +33,11 @@ type DriverSpec struct {
 }
 
 type ConnectionSpec struct {
-	DriverName string
-	DSN        string
-	SchemaSQL  SchemaSQL
+	DriverName           string
+	DSN                  string
+	IdentifierQuoteLeft  string
+	IdentifierQuoteRight string
+	SchemaSQL            SchemaSQL
 }
 
 type SchemaSQL struct {
