@@ -10,6 +10,8 @@ require (
 )
 
 require (
+	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
+	golang.org/x/sys v0.10.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 )

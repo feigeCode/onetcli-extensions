@@ -1,7 +1,7 @@
 {
   "id": "kingbase",
   "name": "KingbaseES",
-  "description": "金仓 KingbaseES 数据库 IPC 驱动",
+  "description": "金仓 KingbaseES 数据库 Go IPC 驱动",
   "category": "domestic_database",
   "version": "0.1.2",
   "license": "MIT",

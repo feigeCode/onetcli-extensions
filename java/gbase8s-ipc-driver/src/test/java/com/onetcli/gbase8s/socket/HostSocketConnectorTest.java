@@ -45,9 +45,19 @@ public class HostSocketConnectorTest {
     }
 
     @Test
+    public void windowsUsesNamedPipePath() {
+        List<HostSocketConnector.SocketTarget> targets = HostSocketConnector.resolveTargets("onet.sock", "Windows 11", 501);
+
+        assertEquals(1, targets.size());
+        assertFalse(targets.get(0).isAbstractNamespace());
+        assertTrue(targets.get(0).isWindowsNamedPipe());
+        assertEquals("\\\\.\\pipe\\onet.sock", targets.get(0).getName());
+    }
+
+    @Test
     public void unsupportedOperatingSystemFailsClearly() {
         try {
-            HostSocketConnector.resolveTargets("onet.sock", "Windows 11", 501);
+            HostSocketConnector.resolveTargets("onet.sock", "Plan 9", 501);
         } catch (UnsupportedOperationException error) {
             assertTrue(error.getMessage().contains("not implemented"));
             return;

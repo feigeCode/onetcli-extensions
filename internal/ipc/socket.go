@@ -30,6 +30,8 @@ func DialHostSocket(socketName string) (net.Conn, error) {
 	switch runtime.GOOS {
 	case "linux":
 		return net.Dial("unix", "\x00"+socketName)
+	case "windows":
+		return dialWindowsPipe(socketName)
 	case "darwin", "freebsd", "openbsd", "netbsd":
 		runUser := filepath.Join("/run/user", fmt.Sprint(os.Getuid()), socketName)
 		conn, err := net.Dial("unix", runUser)
@@ -41,6 +43,10 @@ func DialHostSocket(socketName string) (net.Conn, error) {
 	default:
 		return nil, fmt.Errorf("local socket is not implemented for %s", runtime.GOOS)
 	}
+}
+
+func windowsPipePath(socketName string) string {
+	return `\\.\pipe\` + socketName
 }
 
 func ServeConnected(conn net.Conn, handler func(Message) Message) error {

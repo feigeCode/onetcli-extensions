@@ -6,7 +6,6 @@ import com.sun.jna.Native;
 import com.sun.jna.Platform;
 import com.sun.jna.Pointer;
 
-import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -127,7 +126,7 @@ public final class JnaUnixSocket {
         }
     }
 
-    public static final class ConnectedSocket implements Closeable {
+    public static final class ConnectedSocket implements HostSocket {
         private final int fd;
         private final InputStream inputStream = new SocketInputStream();
         private final OutputStream outputStream = new SocketOutputStream();

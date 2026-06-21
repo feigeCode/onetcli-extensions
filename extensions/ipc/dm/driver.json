@@ -1,7 +1,7 @@
 {
   "id": "dm",
   "name": "Dameng DM",
-  "description": "达梦 DM 数据库 IPC 驱动",
+  "description": "达梦 DM 数据库 Go IPC 驱动",
   "category": "domestic_database",
   "version": "0.1.2",
   "license": "MIT",

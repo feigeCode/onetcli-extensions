@@ -5,8 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.onetcli.gbase8s.ipc.FramedJsonTransport;
 import com.onetcli.gbase8s.jdbc.GBase8sJdbcConnectionFactory;
 import com.onetcli.gbase8s.server.GBase8sIpcServer;
+import com.onetcli.gbase8s.socket.HostSocket;
 import com.onetcli.gbase8s.socket.HostSocketConnector;
-import com.onetcli.gbase8s.socket.JnaUnixSocket;
 
 import java.io.EOFException;
 import java.io.File;
@@ -26,7 +26,7 @@ public final class GBase8sDriverMain {
 
         File workingDir = new File(System.getProperty("user.dir", "."));
         GBase8sIpcServer server = new GBase8sIpcServer(new GBase8sJdbcConnectionFactory(workingDir));
-        JnaUnixSocket.ConnectedSocket socket = new HostSocketConnector().connect(socketName);
+        HostSocket socket = new HostSocketConnector().connect(socketName);
         try {
             serve(socket.getInputStream(), socket.getOutputStream(), server);
         } finally {
