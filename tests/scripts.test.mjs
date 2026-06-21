@@ -194,6 +194,27 @@ test("IPC driver build metadata declares release and R2 manifest routing", () =>
   }
 });
 
+test("extension descriptions include implementation language", () => {
+  const globalManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifest.json"), "utf8"));
+  const globalEntries = new Map(globalManifest.extensions.map((extension) => [extension.id, extension]));
+
+  for (const metadata of collectExtensionMetadata()) {
+    const language = languageName(metadata);
+    const sourceManifest = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, metadata.path, sourceManifestFileName(metadata.kind)), "utf8"),
+    );
+
+    assert.ok(
+      sourceManifest.description.includes(language),
+      `${metadata.id} source manifest description should mention ${language}`,
+    );
+    assert.ok(
+      globalEntries.get(metadata.id)?.description?.includes(language),
+      `${metadata.id} global manifest description should mention ${language}`,
+    );
+  }
+});
+
 test("IPC driver form fields include host-required defaults", () => {
   const ids = fs
     .readdirSync(path.join(repoRoot, "extensions/ipc"))
@@ -227,6 +248,23 @@ test("IPC driver form fields include host-required defaults", () => {
       }
     }
   }
+});
+
+test("DuckDB connection form declares static defaults", () => {
+  const driverJson = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, "extensions/ipc/duckdb/driver.json"), "utf8"),
+  );
+  const connectionForm = driverJson.ui.form.forms.find((form) => form.kind === "Connection");
+  const generalTab = connectionForm.tabs.find((tab) => tab.id === "general");
+
+  assert.equal(
+    generalTab.fields.find((field) => field.id === "name").default_value,
+    "Local DuckDB",
+  );
+  assert.equal(
+    generalTab.fields.find((field) => field.id === "database").default_value,
+    "main",
+  );
 });
 
 test("IPC driver locales define every manifest i18n key", () => {

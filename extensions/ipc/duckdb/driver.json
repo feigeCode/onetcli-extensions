@@ -107,7 +107,7 @@
                   "label_i18n_key": "database.connection.field.name",
                   "field_type": "Text",
                   "required": true,
-                  "default_value": null,
+                  "default_value": "Local DuckDB",
                   "placeholder_i18n_key": "database.connection.field.name.placeholder",
                   "help_i18n_key": null,
                   "options": [],
