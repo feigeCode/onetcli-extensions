@@ -63,8 +63,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '11'
-      - name: Test Rust package
-        if: ${{ matrix.language == 'rust' && matrix.package != '' }}
+      - name: Test Rust manifest package
+        if: ${{ matrix.language == 'rust' && matrix.manifest_path != '' }}
+        run: cargo test --manifest-path "${{ matrix.manifest_path }}" -- --nocapture
+      - name: Test Rust workspace package
+        if: ${{ matrix.language == 'rust' && matrix.manifest_path == '' && matrix.package != '' }}
         run: cargo test -p ${{ matrix.package }} -- --nocapture
       - name: Test Go drivers
         if: ${{ matrix.language == 'go' }}

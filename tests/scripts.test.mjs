@@ -1266,6 +1266,7 @@ test("changed-extensions emits matrix entries only for changed extension paths",
       {
         extension: "duckdb",
         package: "duckdb_driver",
+        manifest_path: "",
         kind: "database_driver",
         language: "rust",
         os: "ubuntu-latest",
@@ -1313,6 +1314,7 @@ test("changed-extensions emits one Ubuntu test entry for Go extensions", () => {
     {
       extension: "dm",
       package: "./cmd/dm-ipc-driver",
+      manifest_path: "",
       kind: "database_driver",
       language: "go",
       os: "ubuntu-latest",
@@ -1361,8 +1363,53 @@ test("changed-extensions maps declared source paths to the owning extension", ()
     {
       extension: "gbase8s",
       package: "java/gbase8s-ipc-driver",
+      manifest_path: "",
       kind: "database_driver",
       language: "java",
+      os: "ubuntu-latest",
+    },
+  ]);
+});
+
+test("changed-extensions emits manifest-path metadata for standalone Rust helpers", () => {
+  const workdir = makeTempDir();
+  copyScript("changed-extensions.mjs", workdir);
+  writeJson(path.join(workdir, "extensions/remote-desktop/rdp/extension.build.json"), {
+    id: "rdp",
+    kind: "remote_desktop_provider",
+    package: "onetcli-rdp-helper",
+    binary: "onetcli-rdp-helper",
+    manifest_path: "extensions/remote-desktop/rdp-helper/Cargo.toml",
+    path: "extensions/remote-desktop/rdp",
+    source_paths: ["extensions/remote-desktop/rdp-helper"],
+    targets: ["x86_64-unknown-linux-gnu"],
+  });
+  fs.mkdirSync(path.join(workdir, "extensions/remote-desktop/rdp-helper/src"), {
+    recursive: true,
+  });
+  fs.writeFileSync(path.join(workdir, "extensions/remote-desktop/rdp-helper/src/main.rs"), "fn main() {}\n");
+  git(workdir, "init");
+  git(workdir, "add", ".");
+  git(workdir, "commit", "-m", "base");
+  const base = git(workdir, "rev-parse", "HEAD").trim();
+  fs.writeFileSync(path.join(workdir, "extensions/remote-desktop/rdp-helper/src/main.rs"), "fn main() { println!(\"rdp\"); }\n");
+  git(workdir, "add", ".");
+  git(workdir, "commit", "-m", "change rdp helper");
+  const head = git(workdir, "rev-parse", "HEAD").trim();
+
+  const output = execFileSync(
+    "node",
+    [path.join(workdir, "scripts/changed-extensions.mjs"), base, head],
+    { cwd: workdir, encoding: "utf8" },
+  );
+
+  assert.deepEqual(JSON.parse(output).include, [
+    {
+      extension: "rdp",
+      package: "onetcli-rdp-helper",
+      manifest_path: "extensions/remote-desktop/rdp-helper/Cargo.toml",
+      kind: "remote_desktop_provider",
+      language: "rust",
       os: "ubuntu-latest",
     },
   ]);
@@ -1627,7 +1674,10 @@ test("CI workflow routes Rust, Go, and Java extension jobs by language", () => {
   assert.match(workflow, /matrix\.language == 'java'/);
   assert.match(workflow, /actions\/setup-go@v5/);
   assert.match(workflow, /actions\/setup-java@v4/);
-  assert.match(workflow, /run: cargo test -p \$\{\{ matrix\.package \}\} -- --nocapture/);
+  assert.match(workflow, /matrix\.manifest_path != ''/);
+  assert.match(workflow, /cargo test --manifest-path "\$\{\{ matrix\.manifest_path \}\}" -- --nocapture/);
+  assert.match(workflow, /matrix\.manifest_path == '' && matrix\.package != ''/);
+  assert.match(workflow, /cargo test -p \$\{\{ matrix\.package \}\} -- --nocapture/);
   assert.match(workflow, /run: go test \.\/\.\.\./);
   assert.match(workflow, /run: mvn -f "\$\{\{ matrix\.package \}\}\/pom\.xml" test/);
   assert.doesNotMatch(workflow, /name: Package/);

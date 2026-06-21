@@ -39,6 +39,7 @@ for (const extension of extensions) {
   include.push({
     extension: extension.id,
     package: extension.package || "",
+    manifest_path: extension.manifest_path || "",
     kind: extension.kind,
     language: extension.language || "rust",
     os: "ubuntu-latest",
