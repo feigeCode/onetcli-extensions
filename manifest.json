@@ -81,6 +81,26 @@
       "description": "openGauss 数据库 Rust IPC 驱动",
       "file_extensions": [],
       "manifest": "opengauss/manifest.json"
+    },
+    {
+      "id": "rdp",
+      "kind": "remote_desktop_provider",
+      "name": "RDP",
+      "version": "0.1.0",
+      "release_tag": "rdp-v0.1.0",
+      "description": "RDP remote desktop provider",
+      "file_extensions": [],
+      "manifest": "rdp/manifest.json"
+    },
+    {
+      "id": "vnc",
+      "kind": "remote_desktop_provider",
+      "name": "VNC",
+      "version": "0.1.0",
+      "release_tag": "vnc-v0.1.0",
+      "description": "VNC remote desktop provider",
+      "file_extensions": [],
+      "manifest": "vnc/manifest.json"
     }
   ]
 }

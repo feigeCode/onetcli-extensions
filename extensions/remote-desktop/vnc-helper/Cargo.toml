@@ -1,0 +1,17 @@
+[package]
+name = "onetcli-vnc-helper"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["net", "rt", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+vnc_client = { package = "vnc-rs", version = "0.5.3" }

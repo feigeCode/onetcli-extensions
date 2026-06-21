@@ -21,7 +21,7 @@ function main() {
   }
 
   const metadata = loadExtensionMetadata(args.extensionId);
-  if (metadata.kind !== "database_driver") {
+  if (!["database_driver", "remote_desktop_provider"].includes(metadata.kind)) {
     fail(`unsupported extension kind: ${metadata.kind}`);
   }
 
@@ -103,7 +103,7 @@ function parseArgs(argv) {
 function printUsage() {
   console.log(`Usage: node scripts/release-driver.mjs <driver-id> <version> [options]
 
-Build, package, verify, and assemble release artifacts for one IPC database driver.
+Build, package, verify, and assemble release artifacts for one extension.
 
 Options:
   --target <target>       Build only this target. May be repeated or comma-separated.
@@ -132,9 +132,17 @@ function splitTargets(value) {
 }
 
 function loadExtensionMetadata(id) {
-  const file = path.join(repoRoot, "extensions/ipc", id, "extension.build.json");
-  if (!fs.existsSync(file)) {
-    fail(`unknown IPC driver id: ${id}`);
+  const roots = ["extensions/ipc", "extensions/remote-desktop"];
+  let file = "";
+  for (const root of roots) {
+    const candidate = path.join(repoRoot, root, id, "extension.build.json");
+    if (fs.existsSync(candidate)) {
+      file = candidate;
+      break;
+    }
+  }
+  if (!file) {
+    fail(`unknown extension id: ${id}`);
   }
   const metadata = JSON.parse(fs.readFileSync(file, "utf8"));
   for (const key of ["id", "kind", "path", "targets"]) {
@@ -171,7 +179,10 @@ function buildDriver(metadata, target) {
 
   if (language === "rust") {
     const packageName = metadata.package || metadata.binary || `${metadata.id}_driver`;
-    run("cargo", ["build", "--release", "-p", packageName, "--target", target], {
+    const args = metadata.manifest_path
+      ? ["build", "--release", "--manifest-path", metadata.manifest_path, "--target", target]
+      : ["build", "--release", "-p", packageName, "--target", target];
+    run("cargo", args, {
       env: rustBuildEnv(target),
     });
     return;
@@ -206,17 +217,31 @@ function rustBuildEnv(target) {
 
 function packageDriver(metadata, target, artifactDir, version) {
   console.log(`Packaging ${metadata.id} (${target})`);
-  run("bash", [scriptPath("package-driver.sh"), metadata.id, target, artifactDir, version]);
+  if (metadata.kind === "database_driver") {
+    run("bash", [scriptPath("package-driver.sh"), metadata.id, target, artifactDir, version]);
+    return;
+  }
+  run("bash", [
+    scriptPath("package-remote-desktop-provider.sh"),
+    metadata.id,
+    target,
+    artifactDir,
+    version,
+  ]);
 }
 
 function verifyPackage(metadata, target, artifactDir) {
   console.log(`Verifying ${metadata.id} (${target})`);
-  run("bash", [scriptPath("verify-package.sh"), packagePath(artifactDir, metadata.id, target)]);
+  const script =
+    metadata.kind === "database_driver"
+      ? "verify-package.sh"
+      : "verify-remote-desktop-provider-package.sh";
+  run("bash", [scriptPath(script), packagePath(artifactDir, metadata, target)]);
 }
 
 function writeChecksums(metadata, targets, artifactDir) {
   const lines = targets.map((target) => {
-    const filePath = packagePath(artifactDir, metadata.id, target);
+    const filePath = packagePath(artifactDir, metadata, target);
     const sha256 = createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
     return `${sha256}  ${path.basename(filePath)}`;
   });
@@ -247,8 +272,11 @@ function writeReleaseMetadata(artifactDir, extensionId, version, releaseTag) {
   );
 }
 
-function packagePath(artifactDir, extensionId, target) {
-  return path.join(artifactDir, `${extensionId}-driver-${target}.tar.gz`);
+function packagePath(artifactDir, metadata, target) {
+  if (metadata.kind === "database_driver") {
+    return path.join(artifactDir, `${metadata.id}-driver-${target}.tar.gz`);
+  }
+  return path.join(artifactDir, `${metadata.id}-remote-desktop-provider-${target}.tar.gz`);
 }
 
 function scriptPath(name) {

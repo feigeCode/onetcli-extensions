@@ -514,6 +514,72 @@ test("package-driver creates a DuckDB package with executable entry command", ()
   );
 });
 
+test("package-remote-desktop-provider creates an RDP provider package", () => {
+  const workdir = makeTempDir();
+  createRemoteDesktopProviderFixture(workdir);
+
+  const archivePath = execFileSync(
+    "bash",
+    [
+      path.join(workdir, "scripts/package-remote-desktop-provider.sh"),
+      "rdp",
+      "x86_64-unknown-linux-gnu",
+      path.join(workdir, "artifacts"),
+      "1.2.3",
+    ],
+    { cwd: workdir, encoding: "utf8" },
+  ).trim();
+
+  assert.equal(
+    path.basename(archivePath),
+    "rdp-remote-desktop-provider-x86_64-unknown-linux-gnu.tar.gz",
+  );
+  execFileSync("tar", ["xzf", archivePath, "-C", path.join(workdir, "unpacked")]);
+
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(workdir, "unpacked/remote_desktop_provider.json"), "utf8"),
+  );
+  assert.equal(manifest.version, "1.2.3");
+  assert.equal(manifest.entry.command, "./onetcli-rdp-helper");
+  assert.equal(
+    fs.readFileSync(path.join(workdir, "unpacked/onetcli-rdp-helper"), "utf8"),
+    "fake rdp helper\n",
+  );
+
+  const output = execFileSync(
+    "bash",
+    [path.join(workdir, "scripts/verify-remote-desktop-provider-package.sh"), archivePath],
+    { cwd: workdir, encoding: "utf8" },
+  );
+  assert.match(output, /Verified/);
+});
+
+test("package-remote-desktop-provider finds manifest-path helper target output", () => {
+  const workdir = makeTempDir();
+  createRemoteDesktopProviderFixture(workdir, {
+    manifestPath: "extensions/remote-desktop/rdp-helper/Cargo.toml",
+    targetRoot: "extensions/remote-desktop/rdp-helper/target",
+  });
+
+  const archivePath = execFileSync(
+    "bash",
+    [
+      path.join(workdir, "scripts/package-remote-desktop-provider.sh"),
+      "rdp",
+      "x86_64-unknown-linux-gnu",
+      path.join(workdir, "artifacts"),
+      "1.2.3",
+    ],
+    { cwd: workdir, encoding: "utf8" },
+  ).trim();
+
+  execFileSync("tar", ["xzf", archivePath, "-C", path.join(workdir, "unpacked")]);
+  assert.equal(
+    fs.readFileSync(path.join(workdir, "unpacked/onetcli-rdp-helper"), "utf8"),
+    "fake rdp helper\n",
+  );
+});
+
 test("package-driver includes declared icon resources", () => {
   const workdir = makeTempDir();
   createPackageFixture(workdir, {
@@ -1296,26 +1362,22 @@ test("changed-extensions does not expand workflow-only changes into extension te
 
 test("repository manifest is maintained as a lightweight marketplace index", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifest.json"), "utf8"));
-  const ids = fs
-    .readdirSync(path.join(repoRoot, "extensions/ipc"))
-    .filter((id) =>
-      fs.existsSync(path.join(repoRoot, "extensions/ipc", id, "extension.build.json")),
-    )
-    .sort();
+  const entriesById = new Map(extensionBuildEntries().map((entry) => [entry.id, entry]));
 
   assert.equal(manifest.schema_version, 2);
   assert.deepEqual(
     manifest.extensions.map((entry) => entry.id).sort(),
-    ids,
+    [...entriesById.keys()].sort(),
   );
 
   for (const entry of manifest.extensions) {
-    const driverJson = JSON.parse(
-      fs.readFileSync(path.join(repoRoot, "extensions/ipc", entry.id, "driver.json"), "utf8"),
+    const buildEntry = entriesById.get(entry.id);
+    const sourceManifest = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, buildEntry.path, manifestFileForKind(entry.kind)), "utf8"),
     );
-    assert.equal(entry.kind, "database_driver");
-    assert.equal(entry.name, driverJson.name || entry.id);
-    assert.equal(entry.version, driverJson.version);
+    assert.equal(entry.kind, buildEntry.kind);
+    assert.equal(entry.name, sourceManifest.name || entry.id);
+    assert.equal(entry.version, sourceManifest.version);
     assert.equal(entry.release_tag, `${entry.id}-v${entry.version}`);
     assert.equal(entry.manifest, `${entry.id}/manifest.json`);
     assert.equal(Object.hasOwn(entry, "artifacts"), false);
@@ -1429,6 +1491,49 @@ test("generate-marketplace-manifest uses selected extension metadata", () => {
   assert.equal(
     extensionManifest.extensions[0].artifacts["x86_64-unknown-linux-gnu"].file,
     "iotdb-driver-x86_64-unknown-linux-gnu.tar.gz",
+  );
+});
+
+test("generate-marketplace-manifest supports remote desktop providers", () => {
+  const workdir = makeTempDir();
+  copyScript("generate-marketplace-manifest.mjs", workdir);
+  fs.mkdirSync(path.join(workdir, "artifacts"), { recursive: true });
+  writeJson(path.join(workdir, "extensions/remote-desktop/rdp/extension.build.json"), {
+    id: "rdp",
+    kind: "remote_desktop_provider",
+    path: "extensions/remote-desktop/rdp",
+    targets: ["x86_64-unknown-linux-gnu"],
+  });
+  writeJson(path.join(workdir, "extensions/remote-desktop/rdp/remote_desktop_provider.json"), {
+    id: "rdp",
+    name: "RDP",
+    description: "RDP remote desktop provider",
+  });
+  const fileName = "rdp-remote-desktop-provider-x86_64-unknown-linux-gnu.tar.gz";
+  fs.writeFileSync(
+    path.join(workdir, "artifacts/sha256sums.txt"),
+    `${createHash("sha256").update(fileName).digest("hex")}  ${fileName}\n`,
+  );
+
+  execFileSync("node", [path.join(workdir, "scripts/generate-marketplace-manifest.mjs")], {
+    cwd: workdir,
+    env: {
+      ...process.env,
+      ARTIFACT_DIR: "artifacts",
+      EXTENSION_VERSION: "0.1.0",
+      EXTENSION_ID: "rdp",
+      RELEASE_TAG: "rdp-v0.1.0",
+    },
+  });
+
+  const extensionManifest = JSON.parse(
+    fs.readFileSync(path.join(workdir, "artifacts/extension-manifest.json"), "utf8"),
+  );
+  assert.equal(extensionManifest.extensions[0].id, "rdp");
+  assert.equal(extensionManifest.extensions[0].kind, "remote_desktop_provider");
+  assert.equal(
+    extensionManifest.extensions[0].artifacts["x86_64-unknown-linux-gnu"].file,
+    fileName,
   );
 });
 
@@ -1755,6 +1860,26 @@ function makeTempDir() {
   return dir;
 }
 
+function extensionBuildEntries() {
+  const roots = ["extensions/ipc", "extensions/remote-desktop"];
+  const entries = [];
+  for (const root of roots) {
+    for (const id of fs.readdirSync(path.join(repoRoot, root))) {
+      const metadataPath = path.join(repoRoot, root, id, "extension.build.json");
+      if (fs.existsSync(metadataPath)) {
+        entries.push(JSON.parse(fs.readFileSync(metadataPath, "utf8")));
+      }
+    }
+  }
+  return entries;
+}
+
+function manifestFileForKind(kind) {
+  if (kind === "database_driver") return "driver.json";
+  if (kind === "remote_desktop_provider") return "remote_desktop_provider.json";
+  throw new Error(`unsupported manifest kind: ${kind}`);
+}
+
 function createPackageFixture(workdir, options = {}) {
   const id = options.id || "duckdb";
   const binary = options.binary || "duckdb_driver";
@@ -1790,6 +1915,43 @@ function createPackageFixture(workdir, options = {}) {
   fs.writeFileSync(
     path.join(workdir, `target/x86_64-unknown-linux-gnu/release/${binary}`),
     binaryContents,
+  );
+}
+
+function createRemoteDesktopProviderFixture(workdir, options = {}) {
+  copyScript("package-remote-desktop-provider.sh", workdir);
+  copyScript("verify-remote-desktop-provider-package.sh", workdir);
+  writeJson(path.join(workdir, "extensions/remote-desktop/rdp/extension.build.json"), {
+    id: "rdp",
+    kind: "remote_desktop_provider",
+    package: "onetcli-rdp-helper",
+    binary: "onetcli-rdp-helper",
+    ...(options.manifestPath ? { manifest_path: options.manifestPath } : {}),
+    path: "extensions/remote-desktop/rdp",
+    targets: ["x86_64-unknown-linux-gnu"],
+  });
+  writeJson(path.join(workdir, "extensions/remote-desktop/rdp/remote_desktop_provider.json"), {
+    id: "rdp",
+    name: "RDP",
+    description: "RDP remote desktop provider",
+    version: "0.0.0",
+    protocol: "rdp",
+    entry: {},
+    capabilities: {
+      resize: "remote_resize",
+      clipboard_text: true,
+      cursor_shape: true,
+      audio: false,
+      file_transfer: false,
+    },
+  });
+  const targetRoot = options.targetRoot || "target";
+  fs.mkdirSync(path.join(workdir, targetRoot, "x86_64-unknown-linux-gnu/release"), {
+    recursive: true,
+  });
+  fs.writeFileSync(
+    path.join(workdir, targetRoot, "x86_64-unknown-linux-gnu/release/onetcli-rdp-helper"),
+    "fake rdp helper\n",
   );
 }
 

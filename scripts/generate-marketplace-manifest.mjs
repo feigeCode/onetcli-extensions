@@ -6,9 +6,7 @@ const version = requiredEnv("EXTENSION_VERSION");
 const releaseTag = requiredEnv("RELEASE_TAG");
 const extensionId = requiredEnv("EXTENSION_ID");
 const metadata = loadExtensionMetadata(extensionId);
-const driverJson = JSON.parse(
-  fs.readFileSync(path.join(metadata.path, "driver.json"), "utf8"),
-);
+const sourceManifest = loadSourceManifest(metadata);
 
 const targets = selectedTargets(metadata.targets);
 
@@ -16,7 +14,7 @@ const checksums = readChecksums(path.join(artifactDir, "sha256sums.txt"));
 const artifacts = {};
 
 for (const target of targets) {
-  const fileName = `${extensionId}-driver-${target}.tar.gz`;
+  const fileName = artifactFileName(metadata, target);
   artifacts[target] = {
     file: fileName,
     sha256: checksumFor(checksums, fileName),
@@ -31,10 +29,10 @@ const extensionManifest = {
 const extensionEntry = {
   id: extensionId,
   kind: metadata.kind,
-  name: driverJson.name || extensionId,
+  name: sourceManifest.name || extensionId,
   version,
   release_tag: releaseTag,
-  description: driverJson.description || "",
+  description: sourceManifest.description || "",
   artifacts,
 };
 extensionManifest.extensions = [extensionEntry];
@@ -70,7 +68,7 @@ function checksumFor(checksums, fileName) {
 }
 
 function loadExtensionMetadata(id) {
-  const roots = ["extensions/ipc", "extensions/wasm", "extensions/language"];
+  const roots = ["extensions/ipc", "extensions/remote-desktop", "extensions/wasm", "extensions/language"];
   for (const root of roots) {
     const file = path.join(root, id, "extension.build.json");
     if (!fs.existsSync(file)) continue;
@@ -81,6 +79,33 @@ function loadExtensionMetadata(id) {
     return data;
   }
   throw new Error(`unknown extension id: ${id}`);
+}
+
+function loadSourceManifest(metadata) {
+  const fileName = manifestFileName(metadata.kind);
+  return JSON.parse(fs.readFileSync(path.join(metadata.path, fileName), "utf8"));
+}
+
+function manifestFileName(kind) {
+  switch (kind) {
+    case "database_driver":
+      return "driver.json";
+    case "remote_desktop_provider":
+      return "remote_desktop_provider.json";
+    default:
+      throw new Error(`unsupported extension kind for marketplace manifest: ${kind}`);
+  }
+}
+
+function artifactFileName(metadata, target) {
+  switch (metadata.kind) {
+    case "database_driver":
+      return `${metadata.id}-driver-${target}.tar.gz`;
+    case "remote_desktop_provider":
+      return `${metadata.id}-remote-desktop-provider-${target}.tar.gz`;
+    default:
+      throw new Error(`unsupported extension kind for artifact naming: ${metadata.kind}`);
+  }
 }
 
 function selectedTargets(defaultTargets) {

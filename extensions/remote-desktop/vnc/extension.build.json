@@ -1,0 +1,18 @@
+{
+  "id": "vnc",
+  "kind": "remote_desktop_provider",
+  "package": "onetcli-vnc-helper",
+  "binary": "onetcli-vnc-helper",
+  "manifest_path": "extensions/remote-desktop/vnc-helper/Cargo.toml",
+  "path": "extensions/remote-desktop/vnc",
+  "source_paths": ["extensions/remote-desktop/vnc-helper"],
+  "targets": [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc"
+  ],
+  "releaseTagPrefix": "vnc-v",
+  "r2Prefix": "extensions/vnc"
+}

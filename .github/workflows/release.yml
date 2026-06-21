@@ -49,7 +49,7 @@ jobs:
           const fs = require("fs");
           const path = require("path");
           const id = process.env.EXTENSION_ID;
-          const roots = ["extensions/ipc", "extensions/wasm", "extensions/language"];
+          const roots = ["extensions/ipc", "extensions/remote-desktop", "extensions/wasm", "extensions/language"];
           let metadata = null;
           for (const root of roots) {
             const file = path.join(root, id, "extension.build.json");
@@ -62,6 +62,7 @@ jobs:
           const include = metadata.targets.map((target) => ({
             extension: metadata.id,
             package: metadata.package || "",
+            manifest_path: metadata.manifest_path || "",
             kind: metadata.kind,
             language: metadata.language || "rust",
             target,
@@ -118,7 +119,13 @@ jobs:
           CXX_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-g++' || '' }}
           AR_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-ar' || '' }}
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '' }}
-        run: cargo build --release -p ${{ matrix.package }} --target ${{ matrix.target }}
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.manifest_path }}" ]; then
+            cargo build --release --manifest-path "${{ matrix.manifest_path }}" --target "${{ matrix.target }}"
+          else
+            cargo build --release -p "${{ matrix.package }}" --target "${{ matrix.target }}"
+          fi
       - name: Build Go driver
         if: ${{ matrix.language == 'go' && matrix.target != 'universal' }}
         run: bash scripts/build-go-driver.sh "${{ matrix.extension }}" "${{ matrix.target }}"
@@ -132,6 +139,9 @@ jobs:
           if [ "${{ matrix.kind }}" = "database_driver" ]; then
             bash scripts/package-driver.sh "${{ matrix.extension }}" "${{ matrix.target }}" artifacts "${{ needs.prepare.outputs.version }}"
             bash scripts/verify-package.sh "artifacts/${{ matrix.extension }}-driver-${{ matrix.target }}.tar.gz"
+          elif [ "${{ matrix.kind }}" = "remote_desktop_provider" ]; then
+            bash scripts/package-remote-desktop-provider.sh "${{ matrix.extension }}" "${{ matrix.target }}" artifacts "${{ needs.prepare.outputs.version }}"
+            bash scripts/verify-remote-desktop-provider-package.sh "artifacts/${{ matrix.extension }}-remote-desktop-provider-${{ matrix.target }}.tar.gz"
           else
             echo "::error::Unsupported extension kind in release workflow: ${{ matrix.kind }}"
             exit 1
@@ -140,7 +150,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.extension }}-${{ matrix.target }}
-          path: artifacts/${{ matrix.extension }}-driver-${{ matrix.target }}.tar.gz
+          path: artifacts/*.tar.gz
 
   release:
     name: Create Release

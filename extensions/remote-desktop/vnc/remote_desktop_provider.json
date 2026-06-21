@@ -1,0 +1,23 @@
+{
+  "id": "vnc",
+  "name": "VNC",
+  "description": "VNC remote desktop provider",
+  "version": "0.1.0",
+  "protocol": "vnc",
+  "entry": {
+    "command": "./onetcli-vnc-helper",
+    "args": [],
+    "working_dir": null
+  },
+  "capabilities": {
+    "resize": "local_scale_only",
+    "clipboard_text": true,
+    "cursor_shape": false,
+    "audio": false,
+    "file_transfer": false
+  },
+  "ui": {
+    "icon": "Monitor",
+    "default_port": 5900
+  }
+}

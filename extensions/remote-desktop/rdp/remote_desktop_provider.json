@@ -1,0 +1,23 @@
+{
+  "id": "rdp",
+  "name": "RDP",
+  "description": "RDP remote desktop provider",
+  "version": "0.1.0",
+  "protocol": "rdp",
+  "entry": {
+    "command": "./onetcli-rdp-helper",
+    "args": [],
+    "working_dir": null
+  },
+  "capabilities": {
+    "resize": "remote_resize",
+    "clipboard_text": true,
+    "cursor_shape": true,
+    "audio": false,
+    "file_transfer": false
+  },
+  "ui": {
+    "icon": "Monitor",
+    "default_port": 3389
+  }
+}

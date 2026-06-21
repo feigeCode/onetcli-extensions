@@ -1,0 +1,18 @@
+{
+  "id": "rdp",
+  "kind": "remote_desktop_provider",
+  "package": "onetcli-rdp-helper",
+  "binary": "onetcli-rdp-helper",
+  "manifest_path": "extensions/remote-desktop/rdp-helper/Cargo.toml",
+  "path": "extensions/remote-desktop/rdp",
+  "source_paths": ["extensions/remote-desktop/rdp-helper"],
+  "targets": [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc"
+  ],
+  "releaseTagPrefix": "rdp-v",
+  "r2Prefix": "extensions/rdp"
+}
