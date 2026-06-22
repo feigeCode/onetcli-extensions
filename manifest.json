@@ -86,8 +86,8 @@
       "id": "rdp",
       "kind": "remote_desktop_provider",
       "name": "RDP",
-      "version": "0.1.1",
-      "release_tag": "rdp-v0.1.1",
+      "version": "0.1.2",
+      "release_tag": "rdp-v0.1.2",
       "description": "使用 Rust 开发的 RDP 远程桌面 provider",
       "file_extensions": [],
       "manifest": "rdp/manifest.json"

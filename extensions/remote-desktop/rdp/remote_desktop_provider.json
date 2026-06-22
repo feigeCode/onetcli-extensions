@@ -2,7 +2,7 @@
   "id": "rdp",
   "name": "RDP",
   "description": "使用 Rust 开发的 RDP 远程桌面 provider",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "protocol": "rdp",
   "entry": {
     "command": "./onetcli-rdp-helper",

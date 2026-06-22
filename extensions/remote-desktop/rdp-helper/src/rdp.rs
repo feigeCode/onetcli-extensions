@@ -126,9 +126,12 @@ fn spawn_client_thread(
 
             let output_sender = helper_output_tx.clone();
             runtime.spawn(async move {
+                let mut output_mapper = RdpOutputMapper::default();
                 while let Some(event) = output_rx.recv().await {
-                    if output_sender.send(output_event_to_helper(event)).is_err() {
-                        break;
+                    for helper_event in output_mapper.map(event) {
+                        if output_sender.send(helper_event).is_err() {
+                            return;
+                        }
                     }
                 }
             });
@@ -180,7 +183,7 @@ fn build_config(connect: ConnectRequest) -> anyhow::Result<Config> {
         pointer_software_rendering: false,
         multitransport_flags: None,
         compression_type: Some(CompressionType::Rdp61),
-        performance_flags: visual_quality_performance_flags(),
+        performance_flags: PerformanceFlags::default(),
         timezone_info: TimezoneInfo::default(),
     };
 
@@ -199,26 +202,49 @@ fn build_config(connect: ConnectRequest) -> anyhow::Result<Config> {
     })
 }
 
-fn output_event_to_helper(event: RdpOutputEvent) -> HelperEvent {
-    match event {
-        RdpOutputEvent::Image {
-            buffer,
-            width,
-            height,
-        } => HelperEvent::frame(width.get(), height.get(), rdp_u32_pixels_to_rgba(&buffer)),
-        RdpOutputEvent::ConnectionFailure(error) => HelperEvent::ConnectionFailure {
-            message: format!("{error:#}"),
-        },
-        RdpOutputEvent::Terminated(result) => HelperEvent::Terminated {
-            message: match result {
-                Ok(reason) => reason.to_string(),
-                Err(error) => format!("{error:#}"),
-            },
-        },
-        RdpOutputEvent::PointerDefault => HelperEvent::CursorDefault,
-        RdpOutputEvent::PointerHidden => HelperEvent::CursorHidden,
-        RdpOutputEvent::PointerPosition { x, y } => HelperEvent::CursorPosition { x, y },
-        RdpOutputEvent::PointerBitmap(_) => HelperEvent::CursorDefault,
+#[derive(Default)]
+struct RdpOutputMapper {
+    connected: bool,
+}
+
+impl RdpOutputMapper {
+    fn map(&mut self, event: RdpOutputEvent) -> Vec<HelperEvent> {
+        match event {
+            RdpOutputEvent::Image {
+                buffer,
+                width,
+                height,
+            } => {
+                let width = width.get();
+                let height = height.get();
+                let mut events = Vec::with_capacity(if self.connected { 1 } else { 2 });
+                if !self.connected {
+                    events.push(HelperEvent::Connected { width, height });
+                    self.connected = true;
+                }
+                events.push(HelperEvent::frame(
+                    width,
+                    height,
+                    rdp_u32_pixels_to_rgba(&buffer),
+                ));
+                events
+            }
+            RdpOutputEvent::ConnectionFailure(error) => vec![HelperEvent::ConnectionFailure {
+                message: format!("{error:#}"),
+            }],
+            RdpOutputEvent::Terminated(result) => vec![HelperEvent::Terminated {
+                message: match result {
+                    Ok(reason) => reason.to_string(),
+                    Err(error) => format!("{error:#}"),
+                },
+            }],
+            RdpOutputEvent::PointerDefault => vec![HelperEvent::CursorDefault],
+            RdpOutputEvent::PointerHidden => vec![HelperEvent::CursorHidden],
+            RdpOutputEvent::PointerPosition { x, y } => {
+                vec![HelperEvent::CursorPosition { x, y }]
+            }
+            RdpOutputEvent::PointerBitmap(_) => vec![HelperEvent::CursorDefault],
+        }
     }
 }
 
@@ -298,10 +324,6 @@ fn platform_type() -> MajorPlatformType {
     }
 }
 
-fn visual_quality_performance_flags() -> PerformanceFlags {
-    PerformanceFlags::default() | PerformanceFlags::ENABLE_DESKTOP_COMPOSITION
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn build_config_preserves_windows_visual_quality() {
+    fn build_config_matches_ironrdp_viewer_performance_flags() {
         let config = build_config(ConnectRequest {
             destination: "127.0.0.1:3389".to_string(),
             username: None,
@@ -339,8 +361,41 @@ mod tests {
 
         let flags = config.connector.performance_flags;
 
-        assert!(flags.contains(PerformanceFlags::ENABLE_DESKTOP_COMPOSITION));
+        assert_eq!(PerformanceFlags::default(), flags);
         assert!(!flags.contains(PerformanceFlags::DISABLE_THEMING));
+        assert!(!flags.contains(PerformanceFlags::ENABLE_DESKTOP_COMPOSITION));
+    }
+
+    #[test]
+    fn output_mapper_reports_connected_only_when_first_frame_arrives() {
+        let mut mapper = RdpOutputMapper::default();
+        let first = mapper.map(RdpOutputEvent::Image {
+            buffer: vec![0x00112233],
+            width: std::num::NonZeroU16::new(1).unwrap(),
+            height: std::num::NonZeroU16::new(1).unwrap(),
+        });
+
+        assert_eq!(
+            first,
+            vec![
+                HelperEvent::Connected {
+                    width: 1,
+                    height: 1
+                },
+                HelperEvent::frame(1, 1, vec![0x11, 0x22, 0x33, 0xff])
+            ]
+        );
+
+        let second = mapper.map(RdpOutputEvent::Image {
+            buffer: vec![0x00abcdef],
+            width: std::num::NonZeroU16::new(1).unwrap(),
+            height: std::num::NonZeroU16::new(1).unwrap(),
+        });
+
+        assert_eq!(
+            second,
+            vec![HelperEvent::frame(1, 1, vec![0xab, 0xcd, 0xef, 0xff])]
+        );
     }
 
     #[test]

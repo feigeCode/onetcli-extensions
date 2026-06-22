@@ -31,14 +31,8 @@ fn run() -> anyhow::Result<()> {
     write_event(&HelperEvent::Status {
         message: format!("connecting to RDP {}", connect.destination),
     })?;
-    let initial_width = connect.width;
-    let initial_height = connect.height;
 
     let runtime = rdp::start(connect)?;
-    write_event(&HelperEvent::Connected {
-        width: initial_width,
-        height: initial_height,
-    })?;
     let output_thread = spawn_output_writer(runtime.output_rx);
     let mut input_database = Database::new();
 
