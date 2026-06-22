@@ -12,15 +12,31 @@ English version: [README.md](README.md)
 extensions/
   ipc/
     duckdb/       Rust DuckDB IPC 数据库驱动
-    iotdb/        Rust Apache IoTDB IPC 数据库驱动
+    iotdb/        Go Apache IoTDB IPC 数据库驱动
     dm/           Go 达梦 DM IPC 数据库驱动
     kingbase/     Go KingbaseES IPC 数据库驱动
     gbase8s/      Java GBase 8s IPC 数据库驱动
+    oceanbase/    Go OceanBase IPC 数据库驱动
     opengauss/    Rust openGauss IPC 数据库驱动
+    oracle-go/    Go Oracle IPC 数据库驱动（纯 Go，godror）
+  remote-desktop/
+    rdp/          Rust RDP 远程桌面 provider
+    rdp-helper/   Rust RDP helper 二进制（Cargo workspace）
+    vnc/          Rust VNC 远程桌面 provider
+    vnc-helper/   Rust VNC helper 二进制（Cargo workspace）
+cmd/
+  dm-ipc-driver/
+  iotdb-ipc-driver/
+  kingbase-ipc-driver/
+  oceanbase-ipc-driver/
+  oracle-go-ipc-driver/
 java/
   gbase8s-ipc-driver/
 internal/
   dbipc/          Go IPC 数据库驱动共享运行时
+  drivers/        驱动专属 Go 实现（dm、iotdb、kingbase、oceanbase、oracle）
+  ipc/            Go IPC 帧协议与 socket 工具
+  runner/         Go IPC 进程 runner
 manifest.json     轻量市场索引
 scripts/
   build-go-driver.sh
@@ -28,9 +44,12 @@ scripts/
   changed-extensions.mjs
   generate-marketplace-manifest.mjs
   install-local-drivers.sh
+  install-local-remote-desktop-providers.sh
   package-driver.sh
+  package-remote-desktop-provider.sh
   release-driver.mjs
   verify-package.sh
+  verify-remote-desktop-provider-package.sh
 tests/
   scripts.test.mjs
 .codex/
@@ -39,17 +58,27 @@ tests/
 
 根目录下重复的 `ipc-driver-development/` skill 目录不再使用。驱动开发说明只保留在 `.codex/skills/ipc-driver-development/`。
 
-## 驱动矩阵
+## 数据库驱动矩阵
 
 | 驱动 | 运行时 | 构建元数据 | Manifest | 说明 |
 | --- | --- | --- | --- | --- |
-| DuckDB | Rust | `extensions/ipc/duckdb/extension.build.json` | `extensions/ipc/duckdb/driver.json` | 嵌入式单文件数据库驱动。 |
-| Apache IoTDB | Rust | `extensions/ipc/iotdb/extension.build.json` | `extensions/ipc/iotdb/driver.json` | 时序数据库驱动。 |
-| 达梦 DM | Go | `extensions/ipc/dm/extension.build.json` | `extensions/ipc/dm/driver.json` | 复用 `internal/dbipc` 共享运行时，并使用驱动专用 build tags。 |
-| KingbaseES | Go | `extensions/ipc/kingbase/extension.build.json` | `extensions/ipc/kingbase/driver.json` | 复用 `internal/dbipc` 共享运行时，并使用驱动专用 build tags。 |
-| GBase 8s | Java | `extensions/ipc/gbase8s/extension.build.json` | `extensions/ipc/gbase8s/driver.json` | 使用 `java/gbase8s-ipc-driver`。如果存在 `java/gbase8s-ipc-driver/bin/lib/gbase8s-ipc-driver.jar`，需要保留。 |
+| DuckDB | Rust | `extensions/ipc/duckdb/extension.build.json` | `extensions/ipc/duckdb/driver.json` | 嵌入式单文件分析数据库驱动。Cargo workspace member。 |
+| Apache IoTDB | Go | `extensions/ipc/iotdb/extension.build.json` | `extensions/ipc/iotdb/driver.json` | 时序数据库驱动。使用 `cmd/iotdb-ipc-driver` 和 `internal/drivers/iotdb`。 |
+| 达梦 DM | Go | `extensions/ipc/dm/extension.build.json` | `extensions/ipc/dm/driver.json` | 复用 `internal/dbipc` 共享运行时，并使用 `dm_driver` build tag。 |
+| KingbaseES | Go | `extensions/ipc/kingbase/extension.build.json` | `extensions/ipc/kingbase/driver.json` | 复用 `internal/dbipc` 共享运行时，并使用 `kingbase_driver` build tag。 |
+| GBase 8s | Java | `extensions/ipc/gbase8s/extension.build.json` | `extensions/ipc/gbase8s/driver.json` | 使用 `java/gbase8s-ipc-driver`。如果存在 `java/gbase8s-ipc-driver/bin/lib/gbase8s-ipc-driver.jar`，需要保留。仅 universal（跨平台）target。 |
+| OceanBase | Go | `extensions/ipc/oceanbase/extension.build.json` | `extensions/ipc/oceanbase/driver.json` | 复用 `internal/dbipc` 共享运行时，并使用 `oceanbase_driver` build tag。 |
+| openGauss | Rust | `extensions/ipc/opengauss/extension.build.json` | `extensions/ipc/opengauss/driver.json` | Cargo workspace member。使用 `tokio-opengauss` 异步驱动。 |
+| Oracle Go | Go | `extensions/ipc/oracle-go/extension.build.json` | `extensions/ipc/oracle-go/driver.json` | 纯 Go Oracle 驱动，使用 `oracle_go_driver` build tag。 |
 
 国产数据库驱动在 `driver.json` 中声明 `"category": "domestic_database"`；host 侧应该使用 manifest 元数据做 UI 分组，不要硬编码具体驱动 id。
+
+## 远程桌面 Provider 矩阵
+
+| Provider | 运行时 | 构建元数据 | Manifest | 说明 |
+| --- | --- | --- | --- | --- |
+| RDP | Rust | `extensions/remote-desktop/rdp/extension.build.json` | `extensions/remote-desktop/rdp/remote_desktop_provider.json` | RDP 远程桌面 provider。二进制由 `extensions/remote-desktop/rdp-helper` 构建。 |
+| VNC | Rust | `extensions/remote-desktop/vnc/extension.build.json` | `extensions/remote-desktop/vnc/remote_desktop_provider.json` | VNC 远程桌面 provider。二进制由 `extensions/remote-desktop/vnc-helper` 构建。 |
 
 ## 协议能力
 
@@ -92,7 +121,9 @@ Rust 驱动依赖 `feigeCode/onetcli` 中的这些 SDK crates：
 - `extension-driver`
 - `extension-host`
 
-目前 `Cargo.toml` 指向 `dev-ipc` 分支，因为现有 `v0.4.8` tag 还不包含这些 crates。等 `onetcli` 发布包含 SDK crates 的正式 release tag 后，应将这些分支依赖替换为固定 tag 依赖。
+目前 `Cargo.toml` 指向 `dev` 分支，因为现有 `v0.4.8` tag 还不包含这些 crates。等 `onetcli` 发布包含 SDK crates 的正式 release tag 后，应将这些分支依赖替换为固定 tag 依赖。
+
+Cargo workspace 目前包含 `extensions/ipc/duckdb` 和 `extensions/ipc/opengauss`。RDP 和 VNC helper 是独立的 Cargo 项目，分别位于 `extensions/remote-desktop/rdp-helper` 和 `extensions/remote-desktop/vnc-helper`。
 
 ## 本地开发
 
@@ -106,7 +137,7 @@ node --test tests/scripts.test.mjs
 
 ```bash
 cargo test -p duckdb_driver -- --nocapture
-cargo test -p iotdb_driver -- --nocapture
+cargo test -p opengauss_driver -- --nocapture
 ```
 
 运行 Go 共享运行时测试：
@@ -165,6 +196,14 @@ mkdir -p artifacts
 bash scripts/package-driver.sh gbase8s "$HOST_TRIPLE" artifacts 0.1.0
 ```
 
+构建并打包 Rust 远程桌面 provider：
+
+```bash
+HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
+bash scripts/package-remote-desktop-provider.sh rdp "$HOST_TRIPLE" artifacts 0.1.0
+bash scripts/verify-remote-desktop-provider-package.sh "artifacts/rdp-remote-desktop-provider-${HOST_TRIPLE}.tar.gz"
+```
+
 扩展包 archive 中包含扩展目录、`driver.json`、入口二进制或 launcher，以及 locales、icons、运行时库等资源。
 
 构建、打包、校验并替换本地已安装驱动：
@@ -177,6 +216,16 @@ bash scripts/install-local-drivers.sh dm
 默认安装到 `$XDG_CONFIG_HOME/one-hub/extensions/database_drivers` 或
 `$HOME/.config/one-hub/extensions/database_drivers`。如需改目标目录，可设置
 `ONETCLI_DATABASE_DRIVER_DIR=/path/to/database_drivers`。
+
+本地安装远程桌面 provider：
+
+```bash
+bash scripts/install-local-remote-desktop-providers.sh
+bash scripts/install-local-remote-desktop-providers.sh rdp
+```
+
+默认安装到 `$XDG_CONFIG_HOME/one-hub/extensions/remote_desktop_providers` 或
+`$HOME/.config/one-hub/extensions/remote_desktop_providers`。
 
 本地准备某个 driver 的发版产物：
 
@@ -369,6 +418,17 @@ icons/
 ```
 
 如果新 IPC 数据库驱动使用现有 metadata 和包结构，通常不需要修改 workflow。
+
+## 新增另一个远程桌面 Provider
+
+在 `extensions/remote-desktop/<provider-id>` 下新增目录：
+
+```text
+remote_desktop_provider.json
+extension.build.json
+```
+
+helper 二进制是 Rust Cargo 项目，位于 `extensions/remote-desktop/<provider-id>-helper`。`extension.build.json` 通过 `manifest_path` 引用 helper 的 `Cargo.toml`，并在 `source_paths` 中列出 helper 源码目录，以便 CI 变更检测能正确工作。
 
 ## 主应用集成
 

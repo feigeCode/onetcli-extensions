@@ -16,15 +16,31 @@ marketplace manifest, and Cloudflare R2 upload automation.
 extensions/
   ipc/
     duckdb/       Rust DuckDB IPC database driver
-    iotdb/        Rust Apache IoTDB IPC database driver
+    iotdb/        Go Apache IoTDB IPC database driver
     dm/           Go Dameng DM IPC database driver
     kingbase/     Go KingbaseES IPC database driver
     gbase8s/      Java GBase 8s IPC database driver
+    oceanbase/    Go OceanBase IPC database driver
     opengauss/    Rust openGauss IPC database driver
+    oracle-go/    Go Oracle IPC database driver (pure Go, godror)
+  remote-desktop/
+    rdp/          Rust RDP remote desktop provider
+    rdp-helper/   Rust RDP helper binary (Cargo workspace)
+    vnc/          Rust VNC remote desktop provider
+    vnc-helper/   Rust VNC helper binary (Cargo workspace)
+cmd/
+  dm-ipc-driver/
+  iotdb-ipc-driver/
+  kingbase-ipc-driver/
+  oceanbase-ipc-driver/
+  oracle-go-ipc-driver/
 java/
   gbase8s-ipc-driver/
 internal/
   dbipc/          shared Go IPC database server runtime
+  drivers/        driver-specific Go implementations (dm, iotdb, kingbase, oceanbase, oracle)
+  ipc/            Go IPC framing and socket utilities
+  runner/         Go IPC process runner
 manifest.json     lightweight marketplace index
 scripts/
   build-go-driver.sh
@@ -32,9 +48,12 @@ scripts/
   changed-extensions.mjs
   generate-marketplace-manifest.mjs
   install-local-drivers.sh
+  install-local-remote-desktop-providers.sh
   package-driver.sh
+  package-remote-desktop-provider.sh
   release-driver.mjs
   verify-package.sh
+  verify-remote-desktop-provider-package.sh
 tests/
   scripts.test.mjs
 .codex/
@@ -45,19 +64,28 @@ The duplicated root-level `ipc-driver-development/` skill directory is not used.
 Keep driver-development guidance under
 `.codex/skills/ipc-driver-development/`.
 
-## Driver Matrix
+## Database Driver Matrix
 
 | Driver | Runtime | Package metadata | Manifest | Notes |
 | --- | --- | --- | --- | --- |
-| DuckDB | Rust | `extensions/ipc/duckdb/extension.build.json` | `extensions/ipc/duckdb/driver.json` | Embedded single-file database driver. |
-| Apache IoTDB | Rust | `extensions/ipc/iotdb/extension.build.json` | `extensions/ipc/iotdb/driver.json` | Time-series database driver. |
-| Dameng DM | Go | `extensions/ipc/dm/extension.build.json` | `extensions/ipc/dm/driver.json` | Uses shared `internal/dbipc` runtime and driver-specific build tags. |
-| KingbaseES | Go | `extensions/ipc/kingbase/extension.build.json` | `extensions/ipc/kingbase/driver.json` | Uses shared `internal/dbipc` runtime and driver-specific build tags. |
-| GBase 8s | Java | `extensions/ipc/gbase8s/extension.build.json` | `extensions/ipc/gbase8s/driver.json` | Uses `java/gbase8s-ipc-driver`. Preserve `java/gbase8s-ipc-driver/bin/lib/gbase8s-ipc-driver.jar` when present. |
+| DuckDB | Rust | `extensions/ipc/duckdb/extension.build.json` | `extensions/ipc/duckdb/driver.json` | Embedded single-file analytical database driver. Cargo workspace member. |
+| Apache IoTDB | Go | `extensions/ipc/iotdb/extension.build.json` | `extensions/ipc/iotdb/driver.json` | Time-series database driver. Uses `cmd/iotdb-ipc-driver` and `internal/drivers/iotdb`. |
+| Dameng DM | Go | `extensions/ipc/dm/extension.build.json` | `extensions/ipc/dm/driver.json` | Uses shared `internal/dbipc` runtime and `dm_driver` build tag. |
+| KingbaseES | Go | `extensions/ipc/kingbase/extension.build.json` | `extensions/ipc/kingbase/driver.json` | Uses shared `internal/dbipc` runtime and `kingbase_driver` build tag. |
+| GBase 8s | Java | `extensions/ipc/gbase8s/extension.build.json` | `extensions/ipc/gbase8s/driver.json` | Uses `java/gbase8s-ipc-driver`. Preserve `java/gbase8s-ipc-driver/bin/lib/gbase8s-ipc-driver.jar` when present. Universal (cross-platform) target only. |
+| OceanBase | Go | `extensions/ipc/oceanbase/extension.build.json` | `extensions/ipc/oceanbase/driver.json` | Uses shared `internal/dbipc` runtime and `oceanbase_driver` build tag. |
+| openGauss | Rust | `extensions/ipc/opengauss/extension.build.json` | `extensions/ipc/opengauss/driver.json` | Cargo workspace member. Uses `tokio-opengauss` async driver. |
+| Oracle Go | Go | `extensions/ipc/oracle-go/extension.build.json` | `extensions/ipc/oracle-go/driver.json` | Pure Go Oracle driver using `oracle_go_driver` build tag. |
 
 Domestic database drivers declare `"category": "domestic_database"` in
 `driver.json`; the host should use manifest metadata instead of hardcoded ids
 for UI grouping.
+
+## Remote Desktop Provider Matrix
+| Provider | Runtime | Package metadata | Manifest | Notes |
+| --- | --- | --- | --- | --- |
+| RDP | Rust | `extensions/remote-desktop/rdp/extension.build.json` | `extensions/remote-desktop/rdp/remote_desktop_provider.json` | RDP remote desktop provider. Binary built from `extensions/remote-desktop/rdp-helper`. |
+| VNC | Rust | `extensions/remote-desktop/vnc/extension.build.json` | `extensions/remote-desktop/vnc/remote_desktop_provider.json` | VNC remote desktop provider. Binary built from `extensions/remote-desktop/vnc-helper`. |
 
 ## Protocol Surface
 
@@ -109,10 +137,15 @@ Rust drivers depend on these SDK crates from `feigeCode/onetcli`:
 - `extension-driver`
 - `extension-host`
 
-At the moment, `Cargo.toml` points to the `dev-ipc` branch because the existing
+At the moment, `Cargo.toml` points to the `dev` branch because the existing
 `v0.4.8` tag does not contain those crates. After `onetcli` publishes a release
 tag that includes the SDK crates, replace the branch dependencies with that
 fixed tag.
+
+The Cargo workspace currently includes `extensions/ipc/duckdb` and
+`extensions/ipc/opengauss`. The RDP and VNC helpers are independent Cargo
+projects under `extensions/remote-desktop/rdp-helper` and
+`extensions/remote-desktop/vnc-helper` respectively.
 
 ## Local Development
 
@@ -126,7 +159,7 @@ Run Rust driver tests:
 
 ```bash
 cargo test -p duckdb_driver -- --nocapture
-cargo test -p iotdb_driver -- --nocapture
+cargo test -p opengauss_driver -- --nocapture
 ```
 
 Run Go runtime tests:
@@ -188,6 +221,14 @@ mkdir -p artifacts
 bash scripts/package-driver.sh gbase8s "$HOST_TRIPLE" artifacts 0.1.0
 ```
 
+Build and package a Rust remote desktop provider:
+
+```bash
+HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
+bash scripts/package-remote-desktop-provider.sh rdp "$HOST_TRIPLE" artifacts 0.1.0
+bash scripts/verify-remote-desktop-provider-package.sh "artifacts/rdp-remote-desktop-provider-${HOST_TRIPLE}.tar.gz"
+```
+
 Package archives contain the extension directory with `driver.json`, the entry
 binary or launcher, and packaged resources such as locales, icons, and runtime
 libraries.
@@ -203,6 +244,17 @@ By default this installs into
 `$XDG_CONFIG_HOME/one-hub/extensions/database_drivers` or
 `$HOME/.config/one-hub/extensions/database_drivers`. Override the target with
 `ONETCLI_DATABASE_DRIVER_DIR=/path/to/database_drivers`.
+
+Install remote desktop providers locally:
+
+```bash
+bash scripts/install-local-remote-desktop-providers.sh
+bash scripts/install-local-remote-desktop-providers.sh rdp
+```
+
+By default this installs into
+`$XDG_CONFIG_HOME/one-hub/extensions/remote_desktop_providers` or
+`$HOME/.config/one-hub/extensions/remote_desktop_providers`.
 
 Prepare release artifacts for one driver locally:
 
@@ -409,6 +461,20 @@ Create metadata similar to:
 
 No workflow changes should be needed for another IPC database driver if it uses
 the existing metadata and package shape.
+
+## Adding Another Remote Desktop Provider
+
+Add a new directory under `extensions/remote-desktop/<provider-id>` with:
+
+```text
+remote_desktop_provider.json
+extension.build.json
+```
+
+The helper binary is a Rust Cargo project under
+`extensions/remote-desktop/<provider-id>-helper`. The `extension.build.json`
+references the helper's `Cargo.toml` via `manifest_path` and lists the helper
+source directory in `source_paths` so that CI change detection works correctly.
 
 ## Host App Integration
 
