@@ -163,9 +163,8 @@ fn output_to_event(output: RemoteDesktopOutput) -> HelperEvent {
 }
 
 fn write_event(event: &HelperEvent) -> anyhow::Result<()> {
-    let line = protocol::encode_event_line(event)?;
     let mut stdout = io::stdout().lock();
-    stdout.write_all(line.as_bytes())?;
+    protocol::write_event(&mut stdout, event)?;
     stdout.flush()?;
     Ok(())
 }

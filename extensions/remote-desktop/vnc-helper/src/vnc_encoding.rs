@@ -146,7 +146,7 @@ impl VncFramebufferState {
         let _ = output_tx.send(RemoteDesktopOutput::Frame {
             width: framebuffer.width(),
             height: framebuffer.height(),
-            rgba: framebuffer.clone_rgba(),
+            rgba: framebuffer.clone_bgra(),
         });
         self.dirty = false;
     }
@@ -224,7 +224,7 @@ mod tests {
             RemoteDesktopOutput::Frame {
                 width: 2,
                 height: 1,
-                rgba: vec![255, 0, 0, 255, 0, 0, 255, 255],
+                rgba: vec![0, 0, 255, 255, 255, 0, 0, 255],
             }
         );
         assert!(output_rx.try_recv().is_err());

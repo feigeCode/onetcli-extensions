@@ -28,8 +28,12 @@ impl RgbaFramebuffer {
         &self.rgba
     }
 
-    pub fn clone_rgba(&self) -> Vec<u8> {
-        self.rgba.clone()
+    pub fn clone_bgra(&self) -> Vec<u8> {
+        let mut bgra = self.rgba.clone();
+        for pixel in bgra.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
+        bgra
     }
 
     pub fn patch_rgba_rect(
@@ -135,5 +139,23 @@ mod tests {
         fb.copy_rect(0, 0, 1, 0, 2, 1).unwrap();
 
         assert_eq!(fb.as_rgba(), &[1, 0, 0, 255, 1, 0, 0, 255, 2, 0, 0, 255]);
+    }
+
+    #[test]
+    fn clone_bgra_swaps_red_and_blue_channels() {
+        let mut fb = RgbaFramebuffer::new(2, 1);
+        fb.patch_rgba_rect(
+            0,
+            0,
+            2,
+            1,
+            &[0x11, 0x22, 0x33, 0xff, 0xab, 0xcd, 0xef, 0xff],
+        )
+        .unwrap();
+
+        assert_eq!(
+            fb.clone_bgra(),
+            vec![0x33, 0x22, 0x11, 0xff, 0xef, 0xcd, 0xab, 0xff]
+        );
     }
 }

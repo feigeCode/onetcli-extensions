@@ -1,4 +1,5 @@
-use base64::Engine as _;
+use std::io::Write;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,10 +76,10 @@ pub enum HelperEvent {
         width: u16,
         height: u16,
     },
-    Frame {
+    FrameBgraBytes {
         width: u16,
         height: u16,
-        rgba_base64: String,
+        bgra: Vec<u8>,
     },
     CursorDefault,
     CursorHidden,
@@ -98,11 +99,11 @@ pub enum HelperEvent {
 }
 
 impl HelperEvent {
-    pub fn frame(width: u16, height: u16, rgba: Vec<u8>) -> Self {
-        Self::Frame {
+    pub fn frame(width: u16, height: u16, bgra: Vec<u8>) -> Self {
+        Self::FrameBgraBytes {
             width,
             height,
-            rgba_base64: base64::engine::general_purpose::STANDARD.encode(rgba),
+            bgra,
         }
     }
 }
@@ -133,9 +134,45 @@ pub fn decode_request_line(line: &str) -> anyhow::Result<HelperRequest> {
 }
 
 pub fn encode_event_line(event: &HelperEvent) -> anyhow::Result<String> {
+    if matches!(event, HelperEvent::FrameBgraBytes { .. }) {
+        anyhow::bail!("binary frame events must be written with write_event");
+    }
     let mut line = serde_json::to_string(event)?;
     line.push('\n');
     Ok(line)
+}
+
+pub fn write_event<W>(writer: &mut W, event: &HelperEvent) -> anyhow::Result<()>
+where
+    W: Write,
+{
+    match event {
+        HelperEvent::FrameBgraBytes {
+            width,
+            height,
+            bgra,
+        } => {
+            let header = HelperFrameBgraBytesHeader {
+                width: *width,
+                height: *height,
+                bgra_len: bgra.len(),
+            };
+            let mut line = serde_json::to_string(&header)?;
+            line.push('\n');
+            writer.write_all(line.as_bytes())?;
+            writer.write_all(bgra)?;
+        }
+        event => writer.write_all(encode_event_line(event)?.as_bytes())?,
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename = "FrameBgraBytes")]
+struct HelperFrameBgraBytesHeader {
+    width: u16,
+    height: u16,
+    bgra_len: usize,
 }
 
 #[cfg(test)]
@@ -157,14 +194,26 @@ mod tests {
     }
 
     #[test]
-    fn encodes_frame_event_shape_for_main_process() {
+    fn rejects_binary_frame_event_as_json_line() {
         let event = HelperEvent::frame(1, 1, vec![0x11, 0x22, 0x33, 0xff]);
 
-        let line = encode_event_line(&event).expect("event encodes");
+        let error = encode_event_line(&event).expect_err("binary frame is not a JSON line");
+
+        assert!(error.to_string().contains("write_event"));
+    }
+
+    #[test]
+    fn writes_binary_frame_event_shape_for_main_process() {
+        let event = HelperEvent::frame(2, 1, vec![0x33, 0x22, 0x11, 0xff, 0xef, 0xcd, 0xab, 0xff]);
+        let mut output = Vec::new();
+
+        write_event(&mut output, &event).expect("event writes");
 
         assert_eq!(
-            line,
-            "{\"type\":\"Frame\",\"width\":1,\"height\":1,\"rgba_base64\":\"ESIz/w==\"}\n"
+            output,
+            b"{\"type\":\"FrameBgraBytes\",\"width\":2,\"height\":1,\"bgra_len\":8}\n\
+              \x33\x22\x11\xff\xef\xcd\xab\xff"
+                .to_vec()
         );
     }
 

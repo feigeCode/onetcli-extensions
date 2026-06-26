@@ -11,7 +11,7 @@ use smallvec::SmallVec;
 use tokio::sync::mpsc;
 
 use crate::clipboard::{TextClipboardController, text_clipboard};
-use crate::pixels::rdp_u32_pixels_to_rgba;
+use crate::pixels::rdp_u32_pixels_to_bgra;
 use crate::protocol::{ConnectRequest, HelperEvent, HelperMouseButton, HelperRequest};
 
 pub struct RdpRuntime {
@@ -225,7 +225,7 @@ impl RdpOutputMapper {
                 events.push(HelperEvent::frame(
                     width,
                     height,
-                    rdp_u32_pixels_to_rgba(&buffer),
+                    rdp_u32_pixels_to_bgra(&buffer),
                 ));
                 events
             }
@@ -382,7 +382,7 @@ mod tests {
                     width: 1,
                     height: 1
                 },
-                HelperEvent::frame(1, 1, vec![0x11, 0x22, 0x33, 0xff])
+                HelperEvent::frame(1, 1, vec![0x33, 0x22, 0x11, 0xff])
             ]
         );
 
@@ -394,7 +394,7 @@ mod tests {
 
         assert_eq!(
             second,
-            vec![HelperEvent::frame(1, 1, vec![0xab, 0xcd, 0xef, 0xff])]
+            vec![HelperEvent::frame(1, 1, vec![0xef, 0xcd, 0xab, 0xff])]
         );
     }
 

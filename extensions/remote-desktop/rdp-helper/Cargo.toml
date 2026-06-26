@@ -1,6 +1,6 @@
 [package]
 name = "onetcli-rdp-helper"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 publish = false
 
@@ -8,7 +8,6 @@ publish = false
 
 [dependencies]
 anyhow = "1"
-base64 = "0.22"
 ironrdp = { git = "https://github.com/Devolutions/IronRDP", rev = "8fe59c19e253aa106a0a94c72dd0f962b881794c", features = [
     "connector",
     "input",

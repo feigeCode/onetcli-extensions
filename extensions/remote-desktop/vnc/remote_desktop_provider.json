@@ -2,7 +2,7 @@
   "id": "vnc",
   "name": "VNC",
   "description": "使用 Rust 开发的 VNC 远程桌面 provider",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "protocol": "vnc",
   "entry": {
     "command": "./onetcli-vnc-helper",
