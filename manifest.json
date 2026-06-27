@@ -96,8 +96,8 @@
       "id": "rdp",
       "kind": "remote_desktop_provider",
       "name": "RDP",
-      "version": "0.1.2",
-      "release_tag": "rdp-v0.1.2",
+      "version": "0.1.3",
+      "release_tag": "rdp-v0.1.3",
       "description": "使用 Rust 开发的 RDP 远程桌面 provider",
       "file_extensions": [],
       "manifest": "rdp/manifest.json"
@@ -106,8 +106,8 @@
       "id": "vnc",
       "kind": "remote_desktop_provider",
       "name": "VNC",
-      "version": "0.1.0",
-      "release_tag": "vnc-v0.1.0",
+      "version": "0.1.1",
+      "release_tag": "vnc-v0.1.1",
       "description": "使用 Rust 开发的 VNC 远程桌面 provider",
       "file_extensions": [],
       "manifest": "vnc/manifest.json"
