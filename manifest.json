@@ -63,6 +63,16 @@
       "manifest": "oceanbase/manifest.json"
     },
     {
+      "id": "onetcli-public-mcp",
+      "kind": "mcp_helper",
+      "name": "OnetCli Public MCP Helper",
+      "version": "0.1.0",
+      "release_tag": "onetcli-public-mcp-v0.1.0",
+      "description": "Rust 公共 MCP stdio 桥接器，连接 OnetCli 桌面运行时",
+      "file_extensions": [],
+      "manifest": "onetcli-public-mcp/manifest.json"
+    },
+    {
       "id": "oracle-go",
       "kind": "database_driver",
       "name": "Oracle Go",
