@@ -386,6 +386,26 @@ test("extension descriptions are bilingual, detailed, and synchronized", () => {
   }
 });
 
+test("Redis marketplace entry tracks the released native driver", () => {
+  const globalManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifest.json"), "utf8"));
+  const redisDriverManifest = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, "extensions/ipc/redis/driver.json"), "utf8"),
+  );
+  const entry = globalManifest.extensions.find((extension) => extension.id === "redis");
+
+  assert.ok(entry, "redis should be present in the marketplace manifest");
+  assert.equal(
+    entry.version,
+    redisDriverManifest.version,
+    "redis marketplace version should match its native driver manifest",
+  );
+  assert.equal(
+    entry.release_tag,
+    `redis-v${redisDriverManifest.version}`,
+    "redis marketplace release tag should match its native driver version",
+  );
+});
+
 test("WASM connection importers use the shared host connection-import WIT", () => {
   const sharedWit = path.join(repoRoot, "wit/connection-import.wit");
   assert.ok(fs.existsSync(sharedWit), "repository should vendor a single shared connection-import WIT");
