@@ -53,6 +53,20 @@ fn decodes_clipboard_text_request_shape_from_main_process() {
 }
 
 #[test]
+fn decodes_clipboard_files_request_shape_from_main_process() {
+    let line = r#"{"type":"ClipboardFiles","paths":["C:\\Users\\Rachel\\notes.txt"]}"#;
+
+    let request = decode_request_line(line).expect("request decodes");
+
+    assert_eq!(
+        request,
+        HelperRequest::ClipboardFiles {
+            paths: vec![r"C:\Users\Rachel\notes.txt".to_string()],
+        }
+    );
+}
+
+#[test]
 fn decodes_keysym_request_shape_from_main_process() {
     let line = r#"{"type":"KeySym","keysym":58,"pressed":true}"#;
 

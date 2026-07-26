@@ -99,6 +99,7 @@ fn request_to_input(request: HelperRequest) -> Option<RemoteDesktopInput> {
         },
         HelperRequest::Text { text } => RemoteDesktopInput::Text { text },
         HelperRequest::ClipboardText { text } => RemoteDesktopInput::ClipboardText { text },
+        HelperRequest::ClipboardFiles { paths } => RemoteDesktopInput::ClipboardFiles { paths },
         HelperRequest::Close => RemoteDesktopInput::Close,
     })
 }
@@ -247,6 +248,20 @@ mod tests {
             Some(RemoteDesktopInput::Key {
                 key: RemoteKey::KeySym(b':' as u32),
                 pressed: true,
+            })
+        );
+    }
+
+    #[test]
+    fn converts_clipboard_files_request_without_losing_paths() {
+        let input = request_to_input(HelperRequest::ClipboardFiles {
+            paths: vec![r"C:\Users\Rachel\notes.txt".to_string()],
+        });
+
+        assert_eq!(
+            input,
+            Some(RemoteDesktopInput::ClipboardFiles {
+                paths: vec![r"C:\Users\Rachel\notes.txt".to_string()],
             })
         );
     }

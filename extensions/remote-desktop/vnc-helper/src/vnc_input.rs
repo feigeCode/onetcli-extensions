@@ -1,7 +1,6 @@
 use vnc_client::{ClientMouseEvent, VncClient, X11Event};
 
-use crate::output_mailbox::OutputSender;
-use crate::runtime::{RemoteDesktopInput, RemoteDesktopOutput, RemoteMouseButton};
+use crate::runtime::{RemoteDesktopInput, RemoteMouseButton};
 use crate::vnc_keyboard::remote_key_to_keysym;
 
 const MAX_INPUTS_PER_POLL: usize = 256;
@@ -19,15 +18,13 @@ pub(crate) async fn handle_pending_inputs(
     latest_clipboard_text: &mut Option<String>,
     input_rx: &mut tokio::sync::mpsc::UnboundedReceiver<RemoteDesktopInput>,
     pointer: &mut VncPointerState,
-    output_tx: &OutputSender,
 ) -> VncInputAction {
     let inputs = match drain_remote_inputs(input_rx) {
         VncInputBatch::Inputs(inputs) => inputs,
         VncInputBatch::Disconnected => return VncInputAction::InputClosed,
     };
     for input in inputs {
-        let action =
-            handle_vnc_input(client, latest_clipboard_text, pointer, input, output_tx).await;
+        let action = handle_vnc_input(client, latest_clipboard_text, pointer, input).await;
         if !matches!(action, VncInputAction::Continue) {
             return action;
         }
@@ -40,9 +37,8 @@ async fn handle_vnc_input(
     latest_clipboard_text: &mut Option<String>,
     pointer: &mut VncPointerState,
     input: RemoteDesktopInput,
-    output_tx: &OutputSender,
 ) -> VncInputAction {
-    match send_vnc_input(client, latest_clipboard_text, pointer, input, output_tx).await {
+    match send_vnc_input(client, latest_clipboard_text, pointer, input).await {
         Ok(action) => action,
         Err(error) => VncInputAction::Failed(error.to_string()),
     }
@@ -53,7 +49,6 @@ async fn send_vnc_input(
     latest_clipboard_text: &mut Option<String>,
     pointer: &mut VncPointerState,
     input: RemoteDesktopInput,
-    output_tx: &OutputSender,
 ) -> anyhow::Result<VncInputAction> {
     match input {
         RemoteDesktopInput::Close => close_client(client).await,
@@ -74,8 +69,9 @@ async fn send_vnc_input(
             Ok(VncInputAction::Continue)
         }
         RemoteDesktopInput::ClipboardText { text } | RemoteDesktopInput::Text { text } => {
-            send_clipboard_text(client, latest_clipboard_text, text, output_tx).await
+            send_clipboard_text(client, latest_clipboard_text, text).await
         }
+        RemoteDesktopInput::ClipboardFiles { .. } => Ok(VncInputAction::Continue),
         RemoteDesktopInput::Resize { .. } => Ok(VncInputAction::Continue),
     }
 }
@@ -139,18 +135,22 @@ async fn send_clipboard_text(
     client: &VncClient,
     latest_clipboard_text: &mut Option<String>,
     text: String,
-    output_tx: &OutputSender,
 ) -> anyhow::Result<VncInputAction> {
-    if !text.is_ascii() {
-        send_status(
-            output_tx,
-            "VNC clipboard currently supports ASCII text only",
-        );
+    let Some(text) = supported_clipboard_text(text) else {
         return Ok(VncInputAction::Continue);
-    }
+    };
     *latest_clipboard_text = Some(text.clone());
     client.input(X11Event::CopyText(text)).await?;
     Ok(VncInputAction::Continue)
+}
+
+pub(crate) fn supported_clipboard_text(text: String) -> Option<String> {
+    if text.is_ascii() {
+        Some(text)
+    } else {
+        tracing::debug!("ignoring non-ASCII VNC clipboard text");
+        None
+    }
 }
 
 enum VncInputBatch {
@@ -255,10 +255,6 @@ fn vnc_wheel_bit(vertical: bool, units: i16) -> Option<u8> {
     }
 }
 
-fn send_status(output_tx: &OutputSender, message: &str) {
-    let _ = output_tx.send(RemoteDesktopOutput::Status(message.to_string()));
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,5 +281,15 @@ mod tests {
         assert_eq!(vec![32, 0], state.wheel_masks(false, -120));
         assert_eq!(vec![64, 0], state.wheel_masks(false, 120));
         assert_eq!((20, 21, 0), state.snapshot());
+    }
+
+    #[test]
+    fn vnc_clipboard_accepts_only_ascii_text() {
+        assert_eq!(
+            Some("plain text".to_string()),
+            supported_clipboard_text("plain text".into())
+        );
+        assert_eq!(None, supported_clipboard_text("中文".into()));
+        assert_eq!(None, supported_clipboard_text("emoji 🖥️".into()));
     }
 }

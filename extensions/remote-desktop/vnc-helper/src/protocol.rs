@@ -44,6 +44,9 @@ pub enum HelperRequest {
     ClipboardText {
         text: String,
     },
+    ClipboardFiles {
+        paths: Vec<String>,
+    },
     Close,
 }
 

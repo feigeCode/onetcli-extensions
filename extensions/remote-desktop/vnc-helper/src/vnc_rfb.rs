@@ -7,7 +7,7 @@ use vnc_client::{PixelFormat, VncClient, VncConnector, VncEncoding, X11Event};
 use crate::output_mailbox::OutputSender;
 use crate::runtime::{RemoteDesktopConnectionOptions, RemoteDesktopInput, RemoteDesktopOutput};
 use crate::vnc_encoding::ConnectedVncSession;
-use crate::vnc_input::{VncInputAction, handle_pending_inputs};
+use crate::vnc_input::{VncInputAction, handle_pending_inputs, supported_clipboard_text};
 
 const VNC_POLL_INTERVAL: Duration = Duration::from_millis(8);
 
@@ -129,7 +129,6 @@ async fn run_connected_vnc_session(
             latest_clipboard_text,
             input_rx,
             &mut session.pointer,
-            output_tx,
         )
         .await;
         if let Some(result) = session_result_from_action(action, session.was_connected) {
@@ -215,12 +214,10 @@ fn handle_wait_input(
     match input_rx.try_recv() {
         Ok(RemoteDesktopInput::Close) => WaitAction::Stop,
         Ok(RemoteDesktopInput::Reconnect) => WaitAction::ReconnectNow,
-        Ok(RemoteDesktopInput::ClipboardText { text }) => {
-            *latest_clipboard_text = Some(text);
-            WaitAction::Continue
-        }
-        Ok(RemoteDesktopInput::Text { text }) => {
-            *latest_clipboard_text = Some(text);
+        Ok(RemoteDesktopInput::ClipboardText { text } | RemoteDesktopInput::Text { text }) => {
+            if let Some(text) = supported_clipboard_text(text) {
+                *latest_clipboard_text = Some(text);
+            }
             WaitAction::Continue
         }
         Ok(_) | Err(tokio::sync::mpsc::error::TryRecvError::Empty) => WaitAction::Continue,
@@ -234,4 +231,48 @@ fn send_status(output_tx: &OutputSender, message: &str) {
 
 fn send_failure(output_tx: &OutputSender, message: &str) {
     let _ = output_tx.send(RemoteDesktopOutput::ConnectionFailure(message.to_string()));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reconnect_wait_ignores_files_and_non_ascii_clipboard_text() {
+        let (input_tx, mut input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut latest_clipboard_text = Some("previous".to_string());
+
+        input_tx
+            .send(RemoteDesktopInput::ClipboardFiles {
+                paths: vec![r"C:\Users\Rachel\notes.txt".to_string()],
+            })
+            .expect("file clipboard input sends");
+        assert!(matches!(
+            handle_wait_input(&mut input_rx, &mut latest_clipboard_text),
+            WaitAction::Continue
+        ));
+        assert_eq!(latest_clipboard_text.as_deref(), Some("previous"));
+
+        input_tx
+            .send(RemoteDesktopInput::ClipboardText {
+                text: "中文".to_string(),
+            })
+            .expect("text clipboard input sends");
+        assert!(matches!(
+            handle_wait_input(&mut input_rx, &mut latest_clipboard_text),
+            WaitAction::Continue
+        ));
+        assert_eq!(latest_clipboard_text.as_deref(), Some("previous"));
+
+        input_tx
+            .send(RemoteDesktopInput::ClipboardText {
+                text: "next".to_string(),
+            })
+            .expect("ASCII clipboard input sends");
+        assert!(matches!(
+            handle_wait_input(&mut input_rx, &mut latest_clipboard_text),
+            WaitAction::Continue
+        ));
+        assert_eq!(latest_clipboard_text.as_deref(), Some("next"));
+    }
 }

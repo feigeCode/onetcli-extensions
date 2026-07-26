@@ -336,9 +336,9 @@
       "id": "rdp",
       "kind": "remote_desktop_provider",
       "name": "RDP",
-      "version": "0.2.0",
-      "release_tag": "rdp-v0.2.0",
-      "description": "使用 Rust 开发的 RDP 远程桌面 Provider，为 Navop 提供交互式远程会话、动态分辨率、文本剪贴板和光标同步能力。 Rust-based RDP provider for Navop with interactive remote sessions, dynamic resizing, text clipboard, and cursor synchronization.",
+      "version": "0.3.0",
+      "release_tag": "rdp-v0.3.0",
+      "description": "使用 Rust 开发的 RDP 远程桌面 Provider，为 Navop 提供交互式远程会话、动态分辨率、文本/文件剪贴板、远端音频和光标同步能力。 Rust-based RDP provider for Navop with interactive remote sessions, dynamic resizing, text/file clipboard, remote audio, and cursor synchronization.",
       "file_extensions": [],
       "manifest": "rdp/manifest.json"
     },
@@ -346,8 +346,8 @@
       "id": "vnc",
       "kind": "remote_desktop_provider",
       "name": "VNC",
-      "version": "0.2.0",
-      "release_tag": "vnc-v0.2.0",
+      "version": "0.2.1",
+      "release_tag": "vnc-v0.2.1",
       "description": "使用 Rust 开发的 VNC 远程桌面 Provider，为 Navop 提供跨平台远程画面访问、交互输入、窗口缩放和剪贴板协作能力。 Rust-based VNC provider for Navop with cross-platform remote display, interactive input, window resizing, and clipboard integration.",
       "file_extensions": [],
       "manifest": "vnc/manifest.json"

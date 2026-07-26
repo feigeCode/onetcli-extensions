@@ -42,7 +42,7 @@ pub(super) fn build_config(connect: ConnectRequest) -> anyhow::Result<Config> {
         license_cache: None,
         request_data: None,
         autologon: true,
-        enable_audio_playback: false,
+        enable_audio_playback: connect.audio_playback,
         enable_server_pointer: true,
         pointer_software_rendering: false,
         multitransport_flags: None,
@@ -98,6 +98,7 @@ mod tests {
             width: 1280,
             height: 720,
             scale_factor: 200,
+            audio_playback: false,
         })
         .expect("config builds");
 
@@ -106,5 +107,27 @@ mod tests {
         assert_eq!(PerformanceFlags::default(), flags);
         assert!(!flags.contains(PerformanceFlags::DISABLE_THEMING));
         assert!(!flags.contains(PerformanceFlags::ENABLE_DESKTOP_COMPOSITION));
+    }
+
+    #[test]
+    fn applies_requested_audio_playback_setting() {
+        for audio_playback in [false, true] {
+            let config = build_config(ConnectRequest {
+                destination: "127.0.0.1:3389".to_string(),
+                username: None,
+                password: None,
+                domain: None,
+                width: 1280,
+                height: 720,
+                scale_factor: 100,
+                audio_playback,
+            })
+            .expect("config builds");
+
+            assert_eq!(
+                audio_playback, config.connector.enable_audio_playback,
+                "connector audio playback must follow the Connect request"
+            );
+        }
     }
 }

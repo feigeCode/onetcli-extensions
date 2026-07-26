@@ -14,6 +14,8 @@ pub enum HelperRequest {
         height: u16,
         #[serde(default = "default_scale_factor")]
         scale_factor: u32,
+        #[serde(default)]
+        audio_playback: bool,
     },
     Resize {
         width: u16,
@@ -68,6 +70,7 @@ pub struct ConnectRequest {
     pub width: u16,
     pub height: u16,
     pub scale_factor: u32,
+    pub audio_playback: bool,
 }
 
 fn default_scale_factor() -> u32 {
@@ -141,6 +144,7 @@ pub fn connect_request(request: HelperRequest) -> anyhow::Result<ConnectRequest>
             width,
             height,
             scale_factor,
+            audio_playback,
         } => Ok(ConnectRequest {
             destination,
             username,
@@ -149,6 +153,7 @@ pub fn connect_request(request: HelperRequest) -> anyhow::Result<ConnectRequest>
             width,
             height,
             scale_factor,
+            audio_playback,
         }),
         _ => anyhow::bail!("first helper request must be Connect"),
     }

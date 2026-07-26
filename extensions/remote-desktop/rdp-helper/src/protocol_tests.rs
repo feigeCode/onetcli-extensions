@@ -13,6 +13,18 @@ fn decodes_connect_request_shape_from_main_process() {
     assert_eq!(request.width, 1280);
     assert_eq!(request.height, 720);
     assert_eq!(request.scale_factor, 100);
+    assert!(!request.audio_playback);
+}
+
+#[test]
+fn decodes_enabled_audio_playback_from_main_process() {
+    let line = r#"{"type":"Connect","destination":"host:3389","username":null,"password":null,"domain":null,"width":1280,"height":720,"scale_factor":150,"audio_playback":true}"#;
+
+    let request = connect_request(decode_request_line(line).expect("request decodes"))
+        .expect("connect request");
+
+    assert!(request.audio_playback);
+    assert_eq!(request.scale_factor, 150);
 }
 
 #[test]

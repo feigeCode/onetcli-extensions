@@ -33,6 +33,9 @@ pub enum RemoteDesktopInput {
     ClipboardText {
         text: String,
     },
+    ClipboardFiles {
+        paths: Vec<String>,
+    },
     Reconnect,
     Close,
 }
@@ -108,7 +111,7 @@ impl RemoteDesktopCapabilities {
     pub fn vnc_mvp() -> Self {
         Self {
             resize: ResizeSupport::LocalScaleOnly,
-            clipboard_text: false,
+            clipboard_text: true,
             cursor_shape: false,
             audio: false,
             file_transfer: false,
@@ -119,4 +122,14 @@ impl RemoteDesktopCapabilities {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResizeSupport {
     LocalScaleOnly,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vnc_mvp_reports_text_clipboard_support() {
+        assert!(RemoteDesktopCapabilities::vnc_mvp().clipboard_text);
+    }
 }
