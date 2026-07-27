@@ -1,6 +1,6 @@
 use ironrdp::connector::{self, Credentials};
 use ironrdp::pdu::rdp::capability_sets::{MajorPlatformType, client_codecs_capabilities};
-use ironrdp::pdu::rdp::client_info::{CompressionType, PerformanceFlags, TimezoneInfo};
+use ironrdp::pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
 use ironrdp_client::config::{ClipboardType, Config, Destination};
 
 use crate::protocol::ConnectRequest;
@@ -46,7 +46,11 @@ pub(super) fn build_config(connect: ConnectRequest) -> anyhow::Result<Config> {
         enable_server_pointer: true,
         pointer_software_rendering: false,
         multitransport_flags: None,
-        compression_type: Some(CompressionType::Rdp61),
+        // Do not advertise bulk compression until IronRDP can safely carry its
+        // decompressor state across Deactivation-Reactivation. Reusing that
+        // history currently corrupts some FastPath bitmap updates after a
+        // resize/reconnect and disconnects the session with a decode error.
+        compression_type: None,
         performance_flags: PerformanceFlags::default(),
         timezone_info: TimezoneInfo::default(),
     };
@@ -133,5 +137,24 @@ mod tests {
                 "connector audio playback must follow the Connect request"
             );
         }
+    }
+
+    #[test]
+    fn does_not_advertise_bulk_compression() {
+        let config = build_config(ConnectRequest {
+            destination: "127.0.0.1:3389".to_string(),
+            username: None,
+            password: None,
+            domain: None,
+            width: 1280,
+            height: 720,
+            scale_factor: 100,
+            audio_playback: false,
+            audio_capture: false,
+            shared_folders: Vec::new(),
+        })
+        .expect("config builds");
+
+        assert_eq!(None, config.connector.compression_type);
     }
 }
