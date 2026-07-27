@@ -6,40 +6,77 @@ usage() {
 Usage: scripts/install-local-remote-desktop-providers.sh [provider-id]
 
 Build, package, verify, and install remote desktop provider extensions into the
-local one-hub remote desktop provider directory. Passing a provider id installs
+active Navop remote desktop provider directory. Passing a provider id installs
 only that provider; omitting it installs every provider under
 extensions/remote-desktop.
 
 Environment:
   NAVOP_REMOTE_DESKTOP_PROVIDER_DIR    Override install root. The legacy
                                        ONETCLI_REMOTE_DESKTOP_PROVIDER_DIR is
-                                       also supported. Defaults to
-                                       $XDG_CONFIG_HOME/one-hub/extensions/remote_desktop_providers
-                                       or $HOME/.config/one-hub/extensions/remote_desktop_providers.
+                                       also supported. By default, the script
+                                       follows Navop's one-hub migration state
+                                       and installs below the active app config
+                                       directory.
 EOF
 }
 
-if [ "$#" -gt 1 ]; then
-  usage
-  exit 2
-fi
-
-case "${1:-}" in
-  -h|--help)
-    usage
-    exit 0
-    ;;
-esac
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ARTIFACT_DIR="${REPO_DIR}/target/local-extension-artifacts"
-CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME}/.config}"
-INSTALL_ROOT="${NAVOP_REMOTE_DESKTOP_PROVIDER_DIR:-${ONETCLI_REMOTE_DESKTOP_PROVIDER_DIR:-${CONFIG_HOME}/one-hub/extensions/remote_desktop_providers}}"
+INSTALL_ROOT=""
 
 fail() {
   printf 'error: %s\n' "$*" >&2
   exit 1
+}
+
+platform_config_root() {
+  local platform
+  platform="$(uname -s)"
+
+  case "$platform" in
+    CYGWIN*|MINGW*|MSYS*)
+      [ -n "${APPDATA:-}" ] || fail "APPDATA is not set"
+      if command -v cygpath >/dev/null 2>&1; then
+        cygpath -u "$APPDATA"
+      else
+        printf '%s\n' "$APPDATA"
+      fi
+      ;;
+    *)
+      [ -n "${HOME:-}" ] || fail "HOME is not set"
+      printf '%s/.config\n' "$HOME"
+      ;;
+  esac
+}
+
+active_app_config_dir() {
+  local root="$1"
+  local current="${root}/navop"
+  local legacy="${root}/one-hub"
+
+  if [ -d "$legacy" ] && [ ! -f "${current}/.one-hub-migration-complete" ]; then
+    printf '%s\n' "$legacy"
+  else
+    printf '%s\n' "$current"
+  fi
+}
+
+remote_desktop_provider_dir() {
+  local config_root active_config_dir
+
+  if [ -n "${NAVOP_REMOTE_DESKTOP_PROVIDER_DIR:-}" ]; then
+    printf '%s\n' "$NAVOP_REMOTE_DESKTOP_PROVIDER_DIR"
+    return 0
+  fi
+  if [ -n "${ONETCLI_REMOTE_DESKTOP_PROVIDER_DIR:-}" ]; then
+    printf '%s\n' "$ONETCLI_REMOTE_DESKTOP_PROVIDER_DIR"
+    return 0
+  fi
+
+  config_root="$(platform_config_root)"
+  active_config_dir="$(active_app_config_dir "$config_root")"
+  printf '%s/extensions/remote_desktop_providers\n' "$active_config_dir"
 }
 
 json_value() {
@@ -152,6 +189,19 @@ main() {
   local selected="${1:-}"
   local target id metadata archive
 
+  if [ "$#" -gt 1 ]; then
+    usage
+    exit 2
+  fi
+
+  case "$selected" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+  esac
+
+  INSTALL_ROOT="$(remote_desktop_provider_dir)"
   printf 'Installing local remote desktop providers into %s\n' "$INSTALL_ROOT"
 
   while IFS= read -r id; do
@@ -166,4 +216,6 @@ main() {
   done < <(provider_ids "$selected")
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
