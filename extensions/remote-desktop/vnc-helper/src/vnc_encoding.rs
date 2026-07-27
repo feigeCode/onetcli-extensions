@@ -119,7 +119,11 @@ impl ConnectedVncSession {
             VncEvent::JpegImage(_, _) => {
                 send_status(output_tx, "VNC JPEG rectangles are not enabled")
             }
-            VncEvent::Bell | VncEvent::SetPixelFormat(_) | VncEvent::SetCursor(_, _) => {}
+            VncEvent::SetCursor(rect, rgba) => {
+                let output = crate::vnc_cursor::map_vnc_cursor(rect, rgba)?;
+                let _ = output_tx.send(output);
+            }
+            VncEvent::Bell | VncEvent::SetPixelFormat(_) => {}
             _ => {}
         }
         Ok(())

@@ -54,6 +54,7 @@ impl OutputSender {
         let mut state = lock(&self.shared);
         state.latest_frame = None;
         state.latest_delta = None;
+        discard_pending_cursor_outputs(&mut state.control);
         drop(state);
         self.shared.ready.notify_one();
     }
@@ -68,6 +69,7 @@ impl OutputSender {
                 state.latest_frame = None;
                 state.latest_delta = None;
                 state.accepting_frames = false;
+                discard_pending_cursor_outputs(&mut state.control);
                 state
                     .control
                     .push_back(RemoteDesktopOutput::Reconnecting(reconnect));
@@ -91,9 +93,10 @@ impl OutputSender {
             | RemoteDesktopOutput::Terminated(_)) => {
                 state.latest_frame = None;
                 state.latest_delta = None;
+                discard_pending_cursor_outputs(&mut state.control);
                 state.control.push_back(terminal);
             }
-            control => state.control.push_back(control),
+            control => enqueue_control(&mut state.control, control),
         }
         drop(state);
         self.shared.ready.notify_one();
@@ -188,6 +191,38 @@ fn merge_deltas(previous: RemoteDesktopOutput, next: RemoteDesktopOutput) -> Rem
     }
 }
 
+fn enqueue_control(control: &mut VecDeque<RemoteDesktopOutput>, output: RemoteDesktopOutput) {
+    match (control.back_mut(), output) {
+        (
+            Some(RemoteDesktopOutput::CursorPosition { x, y }),
+            RemoteDesktopOutput::CursorPosition {
+                x: next_x,
+                y: next_y,
+            },
+        ) => {
+            *x = next_x;
+            *y = next_y;
+        }
+        (
+            Some(previous @ RemoteDesktopOutput::CursorBitmap(_)),
+            next @ RemoteDesktopOutput::CursorBitmap(_),
+        ) => *previous = next,
+        (_, output) => control.push_back(output),
+    }
+}
+
+fn discard_pending_cursor_outputs(control: &mut VecDeque<RemoteDesktopOutput>) {
+    control.retain(|output| {
+        !matches!(
+            output,
+            RemoteDesktopOutput::CursorDefault
+                | RemoteDesktopOutput::CursorHidden
+                | RemoteDesktopOutput::CursorPosition { .. }
+                | RemoteDesktopOutput::CursorBitmap(_)
+        )
+    });
+}
+
 impl fmt::Debug for OutputSender {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.debug_struct("OutputSender").finish()
@@ -218,3 +253,7 @@ fn lock(shared: &Shared) -> MutexGuard<'_, State> {
 #[cfg(test)]
 #[path = "output_mailbox_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "output_mailbox_cursor_tests.rs"]
+mod cursor_tests;

@@ -81,6 +81,7 @@ pub enum RemoteDesktopOutput {
         x: u16,
         y: u16,
     },
+    CursorBitmap(RemoteDesktopCursor),
     ClipboardText {
         text: String,
     },
@@ -88,6 +89,15 @@ pub enum RemoteDesktopOutput {
     Status(String),
     ConnectionFailure(String),
     Terminated(String),
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct RemoteDesktopCursor {
+    pub width: u16,
+    pub height: u16,
+    pub hotspot_x: u16,
+    pub hotspot_y: u16,
+    pub rgba: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,7 +137,7 @@ impl RemoteDesktopCapabilities {
         Self {
             resize: ResizeSupport::LocalScaleOnly,
             clipboard_text: true,
-            cursor_shape: false,
+            cursor_shape: true,
             audio: false,
             file_transfer: false,
         }
@@ -144,8 +154,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vnc_mvp_reports_text_clipboard_support() {
-        assert!(RemoteDesktopCapabilities::vnc_mvp().clipboard_text);
+    fn vnc_mvp_reports_cursor_and_text_clipboard_support() {
+        let capabilities = RemoteDesktopCapabilities::vnc_mvp();
+
+        assert!(capabilities.clipboard_text);
+        assert!(capabilities.cursor_shape);
     }
 
     #[test]
@@ -171,6 +184,13 @@ mod tests {
                 height: 1,
                 rgba: vec![17, 34, 51, 68],
             },
+            RemoteDesktopOutput::CursorBitmap(RemoteDesktopCursor {
+                width: 1,
+                height: 1,
+                hotspot_x: 0,
+                hotspot_y: 0,
+                rgba: vec![17, 34, 51, 68],
+            }),
         ];
         for output in outputs {
             let debug = format!("{output:?}");

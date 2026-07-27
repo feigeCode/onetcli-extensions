@@ -154,6 +154,20 @@ impl fmt::Debug for HelperEvent {
                 .field("x", x)
                 .field("y", y)
                 .finish(),
+            Self::CursorRgbaBytes {
+                width,
+                height,
+                hotspot_x,
+                hotspot_y,
+                rgba,
+            } => formatter
+                .debug_struct("CursorRgbaBytes")
+                .field("width", width)
+                .field("height", height)
+                .field("hotspot_x", hotspot_x)
+                .field("hotspot_y", hotspot_y)
+                .field("byte_len", &rgba.len())
+                .finish(),
         }
     }
 }

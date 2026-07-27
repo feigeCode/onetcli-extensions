@@ -96,6 +96,13 @@ pub enum HelperEvent {
         x: u16,
         y: u16,
     },
+    CursorRgbaBytes {
+        width: u16,
+        height: u16,
+        hotspot_x: u16,
+        hotspot_y: u16,
+        rgba: Vec<u8>,
+    },
     ClipboardText {
         text: String,
     },
@@ -167,9 +174,11 @@ pub fn decode_request_line(line: &str) -> anyhow::Result<HelperRequest> {
 pub fn encode_event_line(event: &HelperEvent) -> anyhow::Result<String> {
     if matches!(
         event,
-        HelperEvent::FrameBgraBytes { .. } | HelperEvent::FrameBgraRects { .. }
+        HelperEvent::FrameBgraBytes { .. }
+            | HelperEvent::FrameBgraRects { .. }
+            | HelperEvent::CursorRgbaBytes { .. }
     ) {
-        anyhow::bail!("binary frame events must be written with write_event");
+        anyhow::bail!("binary image events must be written with write_event");
     }
     let mut line = serde_json::to_string(event)?;
     line.push('\n');
@@ -191,10 +200,7 @@ where
                 height: *height,
                 bgra_len: bgra.len(),
             };
-            let mut line = serde_json::to_string(&header)?;
-            line.push('\n');
-            writer.write_all(line.as_bytes())?;
-            writer.write_all(bgra)?;
+            write_binary_event(writer, &header, bgra)?;
         }
         HelperEvent::FrameBgraRects {
             width,
@@ -208,13 +214,38 @@ where
                 rects,
                 bgra_len: bgra.len(),
             };
-            let mut line = serde_json::to_string(&header)?;
-            line.push('\n');
-            writer.write_all(line.as_bytes())?;
-            writer.write_all(bgra)?;
+            write_binary_event(writer, &header, bgra)?;
+        }
+        HelperEvent::CursorRgbaBytes {
+            width,
+            height,
+            hotspot_x,
+            hotspot_y,
+            rgba,
+        } => {
+            let header = HelperCursorRgbaBytesHeader {
+                width: *width,
+                height: *height,
+                hotspot_x: *hotspot_x,
+                hotspot_y: *hotspot_y,
+                rgba_len: rgba.len(),
+            };
+            write_binary_event(writer, &header, rgba)?;
         }
         event => writer.write_all(encode_event_line(event)?.as_bytes())?,
     }
+    Ok(())
+}
+
+fn write_binary_event<W, H>(writer: &mut W, header: &H, payload: &[u8]) -> anyhow::Result<()>
+where
+    W: Write,
+    H: Serialize,
+{
+    let mut line = serde_json::to_string(header)?;
+    line.push('\n');
+    writer.write_all(line.as_bytes())?;
+    writer.write_all(payload)?;
     Ok(())
 }
 
@@ -233,6 +264,16 @@ struct HelperFrameBgraRectsHeader<'a> {
     height: u16,
     rects: &'a [HelperFrameRect],
     bgra_len: usize,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename = "CursorRgbaBytes")]
+struct HelperCursorRgbaBytesHeader {
+    width: u16,
+    height: u16,
+    hotspot_x: u16,
+    hotspot_y: u16,
+    rgba_len: usize,
 }
 
 #[cfg(test)]

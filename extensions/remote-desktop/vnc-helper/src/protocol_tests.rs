@@ -39,6 +39,42 @@ fn writes_binary_frame_event_shape_for_main_process() {
 }
 
 #[test]
+fn rejects_binary_cursor_event_as_json_line() {
+    let event = HelperEvent::CursorRgbaBytes {
+        width: 1,
+        height: 1,
+        hotspot_x: 0,
+        hotspot_y: 0,
+        rgba: vec![0x11, 0x22, 0x33, 0xff],
+    };
+
+    let error = encode_event_line(&event).expect_err("binary cursor is not a JSON line");
+
+    assert!(error.to_string().contains("write_event"));
+}
+
+#[test]
+fn writes_binary_cursor_event_shape_for_main_process() {
+    let event = HelperEvent::CursorRgbaBytes {
+        width: 2,
+        height: 1,
+        hotspot_x: 1,
+        hotspot_y: 0,
+        rgba: vec![1, 2, 3, 255, 4, 5, 6, 128],
+    };
+    let mut output = Vec::new();
+
+    write_event(&mut output, &event).expect("cursor event writes");
+
+    assert_eq!(
+        output,
+        b"{\"type\":\"CursorRgbaBytes\",\"width\":2,\"height\":1,\"hotspot_x\":1,\"hotspot_y\":0,\"rgba_len\":8}\n\
+          \x01\x02\x03\xff\x04\x05\x06\x80"
+            .to_vec()
+    );
+}
+
+#[test]
 fn decodes_clipboard_text_request_shape_from_main_process() {
     let line = r#"{"type":"ClipboardText","text":"local 中文"}"#;
 
@@ -182,6 +218,23 @@ fn event_debug_redacts_messages_text_and_frame_bytes() {
             ],
         );
     }
+}
+
+#[test]
+fn cursor_event_debug_does_not_include_pixel_contents() {
+    let event = HelperEvent::CursorRgbaBytes {
+        width: 1,
+        height: 1,
+        hotspot_x: 0,
+        hotspot_y: 0,
+        rgba: b"pixel-secret".to_vec(),
+    };
+
+    let debug = format!("{event:?}");
+
+    assert!(debug.contains("CursorRgbaBytes"));
+    assert!(debug.contains("byte_len"));
+    assert!(!debug.contains("pixel-secret"));
 }
 
 fn assert_redacted(debug: &str, secrets: &[&str]) {

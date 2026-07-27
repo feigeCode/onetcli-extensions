@@ -17,6 +17,7 @@ mod framebuffer;
 mod output_mailbox;
 mod protocol;
 mod runtime;
+mod vnc_cursor;
 mod vnc_encoding;
 mod vnc_input;
 mod vnc_keyboard;
@@ -227,6 +228,13 @@ fn output_to_event(output: RemoteDesktopOutput) -> HelperEvent {
         RemoteDesktopOutput::CursorDefault => HelperEvent::CursorDefault,
         RemoteDesktopOutput::CursorHidden => HelperEvent::CursorHidden,
         RemoteDesktopOutput::CursorPosition { x, y } => HelperEvent::CursorPosition { x, y },
+        RemoteDesktopOutput::CursorBitmap(cursor) => HelperEvent::CursorRgbaBytes {
+            width: cursor.width,
+            height: cursor.height,
+            hotspot_x: cursor.hotspot_x,
+            hotspot_y: cursor.hotspot_y,
+            rgba: cursor.rgba,
+        },
         RemoteDesktopOutput::ClipboardText { text } => HelperEvent::ClipboardText { text },
         RemoteDesktopOutput::Reconnecting(reconnect) => HelperEvent::Reconnecting {
             reason: helper_reconnect_reason(reconnect.reason),

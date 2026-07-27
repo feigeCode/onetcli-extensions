@@ -60,3 +60,27 @@ fn converts_clipboard_files_request_without_losing_paths() {
         })
     );
 }
+
+#[test]
+fn converts_cursor_bitmap_to_binary_helper_event() {
+    let event = output_to_event(RemoteDesktopOutput::CursorBitmap(
+        crate::runtime::RemoteDesktopCursor {
+            width: 2,
+            height: 1,
+            hotspot_x: 1,
+            hotspot_y: 0,
+            rgba: vec![1, 2, 3, 255, 4, 5, 6, 128],
+        },
+    ));
+
+    assert_eq!(
+        event,
+        HelperEvent::CursorRgbaBytes {
+            width: 2,
+            height: 1,
+            hotspot_x: 1,
+            hotspot_y: 0,
+            rgba: vec![1, 2, 3, 255, 4, 5, 6, 128],
+        }
+    );
+}
