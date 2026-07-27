@@ -99,6 +99,8 @@ mod tests {
             height: 720,
             scale_factor: 200,
             audio_playback: false,
+            audio_capture: false,
+            shared_folders: Vec::new(),
         })
         .expect("config builds");
 
@@ -121,6 +123,8 @@ mod tests {
                 height: 720,
                 scale_factor: 100,
                 audio_playback,
+                audio_capture: false,
+                shared_folders: Vec::new(),
             })
             .expect("config builds");
 

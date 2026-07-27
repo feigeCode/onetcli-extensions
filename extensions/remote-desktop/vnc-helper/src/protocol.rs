@@ -2,7 +2,7 @@ use std::io::Write;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum HelperRequest {
     Connect {
@@ -59,7 +59,7 @@ pub enum HelperMouseButton {
     X2,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConnectRequest {
     pub destination: String,
     pub username: Option<String>,
@@ -69,7 +69,7 @@ pub struct ConnectRequest {
     pub height: u16,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum HelperEvent {
     Status {
@@ -99,12 +99,25 @@ pub enum HelperEvent {
     ClipboardText {
         text: String,
     },
+    Reconnecting {
+        reason: HelperReconnectReason,
+        delay_secs: Option<u64>,
+    },
     ConnectionFailure {
         message: String,
     },
     Terminated {
         message: String,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HelperReconnectReason {
+    DisplayUpdate,
+    SessionError,
+    ConnectionLost,
+    Manual,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -225,3 +238,6 @@ struct HelperFrameBgraRectsHeader<'a> {
 #[cfg(test)]
 #[path = "protocol_tests.rs"]
 mod tests;
+
+#[path = "protocol_debug.rs"]
+mod debug;

@@ -1,4 +1,58 @@
+use std::collections::BTreeSet;
+
+use anyhow::Context as _;
+use vnc_client::{VncClient, X11Event};
+
 use crate::runtime::RemoteKey;
+
+#[derive(Default)]
+pub(crate) struct VncKeyboardState {
+    pressed: BTreeSet<u32>,
+}
+
+impl VncKeyboardState {
+    pub(crate) async fn send(
+        &mut self,
+        client: &VncClient,
+        keysym: u32,
+        pressed: bool,
+    ) -> anyhow::Result<()> {
+        client
+            .input(X11Event::KeyEvent((keysym, pressed).into()))
+            .await
+            .context("VNC keyboard event failed")?;
+        if pressed {
+            self.pressed.insert(keysym);
+        } else {
+            self.pressed.remove(&keysym);
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn release_all(&mut self, client: &VncClient) -> anyhow::Result<()> {
+        let held = self.pressed.iter().copied().collect::<Vec<_>>();
+        let mut first_error = None;
+        for keysym in held {
+            if let Err(error) = self.send(client, keysym, false).await {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+        }
+        self.pressed.clear();
+        first_error.map_or(Ok(()), Err)
+    }
+
+    #[cfg(test)]
+    fn contains(&self, keysym: u32) -> bool {
+        self.pressed.contains(&keysym)
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.pressed.len()
+    }
+}
 
 pub fn remote_key_to_keysym(key: &RemoteKey) -> Option<u32> {
     match key {
@@ -98,5 +152,15 @@ mod tests {
     #[test]
     fn maps_direct_keysym() {
         assert_eq!(remote_key_to_keysym(&RemoteKey::KeySym(0x61)), Some(0x61));
+    }
+
+    #[test]
+    fn keyboard_state_tracks_only_successful_contract() {
+        let mut state = VncKeyboardState::default();
+        state.pressed.insert(0x61);
+        assert!(state.contains(0x61));
+        assert_eq!(1, state.len());
+        state.pressed.remove(&0x61);
+        assert!(!state.contains(0x61));
     }
 }

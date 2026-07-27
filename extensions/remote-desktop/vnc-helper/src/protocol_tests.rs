@@ -94,3 +94,101 @@ fn encodes_clipboard_text_event_shape_for_main_process() {
         "{\"type\":\"ClipboardText\",\"text\":\"remote 中文\"}\n"
     );
 }
+
+#[test]
+fn reconnect_event_round_trips_with_snake_case_reason() {
+    let event = HelperEvent::Reconnecting {
+        reason: HelperReconnectReason::ConnectionLost,
+        delay_secs: Some(2),
+    };
+
+    let line = encode_event_line(&event).expect("reconnect event encodes");
+    let decoded: HelperEvent = serde_json::from_str(line.trim_end()).expect("event decodes");
+
+    assert_eq!(
+        line,
+        "{\"type\":\"Reconnecting\",\"reason\":\"connection_lost\",\"delay_secs\":2}\n"
+    );
+    assert_eq!(decoded, event);
+}
+
+#[test]
+fn reconnect_event_supports_no_delay() {
+    let event = HelperEvent::Reconnecting {
+        reason: HelperReconnectReason::Manual,
+        delay_secs: None,
+    };
+
+    assert_eq!(
+        encode_event_line(&event).expect("manual reconnect event encodes"),
+        "{\"type\":\"Reconnecting\",\"reason\":\"manual\",\"delay_secs\":null}\n"
+    );
+}
+
+#[test]
+fn request_debug_redacts_credentials_text_and_paths() {
+    let connect = HelperRequest::Connect {
+        destination: "host:5900".to_string(),
+        username: Some("debug-user-secret".to_string()),
+        password: Some("debug-password-secret".to_string()),
+        domain: Some("debug-domain-secret".to_string()),
+        width: 800,
+        height: 600,
+    };
+    assert_redacted(
+        &format!("{connect:?}"),
+        &[
+            "debug-user-secret",
+            "debug-password-secret",
+            "debug-domain-secret",
+        ],
+    );
+
+    let text = HelperRequest::ClipboardText {
+        text: "debug-clipboard-secret".to_string(),
+    };
+    assert_redacted(&format!("{text:?}"), &["debug-clipboard-secret"]);
+
+    let files = HelperRequest::ClipboardFiles {
+        paths: vec!["C:\\debug\\path-secret.txt".to_string()],
+    };
+    assert_redacted(&format!("{files:?}"), &["path-secret.txt"]);
+}
+
+#[test]
+fn event_debug_redacts_messages_text_and_frame_bytes() {
+    let events = [
+        HelperEvent::Status {
+            message: "debug-status-secret".to_string(),
+        },
+        HelperEvent::ClipboardText {
+            text: "debug-remote-secret".to_string(),
+        },
+        HelperEvent::FrameBgraBytes {
+            width: 1,
+            height: 1,
+            bgra: vec![17, 34, 51, 68],
+        },
+    ];
+
+    for event in events {
+        let debug = format!("{event:?}");
+        assert_redacted(
+            &debug,
+            &[
+                "debug-status-secret",
+                "debug-remote-secret",
+                "[17, 34, 51, 68]",
+            ],
+        );
+    }
+}
+
+fn assert_redacted(debug: &str, secrets: &[&str]) {
+    for secret in secrets {
+        assert!(
+            !debug.contains(secret),
+            "Debug output leaked {secret:?}: {debug}"
+        );
+    }
+}

@@ -54,7 +54,7 @@ fn local_files_start_streaming_clipboard_copy() {
     let (controller, _factory) = text_clipboard(input_tx, output_tx);
 
     controller
-        .set_local_files(vec![file.path().to_string_lossy().into_owned()])
+        .set_local_files(1, vec![file.path().to_string_lossy().into_owned()])
         .expect("local file copy starts");
 
     match input_rx.try_recv().expect("file copy event") {
@@ -137,6 +137,29 @@ fn backend_fetches_and_emits_remote_unicode_clipboard_text() {
         },
         output_rx.recv().expect("clipboard event")
     );
+}
+
+#[test]
+fn shutdown_clears_all_clipboard_snapshots_and_pending_state() {
+    let (input_tx, _input_rx) = RdpInputEvent::create_channel();
+    let (output_tx, _output_rx) = output_mailbox();
+    let (controller, _factory) = text_clipboard(input_tx, output_tx);
+    {
+        let mut state = controller::lock_state(&controller.shared);
+        state.local_text = Some("sensitive text".to_string());
+        state.waiting_remote_text = true;
+        state.pending_remote = Some(REMOTE_CLIPBOARD_TRANSFER_BIT | 7);
+    }
+
+    controller.shutdown();
+
+    let state = controller::lock_state(&controller.shared);
+    assert!(state.local_text.is_none());
+    assert!(state.local_files.is_none());
+    assert!(state.locked_local_files.is_empty());
+    assert!(state.pending_remote.is_none());
+    assert!(state.remote_transfer.is_none());
+    assert!(!state.waiting_remote_text);
 }
 
 fn format_ids(formats: &[ironrdp::cliprdr::pdu::ClipboardFormat]) -> Vec<ClipboardFormatId> {

@@ -24,6 +24,7 @@ struct State {
     control: VecDeque<RemoteDesktopOutput>,
     latest_frame: Option<RemoteDesktopOutput>,
     latest_delta: Option<RemoteDesktopOutput>,
+    accepting_frames: bool,
     sender_count: usize,
     receiver_alive: bool,
 }
@@ -34,6 +35,7 @@ pub fn output_mailbox() -> (OutputSender, OutputReceiver) {
             control: VecDeque::new(),
             latest_frame: None,
             latest_delta: None,
+            accepting_frames: true,
             sender_count: 1,
             receiver_alive: true,
         }),
@@ -48,22 +50,43 @@ pub fn output_mailbox() -> (OutputSender, OutputReceiver) {
 }
 
 impl OutputSender {
+    pub fn begin_generation(&self) {
+        let mut state = lock(&self.shared);
+        state.latest_frame = None;
+        state.latest_delta = None;
+        drop(state);
+        self.shared.ready.notify_one();
+    }
+
     pub fn send(&self, output: RemoteDesktopOutput) -> Result<(), MailboxClosed> {
         let mut state = lock(&self.shared);
         if !state.receiver_alive {
             return Err(MailboxClosed);
         }
         match output {
-            frame @ RemoteDesktopOutput::Frame { .. } => {
+            RemoteDesktopOutput::Reconnecting(reconnect) => {
+                state.latest_frame = None;
+                state.latest_delta = None;
+                state.accepting_frames = false;
+                state
+                    .control
+                    .push_back(RemoteDesktopOutput::Reconnecting(reconnect));
+            }
+            connected @ RemoteDesktopOutput::Connected { .. } => {
+                state.accepting_frames = true;
+                state.control.push_back(connected);
+            }
+            frame @ RemoteDesktopOutput::Frame { .. } if state.accepting_frames => {
                 state.latest_frame = Some(frame);
                 state.latest_delta = None;
             }
-            delta @ RemoteDesktopOutput::FrameBgraRects { .. } => {
+            delta @ RemoteDesktopOutput::FrameBgraRects { .. } if state.accepting_frames => {
                 state.latest_delta = Some(match state.latest_delta.take() {
                     Some(previous) => merge_deltas(previous, delta),
                     None => delta,
                 });
             }
+            RemoteDesktopOutput::Frame { .. } | RemoteDesktopOutput::FrameBgraRects { .. } => {}
             terminal @ (RemoteDesktopOutput::ConnectionFailure(_)
             | RemoteDesktopOutput::Terminated(_)) => {
                 state.latest_frame = None;
@@ -193,75 +216,5 @@ fn lock(shared: &Shared) -> MutexGuard<'_, State> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::runtime::RemoteDesktopOutput;
-
-    #[test]
-    fn keeps_only_latest_pending_frame() {
-        let (tx, rx) = output_mailbox();
-        tx.send(frame(1)).unwrap();
-        tx.send(frame(2)).unwrap();
-        tx.send(frame(3)).unwrap();
-
-        assert_eq!(Some(frame(3)), rx.recv());
-    }
-
-    #[test]
-    fn preserves_control_order_while_replacing_frames() {
-        let (tx, rx) = output_mailbox();
-        tx.send(RemoteDesktopOutput::Status("one".into())).unwrap();
-        tx.send(frame(1)).unwrap();
-        tx.send(RemoteDesktopOutput::ClipboardText { text: "two".into() })
-            .unwrap();
-        tx.send(frame(2)).unwrap();
-
-        assert_eq!(Some(RemoteDesktopOutput::Status("one".into())), rx.recv());
-        assert_eq!(
-            Some(RemoteDesktopOutput::ClipboardText { text: "two".into() }),
-            rx.recv()
-        );
-        assert_eq!(Some(frame(2)), rx.recv());
-    }
-
-    #[test]
-    fn terminal_event_discards_pending_frame() {
-        let (tx, rx) = output_mailbox();
-        tx.send(frame(7)).unwrap();
-        tx.send(RemoteDesktopOutput::Terminated("closed".into()))
-            .unwrap();
-
-        assert_eq!(
-            Some(RemoteDesktopOutput::Terminated("closed".into())),
-            rx.recv()
-        );
-        drop(tx);
-        assert_eq!(None, rx.recv());
-    }
-
-    #[test]
-    fn last_sender_drop_wakes_receiver() {
-        let (tx, rx) = output_mailbox();
-        let waiter = std::thread::spawn(move || rx.recv());
-
-        drop(tx);
-
-        assert_eq!(None, waiter.join().unwrap());
-    }
-
-    #[test]
-    fn send_fails_after_receiver_is_dropped() {
-        let (tx, rx) = output_mailbox();
-        drop(rx);
-
-        assert!(tx.send(frame(1)).is_err());
-    }
-
-    fn frame(value: u8) -> RemoteDesktopOutput {
-        RemoteDesktopOutput::Frame {
-            width: 1,
-            height: 1,
-            rgba: vec![value, 0, 0, 255],
-        }
-    }
-}
+#[path = "output_mailbox_tests.rs"]
+mod tests;

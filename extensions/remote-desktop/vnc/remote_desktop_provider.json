@@ -14,7 +14,14 @@
     "clipboard_text": true,
     "cursor_shape": false,
     "audio": false,
-    "file_transfer": false
+    "file_transfer": false,
+    "audio_playback": false,
+    "audio_capture": false,
+    "clipboard_files_to_remote": false,
+    "clipboard_files_from_remote": false,
+    "clipboard_directories_to_remote": false,
+    "clipboard_directories_from_remote": false,
+    "shared_drives": false
   },
   "ui": {
     "icon": "Monitor",

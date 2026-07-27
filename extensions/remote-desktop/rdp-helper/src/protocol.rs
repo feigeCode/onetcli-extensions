@@ -1,8 +1,9 @@
 use std::io::Write;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum HelperRequest {
     Connect {
@@ -16,6 +17,10 @@ pub enum HelperRequest {
         scale_factor: u32,
         #[serde(default)]
         audio_playback: bool,
+        #[serde(default)]
+        audio_capture: bool,
+        #[serde(default)]
+        shared_folders: Vec<RemoteDesktopSharedFolder>,
     },
     Resize {
         width: u16,
@@ -47,9 +52,21 @@ pub enum HelperRequest {
         text: String,
     },
     ClipboardFiles {
+        #[serde(default)]
+        transfer_id: u64,
         paths: Vec<String>,
     },
+    CancelClipboardTransfer {
+        transfer_id: u64,
+    },
     Close,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteDesktopSharedFolder {
+    pub name: String,
+    pub path: PathBuf,
+    pub read_only: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,7 +78,7 @@ pub enum HelperMouseButton {
     X2,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConnectRequest {
     pub destination: String,
     pub username: Option<String>,
@@ -71,13 +88,15 @@ pub struct ConnectRequest {
     pub height: u16,
     pub scale_factor: u32,
     pub audio_playback: bool,
+    pub audio_capture: bool,
+    pub shared_folders: Vec<RemoteDesktopSharedFolder>,
 }
 
 fn default_scale_factor() -> u32 {
     100
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum HelperEvent {
     Status {
@@ -107,12 +126,33 @@ pub enum HelperEvent {
     ClipboardText {
         text: String,
     },
+    ClipboardFilesReady {
+        transfer_id: u64,
+        paths: Vec<String>,
+    },
+    ClipboardTransferFailed {
+        transfer_id: u64,
+        message: String,
+    },
+    Reconnecting {
+        reason: HelperReconnectReason,
+        delay_secs: Option<u64>,
+    },
     ConnectionFailure {
         message: String,
     },
     Terminated {
         message: String,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HelperReconnectReason {
+    DisplayUpdate,
+    SessionError,
+    ConnectionLost,
+    Manual,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,6 +185,8 @@ pub fn connect_request(request: HelperRequest) -> anyhow::Result<ConnectRequest>
             height,
             scale_factor,
             audio_playback,
+            audio_capture,
+            shared_folders,
         } => Ok(ConnectRequest {
             destination,
             username,
@@ -154,6 +196,8 @@ pub fn connect_request(request: HelperRequest) -> anyhow::Result<ConnectRequest>
             height,
             scale_factor,
             audio_playback,
+            audio_capture,
+            shared_folders,
         }),
         _ => anyhow::bail!("first helper request must be Connect"),
     }
@@ -234,6 +278,13 @@ struct HelperFrameBgraRectsHeader<'a> {
     bgra_len: usize,
 }
 
+#[path = "protocol_debug.rs"]
+mod debug;
+
 #[cfg(test)]
 #[path = "protocol_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "protocol_clipboard_tests.rs"]
+mod clipboard_tests;

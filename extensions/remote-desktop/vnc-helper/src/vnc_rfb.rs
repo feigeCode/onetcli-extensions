@@ -1,72 +1,81 @@
-use std::time::{Duration, Instant};
-
 use anyhow::Context as _;
 use tokio::net::TcpStream;
 use vnc_client::{PixelFormat, VncClient, VncConnector, VncEncoding, X11Event};
 
 use crate::output_mailbox::OutputSender;
-use crate::runtime::{RemoteDesktopConnectionOptions, RemoteDesktopInput, RemoteDesktopOutput};
+use crate::runtime::{
+    RemoteDesktopConnectionOptions, RemoteDesktopInput, RemoteDesktopOutput,
+    RemoteDesktopReconnectReason,
+};
 use crate::vnc_encoding::ConnectedVncSession;
-use crate::vnc_input::{VncInputAction, handle_pending_inputs, supported_clipboard_text};
-
-const VNC_POLL_INTERVAL: Duration = Duration::from_millis(8);
+use crate::vnc_input::{handle_pending_inputs, shutdown_inputs};
+use crate::vnc_reconnect::{
+    VNC_POLL_INTERVAL, VncSessionResult, merge_cleanup_error, reconnect_delay, reconnect_reason,
+    reconnect_result, send_reconnecting, session_result_from_action, wait_before_reconnect,
+};
 
 pub fn run_vnc_thread(
     options: RemoteDesktopConnectionOptions,
-    input_rx: &mut tokio::sync::mpsc::UnboundedReceiver<RemoteDesktopInput>,
+    input_rx: tokio::sync::mpsc::UnboundedReceiver<RemoteDesktopInput>,
     output_tx: OutputSender,
-) {
+) -> anyhow::Result<()> {
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
     else {
         send_failure(&output_tx, "failed to start VNC runtime");
-        return;
+        return Err(anyhow::anyhow!("failed to start VNC runtime"));
     };
-    runtime.block_on(run_vnc_backend(options, input_rx, &output_tx));
+    runtime.block_on(run_vnc_backend(options, input_rx, output_tx))
 }
 
 async fn run_vnc_backend(
     options: RemoteDesktopConnectionOptions,
-    input_rx: &mut tokio::sync::mpsc::UnboundedReceiver<RemoteDesktopInput>,
-    output_tx: &OutputSender,
-) {
+    mut input_rx: tokio::sync::mpsc::UnboundedReceiver<RemoteDesktopInput>,
+    output_tx: OutputSender,
+) -> anyhow::Result<()> {
     let mut latest_clipboard_text = None;
     let mut reconnect_attempt = 0usize;
     loop {
-        match run_vnc_session(&options, &mut latest_clipboard_text, input_rx, output_tx).await {
+        match run_vnc_session(
+            &options,
+            &mut latest_clipboard_text,
+            &mut input_rx,
+            &output_tx,
+        )
+        .await?
+        {
             VncSessionResult::Closed | VncSessionResult::InputClosed => break,
             VncSessionResult::Reconnect {
                 reason,
+                diagnostic,
                 manual,
                 was_connected,
             } => {
+                tracing::warn!(
+                    ?reason,
+                    manual,
+                    was_connected,
+                    %diagnostic,
+                    "VNC session reconnecting"
+                );
                 if was_connected || manual {
                     reconnect_attempt = 0;
                 }
                 if manual {
-                    send_status(output_tx, "reconnecting VNC session");
+                    send_reconnecting(&output_tx, reason, None);
                     continue;
                 }
                 let delay = reconnect_delay(reconnect_attempt);
                 reconnect_attempt = reconnect_attempt.saturating_add(1);
-                send_status(output_tx, &reconnect_status_message(&reason, delay));
-                if !wait_before_reconnect(input_rx, &mut latest_clipboard_text, delay).await {
+                send_reconnecting(&output_tx, reason, Some(delay.as_secs()));
+                if !wait_before_reconnect(&mut input_rx, &mut latest_clipboard_text, delay).await {
                     break;
                 }
             }
         }
     }
-}
-
-enum VncSessionResult {
-    Closed,
-    InputClosed,
-    Reconnect {
-        reason: String,
-        manual: bool,
-        was_connected: bool,
-    },
+    Ok(())
 }
 
 async fn run_vnc_session(
@@ -74,19 +83,45 @@ async fn run_vnc_session(
     latest_clipboard_text: &mut Option<String>,
     input_rx: &mut tokio::sync::mpsc::UnboundedReceiver<RemoteDesktopInput>,
     output_tx: &OutputSender,
-) -> VncSessionResult {
+) -> anyhow::Result<VncSessionResult> {
     send_status(
         output_tx,
         &format!("connecting to VNC {}", options.destination),
     );
     let client = match connect_vnc(options).await {
         Ok(client) => client,
-        Err(error) => return reconnect_result(error.to_string(), false, false),
+        Err(error) => {
+            return Ok(reconnect_result(
+                RemoteDesktopReconnectReason::SessionError,
+                error.to_string(),
+                false,
+                false,
+            ));
+        }
     };
-    if let Some(text) = latest_clipboard_text.clone() {
-        let _ = client.input(X11Event::CopyText(text)).await;
+    output_tx.begin_generation();
+    let mut session = ConnectedVncSession::new(client);
+    if let Err(error) = session.request_initial_refresh().await {
+        let reason = shutdown_with_reason(&mut session, error.to_string()).await;
+        return Ok(reconnect_result(
+            RemoteDesktopReconnectReason::DisplayUpdate,
+            reason,
+            false,
+            session.was_connected,
+        ));
     }
-    run_connected_vnc_session(client, latest_clipboard_text, input_rx, output_tx).await
+    if let Some(text) = latest_clipboard_text.clone() {
+        if let Err(error) = session.client.input(X11Event::CopyText(text)).await {
+            let reason = shutdown_with_reason(&mut session, error.to_string()).await;
+            return Ok(reconnect_result(
+                reconnect_reason(session.was_connected),
+                reason,
+                false,
+                session.was_connected,
+            ));
+        }
+    }
+    Ok(run_connected_vnc_session(session, latest_clipboard_text, input_rx, output_tx).await)
 }
 
 async fn connect_vnc(options: &RemoteDesktopConnectionOptions) -> anyhow::Result<VncClient> {
@@ -114,115 +149,65 @@ async fn connect_vnc(options: &RemoteDesktopConnectionOptions) -> anyhow::Result
 }
 
 async fn run_connected_vnc_session(
-    client: VncClient,
+    mut session: ConnectedVncSession,
     latest_clipboard_text: &mut Option<String>,
     input_rx: &mut tokio::sync::mpsc::UnboundedReceiver<RemoteDesktopInput>,
     output_tx: &OutputSender,
 ) -> VncSessionResult {
-    let mut session = ConnectedVncSession::new(client);
-    loop {
+    let result = loop {
         if let Err(reason) = session.poll_events(output_tx).await {
-            return reconnect_result(reason, false, session.was_connected);
+            break reconnect_result(
+                reconnect_reason(session.was_connected),
+                reason,
+                false,
+                session.was_connected,
+            );
         }
         let action = handle_pending_inputs(
             &session.client,
             latest_clipboard_text,
             input_rx,
+            &mut session.keyboard,
             &mut session.pointer,
         )
         .await;
         if let Some(result) = session_result_from_action(action, session.was_connected) {
-            return result;
+            break result;
         }
         if let Err(reason) = session.refresh_if_needed().await {
-            return reconnect_result(reason, false, session.was_connected);
+            break reconnect_result(
+                RemoteDesktopReconnectReason::DisplayUpdate,
+                reason,
+                false,
+                session.was_connected,
+            );
         }
         tokio::time::sleep(VNC_POLL_INTERVAL).await;
+    };
+    if let Err(error) = shutdown_session(&mut session).await {
+        return merge_cleanup_error(result, error);
+    }
+    result
+}
+
+async fn shutdown_with_reason(session: &mut ConnectedVncSession, reason: String) -> String {
+    match shutdown_session(session).await {
+        Ok(()) => reason,
+        Err(error) => format!("{reason}; cleanup failed: {error:#}"),
     }
 }
 
-fn session_result_from_action(
-    action: VncInputAction,
-    was_connected: bool,
-) -> Option<VncSessionResult> {
-    match action {
-        VncInputAction::Continue => None,
-        VncInputAction::Closed => Some(VncSessionResult::Closed),
-        VncInputAction::InputClosed => Some(VncSessionResult::InputClosed),
-        VncInputAction::Reconnect => Some(reconnect_result(
-            "manual reconnect".to_string(),
-            true,
-            was_connected,
-        )),
-        VncInputAction::Failed(reason) => Some(reconnect_result(reason, false, was_connected)),
-    }
-}
-
-fn reconnect_delay(attempt: usize) -> Duration {
-    match attempt {
-        0 => Duration::from_secs(1),
-        1 => Duration::from_secs(2),
-        2 => Duration::from_secs(5),
-        _ => Duration::from_secs(10),
-    }
-}
-
-fn reconnect_status_message(reason: &str, delay: Duration) -> String {
-    format!(
-        "VNC disconnected: {reason}. Reconnecting in {}s",
-        delay.as_secs()
-    )
-}
-
-fn reconnect_result(reason: String, manual: bool, was_connected: bool) -> VncSessionResult {
-    VncSessionResult::Reconnect {
-        reason,
-        manual,
-        was_connected,
-    }
-}
-
-async fn wait_before_reconnect(
-    input_rx: &mut tokio::sync::mpsc::UnboundedReceiver<RemoteDesktopInput>,
-    latest_clipboard_text: &mut Option<String>,
-    delay: Duration,
-) -> bool {
-    let deadline = Instant::now() + delay;
-    loop {
-        match handle_wait_input(input_rx, latest_clipboard_text) {
-            WaitAction::Continue => {}
-            WaitAction::ReconnectNow => return true,
-            WaitAction::Stop => return false,
+async fn shutdown_session(session: &mut ConnectedVncSession) -> anyhow::Result<()> {
+    let mut first_error =
+        shutdown_inputs(&session.client, &mut session.keyboard, &mut session.pointer)
+            .await
+            .err();
+    if let Err(error) = session.client.close().await {
+        if first_error.is_none() {
+            first_error = Some(anyhow::anyhow!(error.to_string()));
         }
-        if Instant::now() >= deadline {
-            return true;
-        }
-        tokio::time::sleep(VNC_POLL_INTERVAL).await;
     }
-}
-
-enum WaitAction {
-    Continue,
-    ReconnectNow,
-    Stop,
-}
-
-fn handle_wait_input(
-    input_rx: &mut tokio::sync::mpsc::UnboundedReceiver<RemoteDesktopInput>,
-    latest_clipboard_text: &mut Option<String>,
-) -> WaitAction {
-    match input_rx.try_recv() {
-        Ok(RemoteDesktopInput::Close) => WaitAction::Stop,
-        Ok(RemoteDesktopInput::Reconnect) => WaitAction::ReconnectNow,
-        Ok(RemoteDesktopInput::ClipboardText { text } | RemoteDesktopInput::Text { text }) => {
-            if let Some(text) = supported_clipboard_text(text) {
-                *latest_clipboard_text = Some(text);
-            }
-            WaitAction::Continue
-        }
-        Ok(_) | Err(tokio::sync::mpsc::error::TryRecvError::Empty) => WaitAction::Continue,
-        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => WaitAction::Stop,
-    }
+    first_error.map_or(Ok(()), Err)
 }
 
 fn send_status(output_tx: &OutputSender, message: &str) {
@@ -231,48 +216,4 @@ fn send_status(output_tx: &OutputSender, message: &str) {
 
 fn send_failure(output_tx: &OutputSender, message: &str) {
     let _ = output_tx.send(RemoteDesktopOutput::ConnectionFailure(message.to_string()));
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reconnect_wait_ignores_files_and_non_ascii_clipboard_text() {
-        let (input_tx, mut input_rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut latest_clipboard_text = Some("previous".to_string());
-
-        input_tx
-            .send(RemoteDesktopInput::ClipboardFiles {
-                paths: vec![r"C:\Users\Rachel\notes.txt".to_string()],
-            })
-            .expect("file clipboard input sends");
-        assert!(matches!(
-            handle_wait_input(&mut input_rx, &mut latest_clipboard_text),
-            WaitAction::Continue
-        ));
-        assert_eq!(latest_clipboard_text.as_deref(), Some("previous"));
-
-        input_tx
-            .send(RemoteDesktopInput::ClipboardText {
-                text: "中文".to_string(),
-            })
-            .expect("text clipboard input sends");
-        assert!(matches!(
-            handle_wait_input(&mut input_rx, &mut latest_clipboard_text),
-            WaitAction::Continue
-        ));
-        assert_eq!(latest_clipboard_text.as_deref(), Some("previous"));
-
-        input_tx
-            .send(RemoteDesktopInput::ClipboardText {
-                text: "next".to_string(),
-            })
-            .expect("ASCII clipboard input sends");
-        assert!(matches!(
-            handle_wait_input(&mut input_rx, &mut latest_clipboard_text),
-            WaitAction::Continue
-        ));
-        assert_eq!(latest_clipboard_text.as_deref(), Some("next"));
-    }
 }

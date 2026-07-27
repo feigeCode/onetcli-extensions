@@ -1,7 +1,7 @@
 use vnc_client::{ClientMouseEvent, VncClient, X11Event};
 
 use crate::runtime::{RemoteDesktopInput, RemoteMouseButton};
-use crate::vnc_keyboard::remote_key_to_keysym;
+use crate::vnc_keyboard::{VncKeyboardState, remote_key_to_keysym};
 
 const MAX_INPUTS_PER_POLL: usize = 256;
 
@@ -17,6 +17,7 @@ pub(crate) async fn handle_pending_inputs(
     client: &VncClient,
     latest_clipboard_text: &mut Option<String>,
     input_rx: &mut tokio::sync::mpsc::UnboundedReceiver<RemoteDesktopInput>,
+    keyboard: &mut VncKeyboardState,
     pointer: &mut VncPointerState,
 ) -> VncInputAction {
     let inputs = match drain_remote_inputs(input_rx) {
@@ -24,7 +25,8 @@ pub(crate) async fn handle_pending_inputs(
         VncInputBatch::Disconnected => return VncInputAction::InputClosed,
     };
     for input in inputs {
-        let action = handle_vnc_input(client, latest_clipboard_text, pointer, input).await;
+        let action =
+            handle_vnc_input(client, latest_clipboard_text, keyboard, pointer, input).await;
         if !matches!(action, VncInputAction::Continue) {
             return action;
         }
@@ -35,10 +37,11 @@ pub(crate) async fn handle_pending_inputs(
 async fn handle_vnc_input(
     client: &VncClient,
     latest_clipboard_text: &mut Option<String>,
+    keyboard: &mut VncKeyboardState,
     pointer: &mut VncPointerState,
     input: RemoteDesktopInput,
 ) -> VncInputAction {
-    match send_vnc_input(client, latest_clipboard_text, pointer, input).await {
+    match send_vnc_input(client, latest_clipboard_text, keyboard, pointer, input).await {
         Ok(action) => action,
         Err(error) => VncInputAction::Failed(error.to_string()),
     }
@@ -47,12 +50,13 @@ async fn handle_vnc_input(
 async fn send_vnc_input(
     client: &VncClient,
     latest_clipboard_text: &mut Option<String>,
+    keyboard: &mut VncKeyboardState,
     pointer: &mut VncPointerState,
     input: RemoteDesktopInput,
 ) -> anyhow::Result<VncInputAction> {
     match input {
-        RemoteDesktopInput::Close => close_client(client).await,
-        RemoteDesktopInput::Reconnect => reconnect_client(client).await,
+        RemoteDesktopInput::Close => Ok(VncInputAction::Closed),
+        RemoteDesktopInput::Reconnect => Ok(VncInputAction::Reconnect),
         RemoteDesktopInput::MouseMove { x, y } => move_pointer(client, pointer, x, y).await,
         RemoteDesktopInput::MouseButton { button, pressed } => {
             update_button(client, pointer, button, pressed).await
@@ -62,9 +66,7 @@ async fn send_vnc_input(
         }
         RemoteDesktopInput::Key { key, pressed } => {
             if let Some(keysym) = remote_key_to_keysym(&key) {
-                client
-                    .input(X11Event::KeyEvent((keysym, pressed).into()))
-                    .await?;
+                keyboard.send(client, keysym, pressed).await?;
             }
             Ok(VncInputAction::Continue)
         }
@@ -76,24 +78,16 @@ async fn send_vnc_input(
     }
 }
 
-async fn close_client(client: &VncClient) -> anyhow::Result<VncInputAction> {
-    let _ = client.close().await;
-    Ok(VncInputAction::Closed)
-}
-
-async fn reconnect_client(client: &VncClient) -> anyhow::Result<VncInputAction> {
-    let _ = client.close().await;
-    Ok(VncInputAction::Reconnect)
-}
-
 async fn move_pointer(
     client: &VncClient,
     pointer: &mut VncPointerState,
     x: u16,
     y: u16,
 ) -> anyhow::Result<VncInputAction> {
-    pointer.move_to(x, y);
-    send_pointer_event(client, pointer).await?;
+    let mut next = *pointer;
+    next.move_to(x, y);
+    send_pointer_event(client, &next).await?;
+    *pointer = next;
     Ok(VncInputAction::Continue)
 }
 
@@ -103,8 +97,10 @@ async fn update_button(
     button: RemoteMouseButton,
     pressed: bool,
 ) -> anyhow::Result<VncInputAction> {
-    pointer.set_button(button, pressed);
-    send_pointer_event(client, pointer).await?;
+    let mut next = *pointer;
+    next.set_button(button, pressed);
+    send_pointer_event(client, &next).await?;
+    *pointer = next;
     Ok(VncInputAction::Continue)
 }
 
@@ -197,7 +193,7 @@ where
     coalesced
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub(crate) struct VncPointerState {
     x: u16,
     y: u16,
@@ -233,6 +229,33 @@ impl VncPointerState {
     fn snapshot(&self) -> (u16, u16, u8) {
         (self.x, self.y, self.buttons)
     }
+
+    pub(crate) async fn release_buttons(&mut self, client: &VncClient) -> anyhow::Result<()> {
+        if self.buttons == 0 {
+            return Ok(());
+        }
+        let snapshot = (self.x, self.y, 0);
+        let result = client
+            .input(X11Event::PointerEvent(ClientMouseEvent::from(snapshot)))
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()));
+        self.buttons = 0;
+        result.map_err(|error| anyhow::anyhow!("VNC mouse release failed: {error}"))
+    }
+}
+
+pub(crate) async fn shutdown_inputs(
+    client: &VncClient,
+    keyboard: &mut VncKeyboardState,
+    pointer: &mut VncPointerState,
+) -> anyhow::Result<()> {
+    let mut first_error = keyboard.release_all(client).await.err();
+    if let Err(error) = pointer.release_buttons(client).await {
+        if first_error.is_none() {
+            first_error = Some(error);
+        }
+    }
+    first_error.map_or(Ok(()), Err)
 }
 
 fn vnc_button_bit(button: RemoteMouseButton) -> Option<u8> {
@@ -256,40 +279,5 @@ fn vnc_wheel_bit(vertical: bool, units: i16) -> Option<u8> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pointer_state_tracks_vnc_button_mask() {
-        let mut state = VncPointerState::default();
-
-        assert_eq!(0, state.move_to(10, 11));
-        assert_eq!(1, state.set_button(RemoteMouseButton::Left, true));
-        assert_eq!(5, state.set_button(RemoteMouseButton::Right, true));
-        assert_eq!(4, state.set_button(RemoteMouseButton::Left, false));
-        assert_eq!(0, state.set_button(RemoteMouseButton::Right, false));
-        assert_eq!((10, 11, 0), state.snapshot());
-    }
-
-    #[test]
-    fn wheel_events_use_vnc_button_press_and_release_masks() {
-        let mut state = VncPointerState::default();
-        state.move_to(20, 21);
-
-        assert_eq!(vec![8, 0], state.wheel_masks(true, -120));
-        assert_eq!(vec![16, 0], state.wheel_masks(true, 120));
-        assert_eq!(vec![32, 0], state.wheel_masks(false, -120));
-        assert_eq!(vec![64, 0], state.wheel_masks(false, 120));
-        assert_eq!((20, 21, 0), state.snapshot());
-    }
-
-    #[test]
-    fn vnc_clipboard_accepts_only_ascii_text() {
-        assert_eq!(
-            Some("plain text".to_string()),
-            supported_clipboard_text("plain text".into())
-        );
-        assert_eq!(None, supported_clipboard_text("中文".into()));
-        assert_eq!(None, supported_clipboard_text("emoji 🖥️".into()));
-    }
-}
+#[path = "vnc_input_tests.rs"]
+mod tests;

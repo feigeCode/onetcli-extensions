@@ -4,7 +4,7 @@ pub struct RemoteDesktopConnectionOptions {
     pub password: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum RemoteDesktopInput {
     Resize {
@@ -56,7 +56,7 @@ pub enum RemoteKey {
     KeySym(u32),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum RemoteDesktopOutput {
     Connected {
@@ -84,9 +84,24 @@ pub enum RemoteDesktopOutput {
     ClipboardText {
         text: String,
     },
+    Reconnecting(RemoteDesktopReconnect),
     Status(String),
     ConnectionFailure(String),
     Terminated(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RemoteDesktopReconnect {
+    pub reason: RemoteDesktopReconnectReason,
+    pub delay_secs: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemoteDesktopReconnectReason {
+    DisplayUpdate,
+    SessionError,
+    ConnectionLost,
+    Manual,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -132,4 +147,38 @@ mod tests {
     fn vnc_mvp_reports_text_clipboard_support() {
         assert!(RemoteDesktopCapabilities::vnc_mvp().clipboard_text);
     }
+
+    #[test]
+    fn runtime_debug_redacts_clipboard_paths_text_messages_and_pixels() {
+        let inputs = [
+            RemoteDesktopInput::ClipboardText {
+                text: "runtime-input-secret".to_string(),
+            },
+            RemoteDesktopInput::ClipboardFiles {
+                paths: vec!["C:\\runtime\\path-secret.txt".to_string()],
+            },
+        ];
+        for input in inputs {
+            let debug = format!("{input:?}");
+            assert!(!debug.contains("runtime-input-secret"));
+            assert!(!debug.contains("path-secret.txt"));
+        }
+
+        let outputs = [
+            RemoteDesktopOutput::Status("runtime-status-secret".to_string()),
+            RemoteDesktopOutput::Frame {
+                width: 1,
+                height: 1,
+                rgba: vec![17, 34, 51, 68],
+            },
+        ];
+        for output in outputs {
+            let debug = format!("{output:?}");
+            assert!(!debug.contains("runtime-status-secret"));
+            assert!(!debug.contains("[17, 34, 51, 68]"));
+        }
+    }
 }
+
+#[path = "runtime_debug.rs"]
+mod debug;

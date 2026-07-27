@@ -1,16 +1,17 @@
 use std::io::{self, BufRead, Write};
 use std::thread::JoinHandle;
 
+use anyhow::Context as _;
 use runtime::{
-    RemoteDesktopConnectionOptions, RemoteDesktopInput, RemoteDesktopOutput, RemoteKey,
-    RemoteMouseButton,
+    RemoteDesktopConnectionOptions, RemoteDesktopInput, RemoteDesktopOutput,
+    RemoteDesktopReconnectReason, RemoteKey, RemoteMouseButton,
 };
 use tracing::error;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
 use crate::output_mailbox::{OutputReceiver, OutputSender, output_mailbox};
-use crate::protocol::{HelperEvent, HelperMouseButton, HelperRequest};
+use crate::protocol::{HelperEvent, HelperMouseButton, HelperReconnectReason, HelperRequest};
 
 mod framebuffer;
 mod output_mailbox;
@@ -19,6 +20,7 @@ mod runtime;
 mod vnc_encoding;
 mod vnc_input;
 mod vnc_keyboard;
+mod vnc_reconnect;
 mod vnc_rfb;
 
 fn main() {
@@ -36,26 +38,43 @@ fn run() -> anyhow::Result<()> {
     let stdin = io::stdin();
     let mut lines = stdin.lock().lines();
     let connect = read_connect_request(&mut lines)?;
-    let (input_tx, mut input_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
     let (output_tx, output_rx) = output_mailbox();
-    let output_thread = spawn_output_writer(output_rx);
-    let vnc_thread = spawn_vnc_thread(connect_options(connect), &mut input_rx, output_tx)?;
+    let output_thread = spawn_output_writer(output_rx)?;
+    let vnc_thread = spawn_vnc_thread(connect_options(connect), input_rx, output_tx)?;
 
+    let mut request_error = None;
     for line in lines {
-        let request = protocol::decode_request_line(&line?)?;
+        let line = match line {
+            Ok(line) => line,
+            Err(error) => {
+                request_error = Some(anyhow::Error::from(error));
+                break;
+            }
+        };
+        let request = match protocol::decode_request_line(&line) {
+            Ok(request) => request,
+            Err(error) => {
+                request_error = Some(error);
+                break;
+            }
+        };
         let stop = matches!(request, HelperRequest::Close);
         if let Some(input) = request_to_input(request) {
-            let _ = input_tx.send(input);
+            if input_tx.send(input).is_err() {
+                request_error = Some(anyhow::anyhow!("VNC input channel closed"));
+                break;
+            }
         }
         if stop {
             break;
         }
     }
 
-    let _ = input_tx.send(RemoteDesktopInput::Close);
-    let _ = vnc_thread.join();
-    let _ = output_thread.join();
-    Ok(())
+    drop(input_tx);
+    let vnc_result = join_worker(vnc_thread, "VNC session thread");
+    let output_result = join_worker(output_thread, "VNC output writer");
+    combine_results(request_error, vnc_result, output_result)
 }
 
 fn read_connect_request(
@@ -120,16 +139,17 @@ fn scancode_value(code: u16, extended: bool) -> u16 {
 
 fn spawn_vnc_thread(
     options: RemoteDesktopConnectionOptions,
-    input_rx: &mut tokio::sync::mpsc::UnboundedReceiver<RemoteDesktopInput>,
+    input_rx: tokio::sync::mpsc::UnboundedReceiver<RemoteDesktopInput>,
     output_tx: OutputSender,
-) -> anyhow::Result<JoinHandle<()>> {
-    let mut input_rx = std::mem::replace(input_rx, tokio::sync::mpsc::unbounded_channel().1);
+) -> anyhow::Result<JoinHandle<anyhow::Result<()>>> {
     Ok(std::thread::Builder::new()
         .name("navop-vnc-helper-session".to_string())
-        .spawn(move || vnc_rfb::run_vnc_thread(options, &mut input_rx, output_tx))?)
+        .spawn(move || vnc_rfb::run_vnc_thread(options, input_rx, output_tx))?)
 }
 
-fn spawn_output_writer(output_rx: OutputReceiver) -> JoinHandle<anyhow::Result<()>> {
+fn spawn_output_writer(
+    output_rx: OutputReceiver,
+) -> anyhow::Result<JoinHandle<anyhow::Result<()>>> {
     std::thread::Builder::new()
         .name("navop-vnc-helper-output".to_string())
         .spawn(move || {
@@ -138,7 +158,40 @@ fn spawn_output_writer(output_rx: OutputReceiver) -> JoinHandle<anyhow::Result<(
             }
             Ok(())
         })
-        .expect("spawn output writer")
+        .map_err(Into::into)
+}
+
+fn join_worker(handle: JoinHandle<anyhow::Result<()>>, worker_name: &str) -> anyhow::Result<()> {
+    match handle.join() {
+        Ok(result) => result.with_context(|| format!("{worker_name} returned an error")),
+        Err(payload) => Err(anyhow::anyhow!(
+            "{worker_name} panicked: {}",
+            panic_message(payload)
+        )),
+    }
+}
+
+fn combine_results(
+    request_error: Option<anyhow::Error>,
+    vnc_result: anyhow::Result<()>,
+    output_result: anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    if let Some(error) = request_error {
+        return Err(error.context("VNC helper request loop failed"));
+    }
+    vnc_result?;
+    output_result?;
+    Ok(())
+}
+
+fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        return (*message).to_string();
+    }
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return message.clone();
+    }
+    "unknown panic payload".to_string()
 }
 
 fn output_to_event(output: RemoteDesktopOutput) -> HelperEvent {
@@ -175,11 +228,24 @@ fn output_to_event(output: RemoteDesktopOutput) -> HelperEvent {
         RemoteDesktopOutput::CursorHidden => HelperEvent::CursorHidden,
         RemoteDesktopOutput::CursorPosition { x, y } => HelperEvent::CursorPosition { x, y },
         RemoteDesktopOutput::ClipboardText { text } => HelperEvent::ClipboardText { text },
+        RemoteDesktopOutput::Reconnecting(reconnect) => HelperEvent::Reconnecting {
+            reason: helper_reconnect_reason(reconnect.reason),
+            delay_secs: reconnect.delay_secs,
+        },
         RemoteDesktopOutput::Status(message) => HelperEvent::Status { message },
         RemoteDesktopOutput::ConnectionFailure(message) => {
             HelperEvent::ConnectionFailure { message }
         }
         RemoteDesktopOutput::Terminated(message) => HelperEvent::Terminated { message },
+    }
+}
+
+fn helper_reconnect_reason(reason: RemoteDesktopReconnectReason) -> HelperReconnectReason {
+    match reason {
+        RemoteDesktopReconnectReason::DisplayUpdate => HelperReconnectReason::DisplayUpdate,
+        RemoteDesktopReconnectReason::SessionError => HelperReconnectReason::SessionError,
+        RemoteDesktopReconnectReason::ConnectionLost => HelperReconnectReason::ConnectionLost,
+        RemoteDesktopReconnectReason::Manual => HelperReconnectReason::Manual,
     }
 }
 
@@ -202,67 +268,5 @@ fn setup_logging() -> anyhow::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reads_first_stdin_line_as_connect_request() {
-        let input = vec![Ok(
-            r#"{"type":"Connect","destination":"host:5900","username":null,"password":"secret","domain":null,"width":800,"height":600}"#
-                .to_string(),
-        )];
-        let mut lines = input.into_iter();
-
-        let request = read_connect_request(&mut lines).expect("connect request");
-
-        assert_eq!(request.destination, "host:5900");
-        assert_eq!(request.password.as_deref(), Some("secret"));
-    }
-
-    #[test]
-    fn converts_extended_key_request_to_prefixed_scancode() {
-        let input = request_to_input(HelperRequest::Key {
-            code: 0x48,
-            extended: true,
-            pressed: true,
-        });
-
-        assert_eq!(
-            input,
-            Some(RemoteDesktopInput::Key {
-                key: RemoteKey::Scancode(0xe048),
-                pressed: true
-            })
-        );
-    }
-
-    #[test]
-    fn converts_keysym_request_to_remote_keysym() {
-        let input = request_to_input(HelperRequest::KeySym {
-            keysym: b':' as u32,
-            pressed: true,
-        });
-
-        assert_eq!(
-            input,
-            Some(RemoteDesktopInput::Key {
-                key: RemoteKey::KeySym(b':' as u32),
-                pressed: true,
-            })
-        );
-    }
-
-    #[test]
-    fn converts_clipboard_files_request_without_losing_paths() {
-        let input = request_to_input(HelperRequest::ClipboardFiles {
-            paths: vec![r"C:\Users\Rachel\notes.txt".to_string()],
-        });
-
-        assert_eq!(
-            input,
-            Some(RemoteDesktopInput::ClipboardFiles {
-                paths: vec![r"C:\Users\Rachel\notes.txt".to_string()],
-            })
-        );
-    }
-}
+#[path = "main_tests.rs"]
+mod tests;
