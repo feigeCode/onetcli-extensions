@@ -1,6 +1,7 @@
 use vnc_client::{ClientMouseEvent, VncClient, X11Event};
 
 use crate::runtime::{RemoteDesktopInput, RemoteMouseButton};
+use crate::vnc_clipboard::VncClipboardSnapshot;
 use crate::vnc_keyboard::{VncKeyboardState, remote_key_to_keysym};
 
 const MAX_INPUTS_PER_POLL: usize = 256;
@@ -15,7 +16,7 @@ pub(crate) enum VncInputAction {
 
 pub(crate) async fn handle_pending_inputs(
     client: &VncClient,
-    latest_clipboard_text: &mut Option<String>,
+    latest_clipboard: &mut Option<VncClipboardSnapshot>,
     input_rx: &mut tokio::sync::mpsc::UnboundedReceiver<RemoteDesktopInput>,
     keyboard: &mut VncKeyboardState,
     pointer: &mut VncPointerState,
@@ -25,8 +26,7 @@ pub(crate) async fn handle_pending_inputs(
         VncInputBatch::Disconnected => return VncInputAction::InputClosed,
     };
     for input in inputs {
-        let action =
-            handle_vnc_input(client, latest_clipboard_text, keyboard, pointer, input).await;
+        let action = handle_vnc_input(client, latest_clipboard, keyboard, pointer, input).await;
         if !matches!(action, VncInputAction::Continue) {
             return action;
         }
@@ -36,12 +36,12 @@ pub(crate) async fn handle_pending_inputs(
 
 async fn handle_vnc_input(
     client: &VncClient,
-    latest_clipboard_text: &mut Option<String>,
+    latest_clipboard: &mut Option<VncClipboardSnapshot>,
     keyboard: &mut VncKeyboardState,
     pointer: &mut VncPointerState,
     input: RemoteDesktopInput,
 ) -> VncInputAction {
-    match send_vnc_input(client, latest_clipboard_text, keyboard, pointer, input).await {
+    match send_vnc_input(client, latest_clipboard, keyboard, pointer, input).await {
         Ok(action) => action,
         Err(error) => VncInputAction::Failed(error.to_string()),
     }
@@ -49,7 +49,7 @@ async fn handle_vnc_input(
 
 async fn send_vnc_input(
     client: &VncClient,
-    latest_clipboard_text: &mut Option<String>,
+    latest_clipboard: &mut Option<VncClipboardSnapshot>,
     keyboard: &mut VncKeyboardState,
     pointer: &mut VncPointerState,
     input: RemoteDesktopInput,
@@ -71,7 +71,7 @@ async fn send_vnc_input(
             Ok(VncInputAction::Continue)
         }
         RemoteDesktopInput::ClipboardText { text } | RemoteDesktopInput::Text { text } => {
-            send_clipboard_text(client, latest_clipboard_text, text).await
+            send_clipboard_text(client, latest_clipboard, text).await
         }
         RemoteDesktopInput::ClipboardFiles { .. } => Ok(VncInputAction::Continue),
         RemoteDesktopInput::Resize { .. } => Ok(VncInputAction::Continue),
@@ -129,24 +129,16 @@ async fn send_wheel_events(
 
 async fn send_clipboard_text(
     client: &VncClient,
-    latest_clipboard_text: &mut Option<String>,
+    latest_clipboard: &mut Option<VncClipboardSnapshot>,
     text: String,
 ) -> anyhow::Result<VncInputAction> {
-    let Some(text) = supported_clipboard_text(text) else {
+    let Some(snapshot) = VncClipboardSnapshot::encode(&text) else {
         return Ok(VncInputAction::Continue);
     };
-    *latest_clipboard_text = Some(text.clone());
-    client.input(X11Event::CopyText(text)).await?;
+    let wire_bytes = snapshot.wire_bytes().to_vec();
+    *latest_clipboard = Some(snapshot);
+    client.input(X11Event::CopyTextBytes(wire_bytes)).await?;
     Ok(VncInputAction::Continue)
-}
-
-pub(crate) fn supported_clipboard_text(text: String) -> Option<String> {
-    if text.is_ascii() {
-        Some(text)
-    } else {
-        tracing::debug!("ignoring non-ASCII VNC clipboard text");
-        None
-    }
 }
 
 enum VncInputBatch {
@@ -250,10 +242,10 @@ pub(crate) async fn shutdown_inputs(
     pointer: &mut VncPointerState,
 ) -> anyhow::Result<()> {
     let mut first_error = keyboard.release_all(client).await.err();
-    if let Err(error) = pointer.release_buttons(client).await {
-        if first_error.is_none() {
-            first_error = Some(error);
-        }
+    if let Err(error) = pointer.release_buttons(client).await
+        && first_error.is_none()
+    {
+        first_error = Some(error);
     }
     first_error.map_or(Ok(()), Err)
 }

@@ -38,16 +38,6 @@ fn wheel_events_use_vnc_button_press_and_release_masks() {
 }
 
 #[test]
-fn vnc_clipboard_accepts_only_ascii_text() {
-    assert_eq!(
-        Some("plain text".to_string()),
-        supported_clipboard_text("plain text".into())
-    );
-    assert_eq!(None, supported_clipboard_text("中文".into()));
-    assert_eq!(None, supported_clipboard_text("emoji 🖥️".into()));
-}
-
-#[test]
 fn close_and_reconnect_are_session_actions() {
     assert!(matches!(VncInputAction::Closed, VncInputAction::Closed));
     assert!(matches!(

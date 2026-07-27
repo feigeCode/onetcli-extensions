@@ -7,6 +7,7 @@ use crate::runtime::{
     RemoteDesktopConnectionOptions, RemoteDesktopInput, RemoteDesktopOutput,
     RemoteDesktopReconnectReason,
 };
+use crate::vnc_clipboard::VncClipboardSnapshot;
 use crate::vnc_encoding::ConnectedVncSession;
 use crate::vnc_input::{handle_pending_inputs, shutdown_inputs};
 use crate::vnc_reconnect::{
@@ -34,17 +35,10 @@ async fn run_vnc_backend(
     mut input_rx: tokio::sync::mpsc::UnboundedReceiver<RemoteDesktopInput>,
     output_tx: OutputSender,
 ) -> anyhow::Result<()> {
-    let mut latest_clipboard_text = None;
+    let mut latest_clipboard = None;
     let mut reconnect_attempt = 0usize;
     loop {
-        match run_vnc_session(
-            &options,
-            &mut latest_clipboard_text,
-            &mut input_rx,
-            &output_tx,
-        )
-        .await?
-        {
+        match run_vnc_session(&options, &mut latest_clipboard, &mut input_rx, &output_tx).await? {
             VncSessionResult::Closed | VncSessionResult::InputClosed => break,
             VncSessionResult::Reconnect {
                 reason,
@@ -69,7 +63,7 @@ async fn run_vnc_backend(
                 let delay = reconnect_delay(reconnect_attempt);
                 reconnect_attempt = reconnect_attempt.saturating_add(1);
                 send_reconnecting(&output_tx, reason, Some(delay.as_secs()));
-                if !wait_before_reconnect(&mut input_rx, &mut latest_clipboard_text, delay).await {
+                if !wait_before_reconnect(&mut input_rx, &mut latest_clipboard, delay).await {
                     break;
                 }
             }
@@ -80,7 +74,7 @@ async fn run_vnc_backend(
 
 async fn run_vnc_session(
     options: &RemoteDesktopConnectionOptions,
-    latest_clipboard_text: &mut Option<String>,
+    latest_clipboard: &mut Option<VncClipboardSnapshot>,
     input_rx: &mut tokio::sync::mpsc::UnboundedReceiver<RemoteDesktopInput>,
     output_tx: &OutputSender,
 ) -> anyhow::Result<VncSessionResult> {
@@ -110,8 +104,9 @@ async fn run_vnc_session(
             session.was_connected,
         ));
     }
-    if let Some(text) = latest_clipboard_text.clone() {
-        if let Err(error) = session.client.input(X11Event::CopyText(text)).await {
+    if let Some(snapshot) = latest_clipboard.as_ref() {
+        let event = X11Event::CopyTextBytes(snapshot.wire_bytes().to_vec());
+        if let Err(error) = session.client.input(event).await {
             let reason = shutdown_with_reason(&mut session, error.to_string()).await;
             return Ok(reconnect_result(
                 reconnect_reason(session.was_connected),
@@ -121,7 +116,7 @@ async fn run_vnc_session(
             ));
         }
     }
-    Ok(run_connected_vnc_session(session, latest_clipboard_text, input_rx, output_tx).await)
+    Ok(run_connected_vnc_session(session, latest_clipboard, input_rx, output_tx).await)
 }
 
 async fn connect_vnc(options: &RemoteDesktopConnectionOptions) -> anyhow::Result<VncClient> {
@@ -150,7 +145,7 @@ async fn connect_vnc(options: &RemoteDesktopConnectionOptions) -> anyhow::Result
 
 async fn run_connected_vnc_session(
     mut session: ConnectedVncSession,
-    latest_clipboard_text: &mut Option<String>,
+    latest_clipboard: &mut Option<VncClipboardSnapshot>,
     input_rx: &mut tokio::sync::mpsc::UnboundedReceiver<RemoteDesktopInput>,
     output_tx: &OutputSender,
 ) -> VncSessionResult {
@@ -165,7 +160,7 @@ async fn run_connected_vnc_session(
         }
         let action = handle_pending_inputs(
             &session.client,
-            latest_clipboard_text,
+            latest_clipboard,
             input_rx,
             &mut session.keyboard,
             &mut session.pointer,
@@ -202,10 +197,10 @@ async fn shutdown_session(session: &mut ConnectedVncSession) -> anyhow::Result<(
         shutdown_inputs(&session.client, &mut session.keyboard, &mut session.pointer)
             .await
             .err();
-    if let Err(error) = session.client.close().await {
-        if first_error.is_none() {
-            first_error = Some(anyhow::anyhow!(error.to_string()));
-        }
+    if let Err(error) = session.client.close().await
+        && first_error.is_none()
+    {
+        first_error = Some(anyhow::anyhow!(error.to_string()));
     }
     first_error.map_or(Ok(()), Err)
 }

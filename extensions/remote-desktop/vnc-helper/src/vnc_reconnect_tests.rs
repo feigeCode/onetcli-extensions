@@ -46,9 +46,10 @@ fn cleanup_failure_preserves_reconnect_metadata() {
 }
 
 #[test]
-fn reconnect_wait_ignores_files_and_non_ascii_clipboard_text() {
+fn reconnect_wait_keeps_encoded_text_snapshot_and_ignores_files() {
     let (input_tx, mut input_rx) = tokio::sync::mpsc::unbounded_channel();
-    let mut latest_clipboard_text = Some("previous".to_string());
+    let mut snapshot =
+        Some(VncClipboardSnapshot::encode("previous").expect("initial clipboard encodes"));
 
     input_tx
         .send(RemoteDesktopInput::ClipboardFiles {
@@ -56,30 +57,61 @@ fn reconnect_wait_ignores_files_and_non_ascii_clipboard_text() {
         })
         .expect("file clipboard input sends");
     assert!(matches!(
-        handle_wait_input(&mut input_rx, &mut latest_clipboard_text),
+        handle_wait_input(&mut input_rx, &mut snapshot),
         WaitAction::Continue
     ));
-    assert_eq!(latest_clipboard_text.as_deref(), Some("previous"));
+    assert_eq!(
+        snapshot.as_ref().map(VncClipboardSnapshot::wire_bytes),
+        Some(b"previous".as_slice())
+    );
+
+    input_tx
+        .send(RemoteDesktopInput::ClipboardText {
+            text: "café".to_string(),
+        })
+        .expect("text clipboard input sends");
+    assert!(matches!(
+        handle_wait_input(&mut input_rx, &mut snapshot),
+        WaitAction::Continue
+    ));
+    assert_eq!(
+        snapshot.as_ref().map(VncClipboardSnapshot::wire_bytes),
+        Some(b"caf\xe9".as_slice())
+    );
 
     input_tx
         .send(RemoteDesktopInput::ClipboardText {
             text: "中文".to_string(),
         })
-        .expect("text clipboard input sends");
+        .expect("Unicode clipboard input sends");
     assert!(matches!(
-        handle_wait_input(&mut input_rx, &mut latest_clipboard_text),
+        handle_wait_input(&mut input_rx, &mut snapshot),
         WaitAction::Continue
     ));
-    assert_eq!(latest_clipboard_text.as_deref(), Some("previous"));
+    assert_eq!(
+        snapshot.as_ref().map(VncClipboardSnapshot::wire_bytes),
+        Some(b"??".as_slice())
+    );
+}
 
+#[test]
+fn reconnect_wait_finds_close_behind_queued_pointer_noise() {
+    let (input_tx, mut input_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut snapshot = None;
+    for coordinate in 0..200 {
+        input_tx
+            .send(RemoteDesktopInput::MouseMove {
+                x: coordinate,
+                y: coordinate,
+            })
+            .expect("pointer input sends");
+    }
     input_tx
-        .send(RemoteDesktopInput::ClipboardText {
-            text: "next".to_string(),
-        })
-        .expect("ASCII clipboard input sends");
+        .send(RemoteDesktopInput::Close)
+        .expect("close input sends");
+
     assert!(matches!(
-        handle_wait_input(&mut input_rx, &mut latest_clipboard_text),
-        WaitAction::Continue
+        handle_wait_input(&mut input_rx, &mut snapshot),
+        WaitAction::Stop
     ));
-    assert_eq!(latest_clipboard_text.as_deref(), Some("next"));
 }

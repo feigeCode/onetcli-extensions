@@ -4,9 +4,11 @@ use crate::output_mailbox::OutputSender;
 use crate::runtime::{
     RemoteDesktopInput, RemoteDesktopOutput, RemoteDesktopReconnect, RemoteDesktopReconnectReason,
 };
-use crate::vnc_input::{VncInputAction, supported_clipboard_text};
+use crate::vnc_clipboard::VncClipboardSnapshot;
+use crate::vnc_input::VncInputAction;
 
 pub(super) const VNC_POLL_INTERVAL: Duration = Duration::from_millis(8);
+const MAX_RECONNECT_WAIT_INPUTS_PER_POLL: usize = 256;
 
 pub(super) enum VncSessionResult {
     Closed,
@@ -102,12 +104,12 @@ pub(super) fn merge_cleanup_error(
 
 pub(super) async fn wait_before_reconnect(
     input_rx: &mut tokio::sync::mpsc::UnboundedReceiver<RemoteDesktopInput>,
-    latest_clipboard_text: &mut Option<String>,
+    latest_clipboard: &mut Option<VncClipboardSnapshot>,
     delay: Duration,
 ) -> bool {
     let deadline = Instant::now() + delay;
     loop {
-        match handle_wait_input(input_rx, latest_clipboard_text) {
+        match handle_wait_input(input_rx, latest_clipboard) {
             WaitAction::Continue => {}
             WaitAction::ReconnectNow => return true,
             WaitAction::Stop => return false,
@@ -127,20 +129,26 @@ enum WaitAction {
 
 fn handle_wait_input(
     input_rx: &mut tokio::sync::mpsc::UnboundedReceiver<RemoteDesktopInput>,
-    latest_clipboard_text: &mut Option<String>,
+    latest_clipboard: &mut Option<VncClipboardSnapshot>,
 ) -> WaitAction {
-    match input_rx.try_recv() {
-        Ok(RemoteDesktopInput::Close) => WaitAction::Stop,
-        Ok(RemoteDesktopInput::Reconnect) => WaitAction::ReconnectNow,
-        Ok(RemoteDesktopInput::ClipboardText { text } | RemoteDesktopInput::Text { text }) => {
-            if let Some(text) = supported_clipboard_text(text) {
-                *latest_clipboard_text = Some(text);
+    let mut action = WaitAction::Continue;
+    for _ in 0..MAX_RECONNECT_WAIT_INPUTS_PER_POLL {
+        match input_rx.try_recv() {
+            Ok(RemoteDesktopInput::Close) => return WaitAction::Stop,
+            Ok(RemoteDesktopInput::Reconnect) => action = WaitAction::ReconnectNow,
+            Ok(RemoteDesktopInput::ClipboardText { text } | RemoteDesktopInput::Text { text }) => {
+                if let Some(snapshot) = VncClipboardSnapshot::encode(&text) {
+                    *latest_clipboard = Some(snapshot);
+                }
             }
-            WaitAction::Continue
+            Ok(_) => {}
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                return WaitAction::Stop;
+            }
         }
-        Ok(_) | Err(tokio::sync::mpsc::error::TryRecvError::Empty) => WaitAction::Continue,
-        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => WaitAction::Stop,
     }
+    action
 }
 
 pub(super) fn send_reconnecting(

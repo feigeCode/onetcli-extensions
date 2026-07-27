@@ -2,6 +2,13 @@ use super::*;
 use crate::output_mailbox::output_mailbox;
 
 #[test]
+fn server_event_poll_budget_returns_to_the_input_loop() {
+    assert!(should_poll_server_event(0));
+    assert!(should_poll_server_event(MAX_SERVER_EVENTS_PER_POLL - 1));
+    assert!(!should_poll_server_event(MAX_SERVER_EVENTS_PER_POLL));
+}
+
+#[test]
 fn waits_while_incremental_refresh_is_in_flight() {
     let now = Instant::now();
 

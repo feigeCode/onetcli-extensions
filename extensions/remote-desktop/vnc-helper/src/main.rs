@@ -17,6 +17,7 @@ mod framebuffer;
 mod output_mailbox;
 mod protocol;
 mod runtime;
+mod vnc_clipboard;
 mod vnc_cursor;
 mod vnc_encoding;
 mod vnc_input;
@@ -61,11 +62,11 @@ fn run() -> anyhow::Result<()> {
             }
         };
         let stop = matches!(request, HelperRequest::Close);
-        if let Some(input) = request_to_input(request) {
-            if input_tx.send(input).is_err() {
-                request_error = Some(anyhow::anyhow!("VNC input channel closed"));
-                break;
-            }
+        if let Some(input) = request_to_input(request)
+            && input_tx.send(input).is_err()
+        {
+            request_error = Some(anyhow::anyhow!("VNC input channel closed"));
+            break;
         }
         if stop {
             break;

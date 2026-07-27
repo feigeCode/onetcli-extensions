@@ -256,7 +256,7 @@ dependencies = [
 
 [[package]]
 name = "navop-vnc-helper"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "serde",
@@ -642,8 +642,6 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 [[package]]
 name = "vnc-rs"
 version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5607299ce93dc285571540ee93de681a1be7a5765c35dfb2e1f049b493652145"
 dependencies = [
  "async_io_stream",
  "flate2",

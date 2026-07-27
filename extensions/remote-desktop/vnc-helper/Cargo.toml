@@ -1,10 +1,11 @@
 [package]
 name = "navop-vnc-helper"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2024"
 publish = false
 
 [workspace]
+exclude = ["vendor/vnc-rs"]
 
 [dependencies]
 anyhow = "1"
@@ -13,4 +14,4 @@ serde_json = "1"
 tokio = { version = "1", features = ["net", "rt", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-vnc_client = { package = "vnc-rs", version = "0.5.3" }
+vnc_client = { package = "vnc-rs", path = "vendor/vnc-rs" }

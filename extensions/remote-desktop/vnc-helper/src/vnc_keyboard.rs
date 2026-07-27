@@ -33,10 +33,10 @@ impl VncKeyboardState {
         let held = self.pressed.iter().copied().collect::<Vec<_>>();
         let mut first_error = None;
         for keysym in held {
-            if let Err(error) = self.send(client, keysym, false).await {
-                if first_error.is_none() {
-                    first_error = Some(error);
-                }
+            if let Err(error) = self.send(client, keysym, false).await
+                && first_error.is_none()
+            {
+                first_error = Some(error);
             }
         }
         self.pressed.clear();

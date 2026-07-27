@@ -14,6 +14,7 @@ const VNC_REFRESH_INTERVAL: Duration = Duration::from_millis(33);
 const VNC_REFRESH_RESPONSE_TIMEOUT: Duration = Duration::from_millis(500);
 const VNC_LIVENESS_TIMEOUT: Duration = Duration::from_secs(15);
 const VNC_LIVENESS_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_SERVER_EVENTS_PER_POLL: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RefreshAction {
@@ -21,6 +22,10 @@ enum RefreshAction {
     Incremental,
     LivenessProbe,
     Reconnect,
+}
+
+fn should_poll_server_event(processed: usize) -> bool {
+    processed < MAX_SERVER_EVENTS_PER_POLL
 }
 
 pub(crate) struct ConnectedVncSession {
@@ -59,21 +64,22 @@ impl ConnectedVncSession {
     }
 
     pub(crate) async fn poll_events(&mut self, output_tx: &OutputSender) -> Result<(), String> {
-        loop {
+        let mut processed = 0;
+        while should_poll_server_event(processed) {
             match self.client.poll_event().await {
                 Ok(Some(event)) => {
+                    processed += 1;
                     self.last_server_activity = Instant::now();
                     self.refresh_in_flight_since = None;
                     self.liveness_probe_since = None;
                     self.handle_event(event, output_tx)?;
                 }
-                Ok(None) => {
-                    self.framebuffer.flush_frame(output_tx);
-                    return Ok(());
-                }
+                Ok(None) => break,
                 Err(error) => return Err(error.to_string()),
             }
         }
+        self.framebuffer.flush_frame(output_tx);
+        Ok(())
     }
 
     pub(crate) async fn refresh_if_needed(&mut self) -> Result<(), String> {
@@ -115,6 +121,11 @@ impl ConnectedVncSession {
             VncEvent::RawImage(rect, data) => self.patch_rect(rect, &data)?,
             VncEvent::Copy(dst, src) => self.copy_rect(dst, src)?,
             VncEvent::Text(text) => send_clipboard(output_tx, text),
+            VncEvent::CutTextBytes(bytes) => {
+                if let Some(text) = crate::vnc_clipboard::decode_clipboard_text(&bytes) {
+                    send_clipboard(output_tx, text);
+                }
+            }
             VncEvent::Error(message) => return Err(message),
             VncEvent::JpegImage(_, _) => {
                 send_status(output_tx, "VNC JPEG rectangles are not enabled")

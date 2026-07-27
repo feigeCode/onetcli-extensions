@@ -24,7 +24,7 @@ struct State {
     control: VecDeque<RemoteDesktopOutput>,
     latest_frame: Option<RemoteDesktopOutput>,
     latest_delta: Option<RemoteDesktopOutput>,
-    accepting_frames: bool,
+    accepting_session_outputs: bool,
     sender_count: usize,
     receiver_alive: bool,
 }
@@ -35,7 +35,7 @@ pub fn output_mailbox() -> (OutputSender, OutputReceiver) {
             control: VecDeque::new(),
             latest_frame: None,
             latest_delta: None,
-            accepting_frames: true,
+            accepting_session_outputs: true,
             sender_count: 1,
             receiver_alive: true,
         }),
@@ -52,9 +52,7 @@ pub fn output_mailbox() -> (OutputSender, OutputReceiver) {
 impl OutputSender {
     pub fn begin_generation(&self) {
         let mut state = lock(&self.shared);
-        state.latest_frame = None;
-        state.latest_delta = None;
-        discard_pending_cursor_outputs(&mut state.control);
+        close_session_outputs(&mut state);
         drop(state);
         self.shared.ready.notify_one();
     }
@@ -66,23 +64,22 @@ impl OutputSender {
         }
         match output {
             RemoteDesktopOutput::Reconnecting(reconnect) => {
-                state.latest_frame = None;
-                state.latest_delta = None;
-                state.accepting_frames = false;
-                discard_pending_cursor_outputs(&mut state.control);
+                close_session_outputs(&mut state);
                 state
                     .control
                     .push_back(RemoteDesktopOutput::Reconnecting(reconnect));
             }
             connected @ RemoteDesktopOutput::Connected { .. } => {
-                state.accepting_frames = true;
+                state.accepting_session_outputs = true;
                 state.control.push_back(connected);
             }
-            frame @ RemoteDesktopOutput::Frame { .. } if state.accepting_frames => {
+            frame @ RemoteDesktopOutput::Frame { .. } if state.accepting_session_outputs => {
                 state.latest_frame = Some(frame);
                 state.latest_delta = None;
             }
-            delta @ RemoteDesktopOutput::FrameBgraRects { .. } if state.accepting_frames => {
+            delta @ RemoteDesktopOutput::FrameBgraRects { .. }
+                if state.accepting_session_outputs =>
+            {
                 state.latest_delta = Some(match state.latest_delta.take() {
                     Some(previous) => merge_deltas(previous, delta),
                     None => delta,
@@ -91,11 +88,10 @@ impl OutputSender {
             RemoteDesktopOutput::Frame { .. } | RemoteDesktopOutput::FrameBgraRects { .. } => {}
             terminal @ (RemoteDesktopOutput::ConnectionFailure(_)
             | RemoteDesktopOutput::Terminated(_)) => {
-                state.latest_frame = None;
-                state.latest_delta = None;
-                discard_pending_cursor_outputs(&mut state.control);
+                close_session_outputs(&mut state);
                 state.control.push_back(terminal);
             }
+            control if is_session_scoped_control(&control) && !state.accepting_session_outputs => {}
             control => enqueue_control(&mut state.control, control),
         }
         drop(state);
@@ -211,16 +207,26 @@ fn enqueue_control(control: &mut VecDeque<RemoteDesktopOutput>, output: RemoteDe
     }
 }
 
-fn discard_pending_cursor_outputs(control: &mut VecDeque<RemoteDesktopOutput>) {
-    control.retain(|output| {
-        !matches!(
-            output,
-            RemoteDesktopOutput::CursorDefault
-                | RemoteDesktopOutput::CursorHidden
-                | RemoteDesktopOutput::CursorPosition { .. }
-                | RemoteDesktopOutput::CursorBitmap(_)
-        )
-    });
+fn close_session_outputs(state: &mut State) {
+    state.latest_frame = None;
+    state.latest_delta = None;
+    state.accepting_session_outputs = false;
+    discard_pending_session_controls(&mut state.control);
+}
+
+fn discard_pending_session_controls(control: &mut VecDeque<RemoteDesktopOutput>) {
+    control.retain(|output| !is_session_scoped_control(output));
+}
+
+fn is_session_scoped_control(output: &RemoteDesktopOutput) -> bool {
+    matches!(
+        output,
+        RemoteDesktopOutput::ClipboardText { .. }
+            | RemoteDesktopOutput::CursorDefault
+            | RemoteDesktopOutput::CursorHidden
+            | RemoteDesktopOutput::CursorPosition { .. }
+            | RemoteDesktopOutput::CursorBitmap(_)
+    )
 }
 
 impl fmt::Debug for OutputSender {
