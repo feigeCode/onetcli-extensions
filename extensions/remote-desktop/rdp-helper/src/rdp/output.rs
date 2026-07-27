@@ -10,12 +10,48 @@ const FULL_FRAME_THRESHOLD_PERCENT: usize = 60;
 pub(super) struct RdpOutputMapper {
     connected: bool,
     previous: Option<PreviousFrame>,
+    // IronRDP may publish pointer state before its first image. The main
+    // process treats `Connected` as the session barrier, so retain only the
+    // latest pre-connect appearance and position and flush them after it.
+    pending_cursor: PendingCursor,
 }
 
 struct PreviousFrame {
     width: u16,
     height: u16,
     pixels: Vec<u32>,
+}
+
+#[derive(Default)]
+struct PendingCursor {
+    appearance: Option<HelperEvent>,
+    position: Option<(u16, u16)>,
+}
+
+impl PendingCursor {
+    fn record(&mut self, event: HelperEvent) {
+        match event {
+            HelperEvent::CursorPosition { x, y } => self.position = Some((x, y)),
+            event @ (HelperEvent::CursorDefault
+            | HelperEvent::CursorHidden
+            | HelperEvent::CursorRgbaBytes { .. }) => self.appearance = Some(event),
+            _ => debug_assert!(false, "only cursor events may be buffered"),
+        }
+    }
+
+    fn append_to(&mut self, events: &mut Vec<HelperEvent>) {
+        if let Some(appearance) = self.appearance.take() {
+            events.push(appearance);
+        }
+        if let Some((x, y)) = self.position.take() {
+            events.push(HelperEvent::CursorPosition { x, y });
+        }
+    }
+
+    fn clear(&mut self) {
+        self.appearance = None;
+        self.position = None;
+    }
 }
 
 impl RdpOutputMapper {
@@ -28,10 +64,11 @@ impl RdpOutputMapper {
             } => {
                 let width = width.get();
                 let height = height.get();
-                let mut events = Vec::with_capacity(if self.connected { 1 } else { 2 });
+                let mut events = Vec::with_capacity(if self.connected { 1 } else { 4 });
                 if !self.connected {
                     events.push(HelperEvent::Connected { width, height });
                     self.connected = true;
+                    self.pending_cursor.append_to(&mut events);
                 }
                 let frame = self.map_frame(width, height, &buffer);
                 self.previous = Some(PreviousFrame {
@@ -44,21 +81,48 @@ impl RdpOutputMapper {
                 }
                 events
             }
-            RdpOutputEvent::ConnectionFailure(error) => vec![HelperEvent::ConnectionFailure {
-                message: format!("{error:#}"),
-            }],
-            RdpOutputEvent::Terminated(result) => vec![HelperEvent::Terminated {
-                message: match result {
-                    Ok(reason) => reason.to_string(),
-                    Err(error) => error.report().to_string(),
-                },
-            }],
-            RdpOutputEvent::PointerDefault => vec![HelperEvent::CursorDefault],
-            RdpOutputEvent::PointerHidden => vec![HelperEvent::CursorHidden],
-            RdpOutputEvent::PointerPosition { x, y } => {
-                vec![HelperEvent::CursorPosition { x, y }]
+            RdpOutputEvent::ConnectionFailure(error) => {
+                self.pending_cursor.clear();
+                vec![HelperEvent::ConnectionFailure {
+                    message: format!("{error:#}"),
+                }]
             }
-            RdpOutputEvent::PointerBitmap(_) => vec![HelperEvent::CursorDefault],
+            RdpOutputEvent::Terminated(result) => {
+                self.pending_cursor.clear();
+                vec![HelperEvent::Terminated {
+                    message: match result {
+                        Ok(reason) => reason.to_string(),
+                        Err(error) => error.report().to_string(),
+                    },
+                }]
+            }
+            RdpOutputEvent::PointerDefault => self.map_cursor(HelperEvent::CursorDefault),
+            RdpOutputEvent::PointerHidden => self.map_cursor(HelperEvent::CursorHidden),
+            RdpOutputEvent::PointerPosition { x, y } => {
+                self.map_cursor(HelperEvent::CursorPosition { x, y })
+            }
+            RdpOutputEvent::PointerBitmap(pointer) => {
+                if pointer.width == 0 || pointer.height == 0 {
+                    self.map_cursor(HelperEvent::CursorHidden)
+                } else {
+                    self.map_cursor(HelperEvent::CursorRgbaBytes {
+                        width: pointer.width,
+                        height: pointer.height,
+                        hotspot_x: pointer.hotspot_x,
+                        hotspot_y: pointer.hotspot_y,
+                        rgba: pointer.bitmap_data.clone(),
+                    })
+                }
+            }
+        }
+    }
+
+    fn map_cursor(&mut self, event: HelperEvent) -> Vec<HelperEvent> {
+        if self.connected {
+            vec![event]
+        } else {
+            self.pending_cursor.record(event);
+            Vec::new()
         }
     }
 
@@ -189,6 +253,10 @@ fn append_rect_bgra(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use ironrdp::graphics::pointer::DecodedPointer;
+
     use super::*;
 
     #[test]
@@ -243,6 +311,103 @@ mod tests {
                 ..
             }]
         ));
+    }
+
+    #[test]
+    fn emits_decoded_pointer_bitmap_without_json_encoding_pixels() {
+        let mut mapper = RdpOutputMapper::default();
+        let rgba = vec![0x11, 0x22, 0x33, 0x44, 0xaa, 0xbb, 0xcc, 0xdd];
+        mapper.map(image(&[0, 0], 2, 1));
+
+        let events = mapper.map(RdpOutputEvent::PointerBitmap(Arc::new(DecodedPointer {
+            width: 2,
+            height: 1,
+            hotspot_x: 1,
+            hotspot_y: 0,
+            bitmap_data: rgba.clone(),
+        })));
+
+        assert_eq!(
+            events,
+            vec![HelperEvent::CursorRgbaBytes {
+                width: 2,
+                height: 1,
+                hotspot_x: 1,
+                hotspot_y: 0,
+                rgba,
+            }]
+        );
+    }
+
+    #[test]
+    fn maps_zero_sized_pointer_bitmap_to_hidden_cursor() {
+        let mut mapper = RdpOutputMapper::default();
+        mapper.map(image(&[0], 1, 1));
+
+        let events = mapper.map(RdpOutputEvent::PointerBitmap(Arc::new(
+            DecodedPointer::new_invisible(),
+        )));
+
+        assert_eq!(events, vec![HelperEvent::CursorHidden]);
+    }
+
+    #[test]
+    fn flushes_latest_preconnect_cursor_state_after_connected_and_before_frame() {
+        let mut mapper = RdpOutputMapper::default();
+        let stale_rgba = vec![0x10, 0x20, 0x30, 0x40];
+        let rgba = vec![0x11, 0x22, 0x33, 0x44, 0xaa, 0xbb, 0xcc, 0xdd];
+
+        assert!(
+            mapper
+                .map(RdpOutputEvent::PointerBitmap(Arc::new(DecodedPointer {
+                    width: 1,
+                    height: 1,
+                    hotspot_x: 0,
+                    hotspot_y: 0,
+                    bitmap_data: stale_rgba,
+                })))
+                .is_empty()
+        );
+        assert!(
+            mapper
+                .map(RdpOutputEvent::PointerPosition { x: 1, y: 2 })
+                .is_empty()
+        );
+        assert!(
+            mapper
+                .map(RdpOutputEvent::PointerBitmap(Arc::new(DecodedPointer {
+                    width: 2,
+                    height: 1,
+                    hotspot_x: 1,
+                    hotspot_y: 0,
+                    bitmap_data: rgba.clone(),
+                })))
+                .is_empty()
+        );
+        assert!(
+            mapper
+                .map(RdpOutputEvent::PointerPosition { x: 3, y: 4 })
+                .is_empty()
+        );
+
+        assert_eq!(
+            mapper.map(image(&[0, 0], 2, 1)),
+            vec![
+                HelperEvent::Connected {
+                    width: 2,
+                    height: 1,
+                },
+                HelperEvent::CursorRgbaBytes {
+                    width: 2,
+                    height: 1,
+                    hotspot_x: 1,
+                    hotspot_y: 0,
+                    rgba,
+                },
+                HelperEvent::CursorPosition { x: 3, y: 4 },
+                HelperEvent::frame(2, 1, vec![0, 0, 0, 0xff, 0, 0, 0, 0xff]),
+            ]
+        );
     }
 
     fn image(buffer: &[u32], width: u16, height: u16) -> RdpOutputEvent {

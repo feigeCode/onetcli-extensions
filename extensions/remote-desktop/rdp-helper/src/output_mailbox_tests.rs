@@ -101,6 +101,58 @@ fn send_fails_after_receiver_is_dropped() {
     assert!(tx.send(frame(1)).is_err());
 }
 
+#[test]
+fn coalesces_adjacent_cursor_positions() {
+    let (tx, rx) = output_mailbox();
+    tx.send(HelperEvent::CursorPosition { x: 1, y: 2 }).unwrap();
+    tx.send(HelperEvent::CursorPosition { x: 3, y: 4 }).unwrap();
+
+    assert_eq!(Some(HelperEvent::CursorPosition { x: 3, y: 4 }), rx.recv());
+}
+
+#[test]
+fn coalesces_adjacent_cursor_bitmaps_without_crossing_state_boundaries() {
+    let (tx, rx) = output_mailbox();
+    tx.send(cursor(1)).unwrap();
+    tx.send(cursor(2)).unwrap();
+    tx.send(HelperEvent::CursorHidden).unwrap();
+    tx.send(cursor(3)).unwrap();
+
+    assert_eq!(Some(cursor(2)), rx.recv());
+    assert_eq!(Some(HelperEvent::CursorHidden), rx.recv());
+    assert_eq!(Some(cursor(3)), rx.recv());
+}
+
+#[test]
+fn reconnect_barrier_discards_pending_cursor_state() {
+    let (tx, rx) = output_mailbox();
+    tx.send(HelperEvent::CursorPosition { x: 1, y: 2 }).unwrap();
+    tx.send(cursor(1)).unwrap();
+    tx.send(HelperEvent::Reconnecting {
+        reason: crate::protocol::HelperReconnectReason::ConnectionLost,
+        delay_secs: Some(1),
+    })
+    .unwrap();
+
+    assert_eq!(
+        Some(HelperEvent::Reconnecting {
+            reason: crate::protocol::HelperReconnectReason::ConnectionLost,
+            delay_secs: Some(1),
+        }),
+        rx.recv()
+    );
+}
+
 fn frame(value: u8) -> HelperEvent {
     HelperEvent::frame(1, 1, vec![value, 0, 0, 255])
+}
+
+fn cursor(value: u8) -> HelperEvent {
+    HelperEvent::CursorRgbaBytes {
+        width: 1,
+        height: 1,
+        hotspot_x: 0,
+        hotspot_y: 0,
+        rgba: vec![value, 0, 0, 255],
+    }
 }

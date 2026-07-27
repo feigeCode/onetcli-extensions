@@ -67,9 +67,14 @@ impl OutputSender {
             terminal @ (HelperEvent::ConnectionFailure { .. } | HelperEvent::Terminated { .. }) => {
                 state.latest_frame = None;
                 state.latest_delta = None;
+                discard_pending_cursor_events(&mut state.control);
                 state.control.push_back(terminal);
             }
-            control => state.control.push_back(control),
+            reconnecting @ HelperEvent::Reconnecting { .. } => {
+                discard_pending_cursor_events(&mut state.control);
+                state.control.push_back(reconnecting);
+            }
+            control => enqueue_control(&mut state.control, control),
         }
         drop(state);
         self.shared.ready.notify_one();
@@ -162,6 +167,38 @@ fn merge_deltas(previous: HelperEvent, next: HelperEvent) -> HelperEvent {
         }
         (_, next) => next,
     }
+}
+
+fn enqueue_control(control: &mut VecDeque<HelperEvent>, event: HelperEvent) {
+    match (control.back_mut(), event) {
+        (
+            Some(HelperEvent::CursorPosition { x, y }),
+            HelperEvent::CursorPosition {
+                x: next_x,
+                y: next_y,
+            },
+        ) => {
+            *x = next_x;
+            *y = next_y;
+        }
+        (
+            Some(previous @ HelperEvent::CursorRgbaBytes { .. }),
+            next @ HelperEvent::CursorRgbaBytes { .. },
+        ) => *previous = next,
+        (_, event) => control.push_back(event),
+    }
+}
+
+fn discard_pending_cursor_events(control: &mut VecDeque<HelperEvent>) {
+    control.retain(|event| {
+        !matches!(
+            event,
+            HelperEvent::CursorDefault
+                | HelperEvent::CursorHidden
+                | HelperEvent::CursorPosition { .. }
+                | HelperEvent::CursorRgbaBytes { .. }
+        )
+    });
 }
 
 impl fmt::Debug for OutputSender {
