@@ -9,6 +9,11 @@ fn server_event_poll_budget_returns_to_the_input_loop() {
 }
 
 #[test]
+fn vnc_capabilities_keep_the_native_cursor() {
+    assert!(!vnc_capabilities().cursor_shape);
+}
+
+#[test]
 fn waits_while_incremental_refresh_is_in_flight() {
     let now = Instant::now();
 

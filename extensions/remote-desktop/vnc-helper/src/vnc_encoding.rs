@@ -130,10 +130,9 @@ impl ConnectedVncSession {
             VncEvent::JpegImage(_, _) => {
                 send_status(output_tx, "VNC JPEG rectangles are not enabled")
             }
-            VncEvent::SetCursor(rect, rgba) => {
-                let output = crate::vnc_cursor::map_vnc_cursor(rect, rgba)?;
-                let _ = output_tx.send(output);
-            }
+            // CursorPseudo stays negotiated so the server omits its cursor from the
+            // framebuffer. The client intentionally keeps only the native cursor.
+            VncEvent::SetCursor(_, _) => {}
             VncEvent::Bell | VncEvent::SetPixelFormat(_) => {}
             _ => {}
         }
@@ -277,6 +276,7 @@ fn vnc_capabilities() -> RemoteDesktopCapabilities {
     RemoteDesktopCapabilities {
         resize: ResizeSupport::LocalScaleOnly,
         clipboard_text: true,
+        cursor_shape: false,
         ..RemoteDesktopCapabilities::vnc_mvp()
     }
 }

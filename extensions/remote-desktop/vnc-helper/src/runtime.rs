@@ -137,7 +137,7 @@ impl RemoteDesktopCapabilities {
         Self {
             resize: ResizeSupport::LocalScaleOnly,
             clipboard_text: true,
-            cursor_shape: true,
+            cursor_shape: false,
             audio: false,
             file_transfer: false,
         }
@@ -154,11 +154,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vnc_mvp_reports_cursor_and_text_clipboard_support() {
+    fn vnc_mvp_reports_text_clipboard_without_remote_cursor_support() {
         let capabilities = RemoteDesktopCapabilities::vnc_mvp();
 
         assert!(capabilities.clipboard_text);
-        assert!(capabilities.cursor_shape);
+        assert!(!capabilities.cursor_shape);
     }
 
     #[test]

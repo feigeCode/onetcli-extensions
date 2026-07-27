@@ -12,7 +12,7 @@
   "capabilities": {
     "resize": "local_scale_only",
     "clipboard_text": true,
-    "cursor_shape": true,
+    "cursor_shape": false,
     "audio": false,
     "file_transfer": false,
     "audio_playback": false,

@@ -18,7 +18,6 @@ mod output_mailbox;
 mod protocol;
 mod runtime;
 mod vnc_clipboard;
-mod vnc_cursor;
 mod vnc_encoding;
 mod vnc_input;
 mod vnc_keyboard;
