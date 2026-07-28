@@ -12,3 +12,4 @@ extensions/wasm/*/target/
 *.wasm
 !extensions/language/*/parser.wasm
 .worktrees/
+.codegraph/
