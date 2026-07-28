@@ -1,5 +1,6 @@
 package com.navop.gbase8s.jdbc;
 
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -22,9 +23,16 @@ public final class GBase8sJdbcUrl {
 
         Map<String, String> sorted = new TreeMap<String, String>(config.getExtraParams());
         for (Map.Entry<String, String> entry : sorted.entrySet()) {
+            if (isHostManagedExtraParam(entry.getKey())) {
+                continue;
+            }
             appendProperty(url, entry.getKey(), entry.getValue());
         }
         return url.toString();
+    }
+
+    private static boolean isHostManagedExtraParam(String key) {
+        return key != null && key.trim().toLowerCase(Locale.ROOT).startsWith("ssh_");
     }
 
     private static void appendProperty(StringBuilder url, String key, String value) {

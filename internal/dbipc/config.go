@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -126,6 +127,25 @@ func CopyExtra(extra map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// CopyDriverExtra returns connection parameters that may be passed to a
+// database driver. SSH tunnel settings remain in Config.Extra for wire
+// compatibility, but the host manages them and database drivers must ignore
+// them when constructing DSNs or JDBC URLs.
+func CopyDriverExtra(extra map[string]string) map[string]string {
+	out := make(map[string]string, len(extra))
+	for key, value := range extra {
+		if isHostManagedExtraParam(key) {
+			continue
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func isHostManagedExtraParam(key string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(key)), "ssh_")
 }
 
 func sortedKeys(m map[string]string) []string {

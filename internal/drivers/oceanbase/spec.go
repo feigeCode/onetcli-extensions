@@ -110,7 +110,7 @@ func buildMySQLDSN(cfg dbipc.Config) (string, error) {
 	mysqlCfg.Addr = net.JoinHostPort(cfg.Host, fmt.Sprint(cfg.Port))
 	mysqlCfg.DBName = cfg.Database
 	mysqlCfg.ParseTime = true
-	mysqlCfg.Params = dbipc.CopyExtra(cfg.Extra)
+	mysqlCfg.Params = dbipc.CopyDriverExtra(cfg.Extra)
 	return mysqlCfg.FormatDSN(), nil
 }
 
@@ -132,7 +132,7 @@ func buildMySQLWireOracleTenantDSN(cfg dbipc.Config) (string, error) {
 	mysqlCfg.Addr = net.JoinHostPort(cfg.Host, fmt.Sprint(cfg.Port))
 	mysqlCfg.DBName = service
 	mysqlCfg.ParseTime = true
-	mysqlCfg.Params = dbipc.CopyExtra(cfg.Extra)
+	mysqlCfg.Params = dbipc.CopyDriverExtra(cfg.Extra)
 	delete(mysqlCfg.Params, "oracle_mysql_wire_driver")
 	return mysqlCfg.FormatDSN(), nil
 }

@@ -36,6 +36,33 @@ func TestSpecResolvesMySQLProtocolToMySQLWireDriver(t *testing.T) {
 	}
 }
 
+func TestSpecBuildsMySQLDSNWithoutHostManagedSSHOptions(t *testing.T) {
+	cfg := ConfigFromWireNoError(t, map[string]any{
+		"host":     "127.0.0.1",
+		"username": "root@test",
+		"password": "secret",
+		"database": "app",
+		"protocol": "mysql",
+		"extra_params": map[string]any{
+			"charset":       "utf8mb4",
+			"ssh_auth_type": "password",
+			" SSH_PORT ":    22,
+		},
+	})
+
+	dsn, err := buildMySQLDSN(cfg)
+	if err != nil {
+		t.Fatalf("buildMySQLDSN returned error: %v", err)
+	}
+
+	if !strings.Contains(dsn, "charset=utf8mb4") {
+		t.Fatalf("dsn %q does not contain charset=utf8mb4", dsn)
+	}
+	if strings.Contains(strings.ToLower(dsn), "ssh_") {
+		t.Fatalf("dsn leaked host-managed ssh options: %q", dsn)
+	}
+}
+
 func TestSpecResolvesOracleProtocolOverOceanBaseMySQLWireToDedicatedDriver(t *testing.T) {
 	oldProbe := probeOceanBaseMySQLWire
 	probeOceanBaseMySQLWire = func(ctx context.Context, host string, port int) (bool, error) {
@@ -74,6 +101,37 @@ func TestSpecResolvesOracleProtocolOverOceanBaseMySQLWireToDedicatedDriver(t *te
 	}
 	if connSpec.IdentifierQuoteLeft != `"` || connSpec.IdentifierQuoteRight != `"` {
 		t.Fatalf("identifier quotes = %q/%q, want Oracle quotes", connSpec.IdentifierQuoteLeft, connSpec.IdentifierQuoteRight)
+	}
+}
+
+func TestSpecBuildsOracleTenantMySQLWireDSNWithoutHostManagedSSHOptions(t *testing.T) {
+	cfg := ConfigFromWireNoError(t, map[string]any{
+		"host":         "ob.example.test",
+		"port":         float64(60014),
+		"username":     "sys@test",
+		"password":     "oracle",
+		"service_name": "ORCL",
+		"protocol":     "oracle",
+		"extra_params": map[string]any{
+			"charset":                  "utf8mb4",
+			"oracle_mysql_wire_driver": "oboracle-test",
+			"ssh_target_host":          "db.internal",
+			" SSH_PORT ":               22,
+		},
+	})
+
+	dsn, err := buildMySQLWireOracleTenantDSN(cfg)
+	if err != nil {
+		t.Fatalf("buildMySQLWireOracleTenantDSN returned error: %v", err)
+	}
+
+	if !strings.Contains(dsn, "charset=utf8mb4") {
+		t.Fatalf("dsn %q does not contain charset=utf8mb4", dsn)
+	}
+	for _, unwanted := range []string{"oracle_mysql_wire_driver", "ssh_"} {
+		if strings.Contains(strings.ToLower(dsn), unwanted) {
+			t.Fatalf("dsn %q contains host-only option %q", dsn, unwanted)
+		}
 	}
 }
 

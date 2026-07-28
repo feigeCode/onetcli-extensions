@@ -53,10 +53,7 @@ func buildDSN(cfg dbipc.Config) (string, error) {
 	}
 
 	values := url.Values{}
-	for key, value := range cfg.Extra {
-		if isHostManagedExtraParam(key) {
-			continue
-		}
+	for key, value := range dbipc.CopyDriverExtra(cfg.Extra) {
 		values.Set(key, value)
 	}
 	rawURL := url.URL{
@@ -67,10 +64,6 @@ func buildDSN(cfg dbipc.Config) (string, error) {
 		RawQuery: values.Encode(),
 	}
 	return rawURL.String(), nil
-}
-
-func isHostManagedExtraParam(key string) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(key)), "ssh_")
 }
 
 func oracleDatabasesSQL(cfg dbipc.Config) string {

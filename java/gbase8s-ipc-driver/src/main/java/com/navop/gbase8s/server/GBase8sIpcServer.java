@@ -241,7 +241,7 @@ public final class GBase8sIpcServer {
         for (String method : methodNames) {
             methods.add(method);
         }
-        result.put("extension_version", "0.1.13");
+        result.put("extension_version", "0.1.14");
         result.put("api_used", api);
         result.put("features", features);
         result.put("drivers_ready", drivers);

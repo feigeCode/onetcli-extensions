@@ -60,6 +60,34 @@ func TestSpecBuildsDamengDSNWithDatabaseAsSchemaAndRawCredentials(t *testing.T) 
 	}
 }
 
+func TestSpecBuildsDamengDSNWithoutHostManagedSSHOptions(t *testing.T) {
+	cfg, err := ConfigFromWire(map[string]any{
+		"host":     "127.0.0.1",
+		"username": "SYSDBA",
+		"password": "secret",
+		"extra_params": map[string]any{
+			"connect_timeout": "10",
+			"ssh_auth_type":   "password",
+			" SSH_PORT ":      22,
+		},
+	})
+	if err != nil {
+		t.Fatalf("ConfigFromWire returned error: %v", err)
+	}
+
+	dsn, err := Spec().BuildDSN(cfg)
+	if err != nil {
+		t.Fatalf("BuildDSN returned error: %v", err)
+	}
+
+	if !strings.Contains(dsn, "connect_timeout=10") {
+		t.Fatalf("dsn %q does not contain connect_timeout=10", dsn)
+	}
+	if strings.Contains(strings.ToLower(dsn), "ssh_") {
+		t.Fatalf("dsn leaked host-managed ssh options: %q", dsn)
+	}
+}
+
 func TestSpecBuildsDamengMetadataSQLWithOwnerFilters(t *testing.T) {
 	cfg := ConfigFromWireNoError(t, map[string]any{
 		"host":     "127.0.0.1",

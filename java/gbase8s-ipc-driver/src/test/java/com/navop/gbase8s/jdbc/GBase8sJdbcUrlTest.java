@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class GBase8sJdbcUrlTest {
@@ -86,6 +87,23 @@ public class GBase8sJdbcUrlTest {
             "jdbc:gbasedbt-sqli://127.0.0.1:11811/stores:CLIENT_LOCALE=zh_cn.utf8;DB_LOCALE=zh_cn.utf8;GBASEDBTSERVER=gbase01;PROTOCOL=onsoctcp;",
             GBase8sJdbcUrl.build(config)
         );
+    }
+
+    @Test
+    public void jdbcUrlIgnoresHostManagedSSHProperties() {
+        Map<String, Object> raw = validWireConfig();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> extra = (Map<String, Object>) raw.get("extra_params");
+        extra.put("CLIENT_LOCALE", "zh_cn.utf8");
+        extra.put("ssh_auth_type", "password");
+        extra.put(" SSH_PORT ", "22");
+
+        String jdbcUrl = GBase8sJdbcUrl.build(GBase8sConfig.fromWire(raw));
+
+        assertTrue(jdbcUrl.contains("CLIENT_LOCALE=zh_cn.utf8;"));
+        assertTrue(jdbcUrl.contains("GBASEDBTSERVER=gbase01;"));
+        assertTrue(jdbcUrl.contains("PROTOCOL=onsoctcp;"));
+        assertFalse(jdbcUrl.toLowerCase().contains("ssh_"));
     }
 
     @Test

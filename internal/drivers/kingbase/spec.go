@@ -47,7 +47,7 @@ func buildDSN(cfg dbipc.Config) (string, error) {
 		"dbname":   cfg.Database,
 		"sslmode":  "disable",
 	}
-	for k, v := range cfg.Extra {
+	for k, v := range dbipc.CopyDriverExtra(cfg.Extra) {
 		pairs[k] = v
 	}
 	keys := make([]string, 0, len(pairs))

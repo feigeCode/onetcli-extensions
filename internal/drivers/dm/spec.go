@@ -40,7 +40,7 @@ func buildDSN(cfg dbipc.Config) (string, error) {
 	if err := dbipc.RequireConfig(cfg, "host", "port", "username"); err != nil {
 		return "", err
 	}
-	extra := dbipc.CopyExtra(cfg.Extra)
+	extra := dbipc.CopyDriverExtra(cfg.Extra)
 	if cfg.Database != "" && extra["schema"] == "" {
 		extra["schema"] = cfg.Database
 	}

@@ -63,6 +63,7 @@ func TestSpecBuildsGoOraV2DSNWithoutHostManagedSSHOptions(t *testing.T) {
 			"SERVER":             "dedicated",
 			"ssh_tunnel_enabled": false,
 			"ssh_port":           22,
+			" SSH_AUTH_TYPE ":    "password",
 		},
 	})
 	if err != nil {
@@ -74,7 +75,7 @@ func TestSpecBuildsGoOraV2DSNWithoutHostManagedSSHOptions(t *testing.T) {
 		t.Fatalf("BuildDSN returned error: %v", err)
 	}
 
-	if strings.Contains(dsn, "ssh_tunnel_enabled") || strings.Contains(dsn, "ssh_port") {
+	if strings.Contains(strings.ToLower(dsn), "ssh_") {
 		t.Fatalf("dsn leaked host-managed ssh options: %q", dsn)
 	}
 	if !strings.Contains(dsn, "SERVER=dedicated") {

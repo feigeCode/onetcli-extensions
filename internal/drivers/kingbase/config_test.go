@@ -73,6 +73,35 @@ func TestSpecBuildsKingbaseConnInfoWithDefaultSSLModeAndQuotedValues(t *testing.
 	}
 }
 
+func TestSpecBuildsKingbaseConnInfoWithoutHostManagedSSHOptions(t *testing.T) {
+	cfg, err := ConfigFromWire(map[string]any{
+		"host":     "127.0.0.1",
+		"username": "system",
+		"password": "secret",
+		"database": "TEST",
+		"extra_params": map[string]any{
+			"application_name": "navop",
+			"ssh_auth_type":    "password",
+			" SSH_PORT ":       22,
+		},
+	})
+	if err != nil {
+		t.Fatalf("ConfigFromWire returned error: %v", err)
+	}
+
+	connInfo, err := Spec().BuildDSN(cfg)
+	if err != nil {
+		t.Fatalf("BuildDSN returned error: %v", err)
+	}
+
+	if !strings.Contains(connInfo, "application_name=navop") {
+		t.Fatalf("connInfo %q does not contain application_name=navop", connInfo)
+	}
+	if strings.Contains(strings.ToLower(connInfo), "ssh_") {
+		t.Fatalf("connInfo leaked host-managed ssh options: %q", connInfo)
+	}
+}
+
 func TestSpecBuildsKingbaseMetadataSQL(t *testing.T) {
 	cfg, err := ConfigFromWire(map[string]any{
 		"host":     "127.0.0.1",
