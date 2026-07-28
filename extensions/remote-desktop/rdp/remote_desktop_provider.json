@@ -1,7 +1,7 @@
 {
   "id": "rdp",
   "name": "RDP",
-  "description": "使用 Rust 开发的 RDP 远程桌面 Provider，为 Navop 提供交互式远程会话、动态分辨率、文本/文件剪贴板和远端音频能力。 Rust-based RDP provider for Navop with interactive remote sessions, dynamic resizing, text/file clipboard, and remote audio.",
+  "description": "使用 Rust 开发的 RDP 远程桌面 Provider，为 Navop 提供交互式远程会话、动态分辨率、文本/文件剪贴板、远端音频和光标同步能力。 Rust-based RDP provider for Navop with interactive remote sessions, dynamic resizing, text/file clipboard, remote audio, and cursor synchronization.",
   "version": "0.3.0",
   "protocol": "rdp",
   "entry": {

@@ -269,9 +269,14 @@ bash scripts/install-local-remote-desktop-providers.sh
 bash scripts/install-local-remote-desktop-providers.sh rdp
 ```
 
-By default this installs into
-`$XDG_CONFIG_HOME/one-hub/extensions/remote_desktop_providers` or
-`$HOME/.config/one-hub/extensions/remote_desktop_providers`.
+By default this follows Navop's config-directory migration state. On Unix it
+uses `$HOME/.config`; on Windows it uses `%APPDATA%`. Within that config root it
+installs below
+`navop/extensions/remote_desktop_providers`, while continuing to use the legacy
+`one-hub` directory if it still exists and Navop has not written the
+`.one-hub-migration-complete` marker. Override the target with
+`NAVOP_REMOTE_DESKTOP_PROVIDER_DIR=/path/to/remote_desktop_providers`; the legacy
+`ONETCLI_REMOTE_DESKTOP_PROVIDER_DIR` variable remains supported.
 
 Prepare release artifacts for one driver locally:
 

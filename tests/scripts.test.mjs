@@ -3469,17 +3469,58 @@ test("install-local-remote-desktop-providers builds and replaces one selected pr
   );
 });
 
-test("install-local-remote-desktop-providers defaults to the one-hub provider directory", () => {
-  const script = fs.readFileSync(
-    path.join(repoRoot, "scripts/install-local-remote-desktop-providers.sh"),
-    "utf8",
+test("install-local-remote-desktop-providers follows the Navop config migration state", () => {
+  const workdir = makeTempDir();
+  copyScript("install-local-remote-desktop-providers.sh", workdir);
+  const scriptPath = path.join(workdir, "scripts/install-local-remote-desktop-providers.sh");
+  const defaultConfigRoot = path.join(workdir, ".config");
+  const xdgConfigRoot = path.join(workdir, "xdg-config");
+  const currentRoot = path.join(defaultConfigRoot, "navop");
+  const legacyRoot = path.join(defaultConfigRoot, "one-hub");
+  const providerSuffix = path.join("extensions", "remote_desktop_providers");
+  const baseEnv = {
+    ...process.env,
+    HOME: workdir,
+  };
+  delete baseEnv.XDG_CONFIG_HOME;
+  delete baseEnv.NAVOP_REMOTE_DESKTOP_PROVIDER_DIR;
+  delete baseEnv.ONETCLI_REMOTE_DESKTOP_PROVIDER_DIR;
+
+  const resolveProviderDir = (envOverrides = {}) =>
+    execFileSync(
+      "bash",
+      ["-c", 'source "$1"; remote_desktop_provider_dir', "bash", scriptPath],
+      {
+        cwd: workdir,
+        encoding: "utf8",
+        env: {
+          ...baseEnv,
+          ...envOverrides,
+        },
+      },
+    ).trim();
+
+  assert.equal(
+    resolveProviderDir(),
+    path.join(defaultConfigRoot, "navop", providerSuffix),
+  );
+  assert.equal(
+    resolveProviderDir({ XDG_CONFIG_HOME: xdgConfigRoot }),
+    path.join(defaultConfigRoot, "navop", providerSuffix),
   );
 
-  assert.match(script, /NAVOP_REMOTE_DESKTOP_PROVIDER_DIR/);
-  assert.match(script, /ONETCLI_REMOTE_DESKTOP_PROVIDER_DIR/);
-  assert.match(script, /\$XDG_CONFIG_HOME\/one-hub\/extensions\/remote_desktop_providers/);
-  assert.match(script, /\$HOME\/\.config\/one-hub\/extensions\/remote_desktop_providers/);
-  assert.match(script, /\$\{CONFIG_HOME\}\/one-hub\/extensions\/remote_desktop_providers/);
+  fs.mkdirSync(legacyRoot, { recursive: true });
+  assert.equal(
+    resolveProviderDir({ XDG_CONFIG_HOME: xdgConfigRoot }),
+    path.join(legacyRoot, providerSuffix),
+  );
+
+  fs.mkdirSync(currentRoot, { recursive: true });
+  fs.writeFileSync(path.join(currentRoot, ".one-hub-migration-complete"), "");
+  assert.equal(
+    resolveProviderDir({ XDG_CONFIG_HOME: xdgConfigRoot }),
+    path.join(currentRoot, providerSuffix),
+  );
 });
 
 test("install-local-remote-desktop-providers installs all local providers when no id is passed", () => {

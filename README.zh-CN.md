@@ -237,8 +237,12 @@ bash scripts/install-local-remote-desktop-providers.sh
 bash scripts/install-local-remote-desktop-providers.sh rdp
 ```
 
-默认安装到 `$XDG_CONFIG_HOME/one-hub/extensions/remote_desktop_providers` 或
-`$HOME/.config/one-hub/extensions/remote_desktop_providers`。
+默认会跟随 Navop 的配置目录迁移状态：Unix 上使用 `$HOME/.config`，Windows 上使用
+`%APPDATA%`。在该配置根目录中，通常安装到
+`navop/extensions/remote_desktop_providers`；如果旧 `one-hub` 目录仍存在，且 Navop
+尚未写入 `.one-hub-migration-complete` 标记，则继续使用旧目录。如需改目标目录，可设置
+`NAVOP_REMOTE_DESKTOP_PROVIDER_DIR=/path/to/remote_desktop_providers`；为兼容已有脚本，
+仍支持旧的 `ONETCLI_REMOTE_DESKTOP_PROVIDER_DIR` 环境变量。
 
 本地准备某个 driver 的发版产物：
 
