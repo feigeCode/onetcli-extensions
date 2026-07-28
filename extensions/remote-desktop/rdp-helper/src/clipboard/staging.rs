@@ -99,6 +99,7 @@ fn protect_directory(path: &Path) -> anyhow::Result<()> {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
             .context("remote clipboard staging permissions could not be set")?;
     }
+    let _ = path;
     Ok(())
 }
 

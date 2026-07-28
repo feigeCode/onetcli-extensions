@@ -83,6 +83,7 @@ enum LocalClipboardEntryKind {
 }
 
 impl LocalClipboardEntry {
+    #[cfg(test)]
     pub fn from_file(path: &Path) -> anyhow::Result<Self> {
         let component = utf8_file_name(path)?.to_string();
         build_entry(

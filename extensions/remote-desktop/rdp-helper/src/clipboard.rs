@@ -1,4 +1,6 @@
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use ironrdp::cliprdr::backend::CliprdrBackendFactory;
@@ -10,6 +12,7 @@ use crate::output_mailbox::OutputSender;
 
 use self::backend::TextClipboardBackendFactory;
 use self::controller::TextClipboardState;
+#[cfg(test)]
 use self::local::LocalClipboardEntry;
 
 mod backend;
