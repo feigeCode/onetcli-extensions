@@ -266,8 +266,8 @@
       "id": "iotdb",
       "kind": "database_driver",
       "name": "Apache IoTDB",
-      "version": "0.1.4",
-      "release_tag": "iotdb-v0.1.4",
+      "version": "0.1.5",
+      "release_tag": "iotdb-v0.1.5",
       "description": "基于 Apache IoTDB Go 客户端开发的时序数据库 IPC 驱动，支持会话管理、时序查询、元数据浏览及数据写入。 Go-based IPC driver built on the Apache IoTDB client, with session management, time-series queries, metadata browsing, and data ingestion.",
       "file_extensions": [],
       "manifest": "iotdb/manifest.json"
@@ -306,8 +306,8 @@
       "id": "oracle-go",
       "kind": "database_driver",
       "name": "Oracle Go",
-      "version": "0.1.0",
-      "release_tag": "oracle-go-v0.1.0",
+      "version": "0.1.1",
+      "release_tag": "oracle-go-v0.1.1",
       "description": "使用纯 Go 开发的 Oracle 数据库 IPC 驱动，无需额外 Oracle 客户端即可进行连接管理、SQL 查询、事务和对象浏览。 Pure Go IPC driver for Oracle with connection management, SQL queries, transactions, and object browsing without requiring a separate Oracle client.",
       "file_extensions": [],
       "manifest": "oracle-go/manifest.json"
@@ -336,8 +336,8 @@
       "id": "rdp",
       "kind": "remote_desktop_provider",
       "name": "RDP",
-      "version": "0.3.0",
-      "release_tag": "rdp-v0.3.0",
+      "version": "0.3.1",
+      "release_tag": "rdp-v0.3.1",
       "description": "使用 Rust 开发的 RDP 远程桌面 Provider，为 Navop 提供交互式远程会话、动态分辨率、文本/文件剪贴板、远端音频和光标同步能力。 Rust-based RDP provider for Navop with interactive remote sessions, dynamic resizing, text/file clipboard, remote audio, and cursor synchronization.",
       "file_extensions": [],
       "manifest": "rdp/manifest.json"
