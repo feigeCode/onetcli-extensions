@@ -137,6 +137,9 @@ func (s *Server) Handle(ctx context.Context, req ipc.Message) ipc.Message {
 
 	switch req.Method {
 	case "init":
+		if err := ValidateHostVersion(req.Params); err != nil {
+			return s.err(req.ID, ErrServerIncompatible, err.Error())
+		}
 		s.initialized = true
 		return s.ok(req.ID, map[string]any{
 			"extension_version": "0.1.2",

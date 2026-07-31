@@ -38,6 +38,9 @@ const extensionEntry = {
 if (metadata.kind === "language" || metadata.kind === "language_bundle") {
   extensionEntry.file_extensions = sourceManifest.file_extensions || [];
 }
+if (sourceManifest.engines) {
+  extensionEntry.engines = sourceManifest.engines;
+}
 extensionManifest.extensions = [extensionEntry];
 
 fs.mkdirSync(artifactDir, { recursive: true });

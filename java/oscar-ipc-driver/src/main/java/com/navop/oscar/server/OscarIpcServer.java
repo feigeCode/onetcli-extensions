@@ -70,6 +70,10 @@ public final class OscarIpcServer {
 
     private JsonNode dispatch(JsonNode id, String method, JsonNode params) throws Exception {
         if ("init".equals(method)) {
+            String incompatibility = HostVersion.incompatibility(params.path("host_version").asText(null));
+            if (incompatibility != null) {
+                return error(id, ProtocolError.SERVER_INCOMPATIBLE, incompatibility);
+            }
             initialized = true;
             return ok(id, initResult());
         }

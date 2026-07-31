@@ -129,6 +129,9 @@ func (s *Server) Handle(ctx context.Context, req ipc.Message) ipc.Message {
 
 	switch req.Method {
 	case "init":
+		if err := dbipc.ValidateHostVersion(req.Params); err != nil {
+			return errResp(req.ID, dbipc.ErrServerIncompatible, err.Error())
+		}
 		s.initialized = true
 		return okResp(req.ID, map[string]any{
 			"extension_version": "0.1.3",

@@ -38,7 +38,7 @@ func TestServerInitReturnsDriverCapabilities(t *testing.T) {
 		JSONRPC: "2.0",
 		ID:      json.RawMessage(`1`),
 		Method:  "init",
-		Params:  json.RawMessage(`{"host_version":"test","api_offered":{"database":"1.0"},"instance_id":"unit","config":{}}`),
+		Params:  json.RawMessage(`{"host_version":"0.10.0","api_offered":{"database":"1.0"},"instance_id":"unit","config":{}}`),
 	})
 
 	if resp.Error != nil {
@@ -94,7 +94,7 @@ func TestServerAllowsBusinessMethodsAfterInit(t *testing.T) {
 		JSONRPC: "2.0",
 		ID:      json.RawMessage(`1`),
 		Method:  "init",
-		Params:  json.RawMessage(`{}`),
+		Params:  json.RawMessage(`{"host_version":"0.10.0"}`),
 	})
 	if initResp.Error != nil {
 		t.Fatalf("init returned error: %#v", initResp.Error)
@@ -112,6 +112,40 @@ func TestServerAllowsBusinessMethodsAfterInit(t *testing.T) {
 	}
 	if resp.Error.Code == ErrNotInitialized {
 		t.Fatalf("conn/test still failed as not initialized after init: %#v", resp.Error)
+	}
+}
+
+func TestServerRejectsIncompatibleHostBeforeInitializationAndAllowsRetry(t *testing.T) {
+	server := NewServer(testSpec(), nil)
+
+	rejected := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  "init",
+		Params:  json.RawMessage(`{"host_version":"0.9.9"}`),
+	})
+	if rejected.Error == nil || rejected.Error.Code != ErrServerIncompatible {
+		t.Fatalf("incompatible init response = %#v, want error code %d", rejected, ErrServerIncompatible)
+	}
+
+	beforeRetry := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "conn/open",
+		Params:  json.RawMessage(`{"config":{}}`),
+	})
+	if beforeRetry.Error == nil || beforeRetry.Error.Code != ErrNotInitialized {
+		t.Fatalf("business response after rejected init = %#v, want error code %d", beforeRetry, ErrNotInitialized)
+	}
+
+	accepted := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`3`),
+		Method:  "init",
+		Params:  json.RawMessage(`{"host_version":"0.10.0"}`),
+	})
+	if accepted.Error != nil {
+		t.Fatalf("compatible retry returned error: %#v", accepted.Error)
 	}
 }
 

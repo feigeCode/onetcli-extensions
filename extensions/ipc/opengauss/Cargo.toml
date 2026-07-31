@@ -14,6 +14,7 @@ native-tls.workspace = true
 opengauss-native-tls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+semver.workspace = true
 tokio = { workspace = true, features = ["io-util", "rt-multi-thread", "macros", "sync"] }
 tokio-opengauss.workspace = true
 tracing.workspace = true

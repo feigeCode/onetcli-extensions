@@ -16,7 +16,7 @@ func TestLocalIoTDBQueryTimestamps(t *testing.T) {
 
 	server := NewServer()
 	ctx := context.Background()
-	mustOK(t, server.Handle(ctx, message(1, "init", nil)))
+	mustOK(t, server.Handle(ctx, message(1, "init", map[string]any{"host_version": "0.10.0"})))
 
 	open := server.Handle(ctx, message(2, "conn/open", map[string]any{
 		"driver_id": "iotdb",

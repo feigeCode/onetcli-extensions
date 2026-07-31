@@ -23,7 +23,7 @@ public class GBase8sDriverMainTest {
     public void serveWritesResponsesAndStopsAfterShutdown() throws Exception {
         ByteArrayOutputStream inbound = new ByteArrayOutputStream();
         FramedJsonTransport requestWriter = FramedJsonTransport.forOutput(inbound, mapper);
-        requestWriter.write(mapper.readTree("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"init\",\"params\":{}}"));
+        requestWriter.write(mapper.readTree("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"init\",\"params\":{\"host_version\":\"0.10.0\"}}"));
         requestWriter.write(mapper.readTree("{\"jsonrpc\":\"2.0\",\"method\":\"$/ping\",\"params\":{}}"));
         requestWriter.write(mapper.readTree("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"shutdown\",\"params\":{}}"));
         requestWriter.write(mapper.readTree("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"$/ping\",\"params\":{}}"));

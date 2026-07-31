@@ -54,7 +54,7 @@ func TestRunConnectsToHostSocketAndServesLifecycle(t *testing.T) {
 		ID:     json.RawMessage(`1`),
 		Method: "init",
 		Params: json.RawMessage(`{
-			"host_version":"test",
+			"host_version":"0.10.0",
 			"api_offered":{"database":"1.0"},
 			"instance_id":"runner-test",
 			"config":{}

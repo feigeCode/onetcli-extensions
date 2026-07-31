@@ -3,6 +3,9 @@
   "name": "DuckDB",
   "description": "使用 Rust 开发的 DuckDB 嵌入式分析数据库 IPC 驱动，适合本地文件分析、SQL 查询、Schema 浏览及数据导入导出。 Rust-based IPC driver for DuckDB, designed for local file analytics, SQL queries, schema browsing, and data import/export.",
   "version": "0.1.1",
+  "engines": {
+    "onetcli": ">=0.10.0"
+  },
   "license": "MIT",
   "repository": "https://github.com/duckdb/duckdb",
   "homepage": "https://duckdb.org",

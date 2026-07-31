@@ -57,9 +57,27 @@ public class GBase8sIpcServerTest {
     }
 
     @Test
+    public void incompatibleInitDoesNotInitializeAndCompatibleRetrySucceeds() throws Exception {
+        GBase8sIpcServer server = newServer();
+
+        JsonNode rejected = server.handle(request(1, "init", "{\"host_version\":\"0.9.9\"}"));
+        assertEquals(ProtocolError.SERVER_INCOMPATIBLE, rejected.get("error").get("code").asInt());
+        assertTrue(rejected.get("error").get("message").asText().contains(">= 0.10.0"));
+
+        JsonNode prerelease = server.handle(request(2, "init", "{\"host_version\":\"0.10.1-alpha.1\"}"));
+        assertEquals(ProtocolError.SERVER_INCOMPATIBLE, prerelease.get("error").get("code").asInt());
+
+        JsonNode beforeRetry = server.handle(request(3, "conn/ping", "{\"conn_id\":1}"));
+        assertEquals(ProtocolError.NOT_INITIALIZED, beforeRetry.get("error").get("code").asInt());
+
+        JsonNode accepted = server.handle(request(4, "init", "{\"host_version\":\"0.10.0\"}"));
+        assertTrue(accepted.toString(), accepted.has("result"));
+    }
+
+    @Test
     public void connectionQueryCursorExecAndShutdownFlow() throws Exception {
         GBase8sIpcServer server = newServer();
-        server.handle(request(1, "init", "{}"));
+        server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));
 
         JsonNode open = server.handle(request(2, "conn/open", "{\"driver_id\":\"gbase8s\",\"config\":" + configJson() + "}"));
         assertTrue(open.toString(), open.has("result"));
@@ -90,7 +108,7 @@ public class GBase8sIpcServerTest {
     @Test
     public void schemaMethodsReadGBase8sCatalogRows() throws Exception {
         GBase8sIpcServer server = newServer();
-        server.handle(request(1, "init", "{}"));
+        server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));
         JsonNode open = server.handle(request(2, "conn/open", "{\"driver_id\":\"gbase8s\",\"config\":" + configJson() + "}"));
         assertTrue(open.toString(), open.has("result"));
         long connId = open.get("result")
@@ -191,7 +209,7 @@ public class GBase8sIpcServerTest {
     @Test
     public void ddlBuildersUseUnquotedGBaseIdentifiers() throws Exception {
         GBase8sIpcServer server = newServer();
-        server.handle(request(1, "init", "{}"));
+        server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));
 
         JsonNode create = server.handle(request(
             2,
@@ -233,7 +251,7 @@ public class GBase8sIpcServerTest {
                 return catalogConnection();
             }
         });
-        server.handle(request(1, "init", "{}"));
+        server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));
         long connId = server.handle(request(2, "conn/open", "{\"driver_id\":\"gbase8s\",\"config\":" + configJson() + "}"))
             .get("result")
             .get("conn_id")

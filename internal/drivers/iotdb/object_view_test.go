@@ -10,7 +10,7 @@ import (
 func TestSchemaObjectViewFunctionsReturnsRows(t *testing.T) {
 	server := NewServer()
 	ctx := context.Background()
-	mustOK(t, server.Handle(ctx, message(1, "init", nil)))
+	mustOK(t, server.Handle(ctx, message(1, "init", map[string]any{"host_version": "0.10.0"})))
 	server.conns[1] = &connection{cfg: dbipc.Config{Database: "root.navop_smoke"}}
 
 	resp := server.Handle(ctx, message(2, "schema/object_view", map[string]any{

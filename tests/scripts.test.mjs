@@ -2869,6 +2869,7 @@ test("generate-marketplace-manifest writes only the current plugin manifest", ()
     id: "duckdb",
     name: "DuckDB",
     description: "DuckDB embedded analytical database IPC driver",
+    engines: { onetcli: ">=0.10.0" },
   });
 
   const targets = [
@@ -2902,6 +2903,9 @@ test("generate-marketplace-manifest writes only the current plugin manifest", ()
   assert.equal(extensionManifest.release_version, "duckdb-v1.2.3");
   assert.equal(extensionManifest.extensions.length, 1);
   assert.equal(extensionManifest.extensions[0].release_tag, "duckdb-v1.2.3");
+  assert.deepEqual(extensionManifest.extensions[0].engines, {
+    onetcli: ">=0.10.0",
+  });
   assert.equal(
     extensionManifest.extensions[0].artifacts["x86_64-unknown-linux-gnu"].file,
     "duckdb-driver-x86_64-unknown-linux-gnu.tar.gz",

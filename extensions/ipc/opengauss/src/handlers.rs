@@ -35,10 +35,12 @@ use crate::session::OpenGaussSession;
 use crate::state::{ConnectionState, CursorState, ImportState, StreamState};
 
 pub const SCHEMA_OBJECT_VIEW: &str = "schema/object_view";
+const MINIMUM_HOST_VERSION: &str = "0.10.0";
 
 pub fn handle_init(initialized: &AtomicI64, params: &Value) -> Result<Value, ProtocolError> {
-    let _params: InitParams =
+    let params: InitParams =
         serde_json::from_value(params.clone()).map_err(params_deserialize_error)?;
+    ensure_compatible_host(&params.host_version)?;
     if initialized
         .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
@@ -61,6 +63,64 @@ pub fn handle_init(initialized: &AtomicI64, params: &Value) -> Result<Value, Pro
         result = result.with_method(*method_name);
     }
     serde_json::to_value(result).map_err(params_deserialize_error)
+}
+
+fn ensure_compatible_host(host_version: &str) -> Result<(), ProtocolError> {
+    let current = semver::Version::parse(host_version).map_err(|error| {
+        ProtocolError::new(
+            error_codes::SERVER_INCOMPATIBLE,
+            format!(
+                "this driver requires Navop >= {MINIMUM_HOST_VERSION}; invalid host version {host_version:?}: {error}"
+            ),
+        )
+    })?;
+    let requirement = semver::VersionReq::parse(&format!(">={MINIMUM_HOST_VERSION}"))
+        .expect("valid minimum host requirement");
+    if !requirement.matches(&current) {
+        return Err(ProtocolError::new(
+            error_codes::SERVER_INCOMPATIBLE,
+            format!(
+                "this driver requires Navop >= {MINIMUM_HOST_VERSION}; current host version is {current}. Please upgrade Navop"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod host_version_tests {
+    use super::*;
+
+    #[test]
+    fn init_rejects_incompatible_host_without_consuming_once_flag() {
+        let flag = AtomicI64::new(0);
+        for host_version in ["0.9.9", "0.10.0-alpha", "0.10.1-alpha", "invalid"] {
+            let err = handle_init(
+                &flag,
+                &json!({
+                    "host_version": host_version,
+                    "api_offered": {},
+                    "instance_id": "test",
+                    "config": {},
+                }),
+            )
+            .unwrap_err();
+            assert_eq!(err.code, error_codes::SERVER_INCOMPATIBLE);
+            assert_eq!(flag.load(Ordering::SeqCst), 0);
+        }
+
+        handle_init(
+            &flag,
+            &json!({
+                "host_version": "0.10.1",
+                "api_offered": {},
+                "instance_id": "test",
+                "config": {},
+            }),
+        )
+        .unwrap();
+        assert_eq!(flag.load(Ordering::SeqCst), 1);
+    }
 }
 
 pub fn handle_shutdown(params: &Value) -> Result<Value, ProtocolError> {

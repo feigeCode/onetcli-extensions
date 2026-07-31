@@ -4,6 +4,9 @@
   "description": "使用 Rust 开发的 openGauss 数据库 IPC 驱动，支持连接管理、SQL 执行、事务、Schema 浏览及数据导入导出。 Rust-based IPC driver for openGauss with connection management, SQL execution, transactions, schema browsing, and data import/export.",
   "category": "domestic_database",
   "version": "0.1.2",
+  "engines": {
+    "onetcli": ">=0.10.0"
+  },
   "license": "MIT OR Apache-2.0",
   "repository": "https://gitee.com/opengauss/openGauss-connector-rust",
   "homepage": "https://opengauss.org",
