@@ -2,7 +2,7 @@
   "id": "iotdb",
   "name": "Apache IoTDB",
   "description": "基于 Apache IoTDB Go 客户端开发的时序数据库 IPC 驱动，支持会话管理、时序查询、元数据浏览及数据写入。 Go-based IPC driver built on the Apache IoTDB client, with session management, time-series queries, metadata browsing, and data ingestion.",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "engines": {
     "onetcli": ">=0.10.0"
   },

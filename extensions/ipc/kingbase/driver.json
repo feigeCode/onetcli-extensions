@@ -3,7 +3,7 @@
   "name": "KingbaseES",
   "description": "使用 Go 开发的金仓 KingbaseES 数据库 IPC 驱动，支持连接管理、SQL 查询、事务、Schema 对象浏览及数据导入导出。 Go-based IPC driver for KingbaseES with connection management, SQL queries, transactions, schema object browsing, and data import/export.",
   "category": "domestic_database",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "engines": {
     "onetcli": ">=0.10.0"
   },
