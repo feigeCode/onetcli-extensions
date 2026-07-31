@@ -349,10 +349,17 @@ mod tests {
         );
         assert_eq!(
             cell_value_to_duckdb_value(&CellValue::Text {
-                value: "alice".into()
+                value: String::new()
             })
             .unwrap(),
-            duckdb::types::Value::Text("alice".into())
+            duckdb::types::Value::Text(String::new())
+        );
+        assert_eq!(
+            cell_value_to_duckdb_value(&CellValue::Text {
+                value: "NULL".into()
+            })
+            .unwrap(),
+            duckdb::types::Value::Text("NULL".into())
         );
     }
 

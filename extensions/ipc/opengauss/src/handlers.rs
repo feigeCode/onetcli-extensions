@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use base64::Engine;
 use extension_protocol::conn::{ConnPingParams, ConnTestParams, ConnUseParams};
 use extension_protocol::data::{
-    DataFormat, ExportParams, ExportResult, ImportAbortParams, ImportBeginParams,
+    CsvOptions, DataFormat, ExportParams, ExportResult, ImportAbortParams, ImportBeginParams,
     ImportBeginResult, ImportChunkParams, ImportChunkResult, ImportCommitParams,
     ImportCommitResult, StreamCloseParams, StreamReadParams, StreamReadResult,
 };
@@ -341,7 +341,14 @@ pub fn handle_data_export(
                 .map_err(params_deserialize_error)?
         }
         DataFormat::Ndjson => rows_to_ndjson(&result.columns, &result.rows).into_bytes(),
-        DataFormat::Csv => rows_to_csv(&result.columns, &result.rows).into_bytes(),
+        DataFormat::Csv => {
+            let options = if p.options.is_null() {
+                CsvOptions::default()
+            } else {
+                serde_json::from_value(p.options.clone()).map_err(params_deserialize_error)?
+            };
+            rows_to_csv(&result.columns, &result.rows, &options).into_bytes()
+        }
         other => {
             return Err(not_supported(format!(
                 "OpenGauss data/export format `{other:?}` is not supported"
@@ -1063,26 +1070,45 @@ fn rows_to_ndjson(columns: &[extension_protocol::row::ColumnSpec], rows: &[Row])
         .join("\n")
 }
 
-fn rows_to_csv(columns: &[extension_protocol::row::ColumnSpec], rows: &[Row]) -> String {
-    let mut lines = vec![
-        columns
-            .iter()
-            .map(|column| csv_escape(&column.name))
-            .collect::<Vec<_>>()
-            .join(","),
-    ];
+fn rows_to_csv(
+    columns: &[extension_protocol::row::ColumnSpec],
+    rows: &[Row],
+    options: &CsvOptions,
+) -> String {
+    let mut lines = Vec::new();
+    if options.header {
+        lines.push(
+            columns
+                .iter()
+                .map(|column| csv_escape(&column.name, options, false))
+                .collect::<Vec<_>>()
+                .join(&options.delimiter),
+        );
+    }
     lines.extend(rows.iter().map(|row| {
         row.iter()
-            .map(|cell| csv_escape(&cell_to_plain_string(cell)))
+            .map(|cell| {
+                let (value, force_quote) = cell_to_csv_field(cell, options);
+                csv_escape(&value, options, force_quote)
+            })
             .collect::<Vec<_>>()
-            .join(",")
+            .join(&options.delimiter)
     }));
     lines.join("\n")
 }
 
-fn csv_escape(value: &str) -> String {
-    if value.contains([',', '"', '\n']) {
-        format!("\"{}\"", value.replace('"', "\"\""))
+fn csv_escape(value: &str, options: &CsvOptions, force_quote: bool) -> String {
+    let quote = options.quote.as_str();
+    if force_quote
+        || value.contains(&options.delimiter)
+        || value.contains(quote)
+        || value.contains('\n')
+        || value.contains('\r')
+    {
+        format!(
+            "{quote}{}{quote}",
+            value.replace(quote, &format!("{quote}{quote}"))
+        )
     } else {
         value.to_string()
     }
@@ -1111,11 +1137,68 @@ fn cell_to_json(cell: &CellValue) -> Value {
     }
 }
 
-fn cell_to_plain_string(cell: &CellValue) -> String {
+fn cell_to_csv_string(cell: &CellValue, options: &CsvOptions) -> String {
     match cell_to_json(cell) {
-        Value::Null => String::new(),
+        Value::Null => options
+            .null_string
+            .clone()
+            .unwrap_or_else(|| "\\N".to_string()),
         Value::String(value) => value,
         other => other.to_string(),
+    }
+}
+
+fn cell_to_csv_field(cell: &CellValue, options: &CsvOptions) -> (String, bool) {
+    let value = cell_to_csv_string(cell, options);
+    let null_string = options.null_string.as_deref().unwrap_or("\\N");
+    let force_quote =
+        !matches!(cell, CellValue::Null) && (value.is_empty() || value.as_str() == null_string);
+    (value, force_quote)
+}
+
+#[cfg(test)]
+mod csv_tests {
+    use super::*;
+
+    #[test]
+    fn csv_values_distinguish_null_empty_and_literal_null_text() {
+        let options = CsvOptions::default();
+
+        assert_eq!(cell_to_csv_string(&CellValue::Null, &options), "\\N");
+        assert_eq!(
+            cell_to_csv_string(
+                &CellValue::Text {
+                    value: String::new(),
+                },
+                &options,
+            ),
+            ""
+        );
+        assert_eq!(
+            cell_to_csv_string(
+                &CellValue::Text {
+                    value: "NULL".to_string(),
+                },
+                &options,
+            ),
+            "NULL"
+        );
+        let (null_value, null_quote) = cell_to_csv_field(&CellValue::Null, &options);
+        let (empty_value, empty_quote) = cell_to_csv_field(
+            &CellValue::Text {
+                value: String::new(),
+            },
+            &options,
+        );
+        let (literal_value, literal_quote) = cell_to_csv_field(
+            &CellValue::Text {
+                value: "NULL".to_string(),
+            },
+            &options,
+        );
+        assert_eq!(csv_escape(&null_value, &options, null_quote), "\\N");
+        assert_eq!(csv_escape(&empty_value, &options, empty_quote), "\"\"");
+        assert_eq!(csv_escape(&literal_value, &options, literal_quote), "NULL");
     }
 }
 

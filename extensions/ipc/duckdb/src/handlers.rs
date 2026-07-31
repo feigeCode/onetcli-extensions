@@ -856,7 +856,7 @@ fn render_csv_rows(
     let mut out = String::new();
     if options.header && !*header_written {
         out.push_str(&csv_line(
-            columns.iter().map(|value| value.as_str()),
+            columns.iter().map(|value| (value.as_str(), false)),
             options,
         ));
         *header_written = true;
@@ -864,27 +864,30 @@ fn render_csv_rows(
     for row in rows {
         let values = row
             .into_iter()
-            .map(|cell| cell_to_csv_string(cell, options))
+            .map(|cell| cell_to_csv_field(cell, options))
             .collect::<Vec<_>>();
         out.push_str(&csv_line(
-            values.iter().map(|value| value.as_str()),
+            values
+                .iter()
+                .map(|(value, force_quote)| (value.as_str(), *force_quote)),
             options,
         ));
     }
     out.into_bytes()
 }
 
-fn csv_line<'a>(values: impl Iterator<Item = &'a str>, options: &CsvOptions) -> String {
+fn csv_line<'a>(values: impl Iterator<Item = (&'a str, bool)>, options: &CsvOptions) -> String {
     let mut line = values
-        .map(|value| csv_escape(value, options))
+        .map(|(value, force_quote)| csv_escape(value, options, force_quote))
         .collect::<Vec<_>>()
         .join(&options.delimiter);
     line.push('\n');
     line
 }
 
-fn csv_escape(value: &str, options: &CsvOptions) -> String {
-    let needs_quote = value.contains(&options.delimiter)
+fn csv_escape(value: &str, options: &CsvOptions, force_quote: bool) -> String {
+    let needs_quote = force_quote
+        || value.contains(&options.delimiter)
         || value.contains('\n')
         || value.contains('\r')
         || value.contains(&options.quote);
@@ -907,6 +910,14 @@ fn cell_to_csv_string(cell: CellValue, options: &CsvOptions) -> String {
         Value::String(value) => value,
         other => other.to_string(),
     }
+}
+
+fn cell_to_csv_field(cell: CellValue, options: &CsvOptions) -> (String, bool) {
+    let is_null = matches!(cell, CellValue::Null);
+    let value = cell_to_csv_string(cell, options);
+    let null_string = options.null_string.as_deref().unwrap_or("\\N");
+    let force_quote = !is_null && (value.is_empty() || value.as_str() == null_string);
+    (value, force_quote)
 }
 
 fn render_ndjson_rows(columns: &[String], rows: Vec<Row>) -> Result<Vec<u8>, ProtocolError> {
@@ -2005,6 +2016,35 @@ mod tests {
             .unwrap()
             .query_row("SELECT current_database()", [], |row| row.get(0))
             .unwrap()
+    }
+
+    #[test]
+    fn csv_cells_distinguish_null_empty_and_literal_null_marker() {
+        let options = CsvOptions::default();
+        let render = |cell| {
+            let (value, force_quote) = cell_to_csv_field(cell, &options);
+            csv_escape(&value, &options, force_quote)
+        };
+
+        assert_eq!(render(CellValue::Null), "\\N");
+        assert_eq!(
+            render(CellValue::Text {
+                value: String::new()
+            }),
+            "\"\""
+        );
+        assert_eq!(
+            render(CellValue::Text {
+                value: "NULL".to_string()
+            }),
+            "NULL"
+        );
+        assert_eq!(
+            render(CellValue::Text {
+                value: "\\N".to_string()
+            }),
+            "\"\\N\""
+        );
     }
 
     #[test]

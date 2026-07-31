@@ -813,18 +813,19 @@ func (s *Server) handleDdlBuildDrop(req ipc.Message) ipc.Message {
 
 func (s *Server) handleDataExport(ctx context.Context, req ipc.Message) ipc.Message {
 	var p struct {
-		ConnID         uint64      `json:"conn_id"`
-		Table          string      `json:"table,omitempty"`
-		Schema         string      `json:"schema,omitempty"`
-		Database       string      `json:"database,omitempty"`
-		SQL            string      `json:"sql,omitempty"`
-		Format         string      `json:"format"`
-		WhereClause    string      `json:"where,omitempty"`
-		IncludeColumns []string    `json:"include_columns,omitempty"`
-		ExcludeColumns []string    `json:"exclude_columns,omitempty"`
-		MaxRows        *uint64     `json:"max_rows,omitempty"`
-		Params         []cellValue `json:"params,omitempty"`
-		StreamID       string      `json:"stream_id"`
+		ConnID         uint64         `json:"conn_id"`
+		Table          string         `json:"table,omitempty"`
+		Schema         string         `json:"schema,omitempty"`
+		Database       string         `json:"database,omitempty"`
+		SQL            string         `json:"sql,omitempty"`
+		Format         string         `json:"format"`
+		WhereClause    string         `json:"where,omitempty"`
+		IncludeColumns []string       `json:"include_columns,omitempty"`
+		ExcludeColumns []string       `json:"exclude_columns,omitempty"`
+		MaxRows        *uint64        `json:"max_rows,omitempty"`
+		Params         []cellValue    `json:"params,omitempty"`
+		Options        map[string]any `json:"options,omitempty"`
+		StreamID       string         `json:"stream_id"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
 		return s.err(req.ID, ErrInvalidParams, err.Error())
@@ -844,7 +845,7 @@ func (s *Server) handleDataExport(ctx context.Context, req ipc.Message) ipc.Mess
 	if err != nil {
 		return s.err(req.ID, ErrInvalidParams, err.Error())
 	}
-	data, metadata, count, err := exportRows(ctx, conn.db, sqlText, p.Format, args)
+	data, metadata, count, err := exportRows(ctx, conn.db, sqlText, p.Format, args, p.Options)
 	if err != nil {
 		return s.err(req.ID, ErrNotSupported, err.Error())
 	}

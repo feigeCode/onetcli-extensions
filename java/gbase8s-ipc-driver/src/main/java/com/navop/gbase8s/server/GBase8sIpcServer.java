@@ -1270,7 +1270,7 @@ public final class GBase8sIpcServer {
         }
         String format = requiredText(params, "format");
         QueryResult query = queryRunner.queryBuffered(state.connection, sql, readParams(params), optionalInt(params, "max_rows"));
-        byte[] data = exportBytes(format, query);
+        byte[] data = exportBytes(format, query, params.path("options"));
         streams.put(streamId, new StreamState(data));
         Map<String, Object> result = new LinkedHashMap<String, Object>();
         result.put("estimated_bytes", Long.valueOf(data.length));
@@ -1455,7 +1455,7 @@ public final class GBase8sIpcServer {
         return out.toString();
     }
 
-    private byte[] exportBytes(String format, QueryResult query) throws SQLException {
+    private byte[] exportBytes(String format, QueryResult query, JsonNode options) throws SQLException {
         if ("json".equals(format)) {
             try {
                 List<Map<String, Object>> rows = rowsAsObjects(query);
@@ -1476,20 +1476,49 @@ public final class GBase8sIpcServer {
             }
         }
         if ("csv".equals(format)) {
+            String delimiterValue = optionalText(options, "delimiter", ",");
+            String quoteValue = optionalText(options, "quote", "\"");
+            String nullString = optionalText(options, "null_string", "\\N");
+            String delimiter = delimiterValue.isEmpty() ? "," : delimiterValue.substring(0, 1);
+            char delimiterChar = delimiter.charAt(0);
+            char quote = quoteValue.isEmpty() ? '"' : quoteValue.charAt(0);
             StringBuilder out = new StringBuilder();
             List<String> names = columnNames(query);
-            out.append(join(names, ",")).append('\n');
+            if (options.path("header").asBoolean(true)) {
+                List<String> header = new ArrayList<String>();
+                for (String name : names) {
+                    header.add(csvCell(name, nullString, delimiterChar, quote));
+                }
+                out.append(join(header, delimiter)).append('\n');
+            }
             for (Map<String, Object> row : rowsAsObjects(query)) {
                 List<String> cells = new ArrayList<String>();
                 for (String name : names) {
-                    Object value = row.get(name);
-                    cells.add(value == null ? "" : String.valueOf(value).replace("\"", "\"\""));
+                    cells.add(csvCell(row.get(name), nullString, delimiterChar, quote));
                 }
-                out.append(join(cells, ",")).append('\n');
+                out.append(join(cells, delimiter)).append('\n');
             }
             return out.toString().getBytes(StandardCharsets.UTF_8);
         }
         throw new SQLException("export format `" + format + "` is not supported");
+    }
+
+    static String csvCell(Object value, String nullString, char delimiter, char quote) {
+        if (value == null) {
+            return nullString;
+        }
+        String text = String.valueOf(value);
+        boolean quoteField = text.isEmpty()
+            || text.equals(nullString)
+            || text.indexOf(delimiter) >= 0
+            || text.indexOf(quote) >= 0
+            || text.indexOf('\n') >= 0
+            || text.indexOf('\r') >= 0;
+        if (!quoteField) {
+            return text;
+        }
+        String quoteText = String.valueOf(quote);
+        return quoteText + text.replace(quoteText, quoteText + quoteText) + quoteText;
     }
 
     private List<Map<String, Object>> rowsAsObjects(QueryResult query) {

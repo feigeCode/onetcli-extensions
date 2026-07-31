@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
-	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,7 +29,14 @@ type importState struct {
 	failed   []map[string]any
 }
 
-func exportRows(ctx context.Context, queryer queryExecutor, sqlText, format string, args []any) ([]byte, map[string]any, uint64, error) {
+func exportRows(
+	ctx context.Context,
+	queryer queryExecutor,
+	sqlText,
+	format string,
+	args []any,
+	options map[string]any,
+) ([]byte, map[string]any, uint64, error) {
 	rows, err := queryer.QueryContext(ctx, sqlText, args...)
 	if err != nil {
 		return nil, nil, 0, err
@@ -50,7 +56,7 @@ func exportRows(ctx context.Context, queryer queryExecutor, sqlText, format stri
 		data, count, err := exportRowsJSON(rows, columns, true)
 		return data, metadata, count, err
 	case "csv":
-		data, count, err := exportRowsCSV(rows, columns)
+		data, count, err := exportRowsCSV(rows, columns, parseCSVExportOptions(options))
 		return data, metadata, count, err
 	default:
 		return nil, nil, 0, fmt.Errorf("export format %q is not supported by the generic database/sql driver", format)
@@ -88,11 +94,17 @@ func exportRowsJSON(rows *sql.Rows, columns []string, ndjson bool) ([]byte, uint
 	return raw, count, err
 }
 
-func exportRowsCSV(rows *sql.Rows, columns []string) ([]byte, uint64, error) {
+type csvExportOptions struct {
+	delimiter  rune
+	quote      rune
+	header     bool
+	nullString string
+}
+
+func exportRowsCSV(rows *sql.Rows, columns []string, options csvExportOptions) ([]byte, uint64, error) {
 	var out bytes.Buffer
-	writer := csv.NewWriter(&out)
-	if err := writer.Write(columns); err != nil {
-		return nil, 0, err
+	if options.header {
+		writeCSVRecord(&out, columns, nil, options)
 	}
 	var count uint64
 	for rows.Next() {
@@ -105,25 +117,81 @@ func exportRowsCSV(rows *sql.Rows, columns []string) ([]byte, uint64, error) {
 			return nil, 0, err
 		}
 		record := make([]string, len(values))
+		forceQuote := make([]bool, len(values))
 		for i, value := range values {
 			if value == nil {
-				record[i] = ""
+				record[i] = options.nullString
 			} else if raw, ok := value.([]byte); ok {
 				record[i] = string(raw)
+				forceQuote[i] = record[i] == "" || record[i] == options.nullString
 			} else {
 				record[i] = fmt.Sprint(value)
+				forceQuote[i] = record[i] == "" || record[i] == options.nullString
 			}
 		}
-		if err := writer.Write(record); err != nil {
-			return nil, 0, err
-		}
+		writeCSVRecord(&out, record, forceQuote, options)
 		count++
 	}
 	if err := rows.Err(); err != nil {
 		return nil, 0, err
 	}
-	writer.Flush()
-	return out.Bytes(), count, writer.Error()
+	return out.Bytes(), count, nil
+}
+
+func parseCSVExportOptions(values map[string]any) csvExportOptions {
+	options := csvExportOptions{
+		delimiter:  ',',
+		quote:      '"',
+		header:     true,
+		nullString: `\N`,
+	}
+	if value, ok := values["delimiter"].(string); ok {
+		if chars := []rune(value); len(chars) > 0 {
+			options.delimiter = chars[0]
+		}
+	}
+	if value, ok := values["quote"].(string); ok {
+		if chars := []rune(value); len(chars) > 0 {
+			options.quote = chars[0]
+		}
+	}
+	if value, ok := values["header"].(bool); ok {
+		options.header = value
+	}
+	if value, ok := values["null_string"].(string); ok {
+		options.nullString = value
+	}
+	return options
+}
+
+func writeCSVRecord(out *bytes.Buffer, record []string, forceQuote []bool, options csvExportOptions) {
+	for i, value := range record {
+		if i > 0 {
+			out.WriteRune(options.delimiter)
+		}
+		forced := forceQuote != nil && forceQuote[i]
+		writeCSVField(out, value, forced, options)
+	}
+	out.WriteByte('\n')
+}
+
+func writeCSVField(out *bytes.Buffer, value string, forceQuote bool, options csvExportOptions) {
+	needsQuote := forceQuote ||
+		strings.ContainsRune(value, options.delimiter) ||
+		strings.ContainsRune(value, options.quote) ||
+		strings.ContainsAny(value, "\r\n")
+	if !needsQuote {
+		out.WriteString(value)
+		return
+	}
+	out.WriteRune(options.quote)
+	for _, char := range value {
+		if char == options.quote {
+			out.WriteRune(options.quote)
+		}
+		out.WriteRune(char)
+	}
+	out.WriteRune(options.quote)
 }
 
 func rowObject(rows *sql.Rows, columns []string) (map[string]any, error) {

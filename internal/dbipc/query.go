@@ -144,7 +144,9 @@ func paramFromWire(param cellValue) (any, error) {
 	t, _ := param["type"].(string)
 	value := param["value"]
 	switch strings.ToLower(t) {
-	case "", "null":
+	case "":
+		return nil, fmt.Errorf("missing required cell value type")
+	case "null":
 		return nil, nil
 	case "bool":
 		return asBool(value)

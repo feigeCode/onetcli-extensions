@@ -409,10 +409,11 @@ func TestQueryAndExecForwardWireParamsToSQLDriver(t *testing.T) {
 		Method:  "query/start",
 		Params: []byte(fmt.Sprintf(`{
 			"conn_id": %d,
-			"sql": "SELECT * FROM demo WHERE id = ? AND name = ? AND deleted_at IS ?",
+			"sql": "SELECT * FROM demo WHERE id = ? AND empty_value = ? AND literal_null = ? AND deleted_at IS ?",
 			"params": [
 				{"type":"i64","value":42},
-				{"type":"text","value":"alice"},
+				{"type":"text","value":""},
+				{"type":"text","value":"NULL"},
 				{"type":"null"}
 			]
 		}`, connID)),
@@ -420,7 +421,7 @@ func TestQueryAndExecForwardWireParamsToSQLDriver(t *testing.T) {
 	if queryResp.Error != nil {
 		t.Fatalf("query/start returned error: %#v", queryResp.Error)
 	}
-	if got := namedValuesToValues(state.lastQueryArgs); len(got) != 3 || got[0] != int64(42) || got[1] != "alice" || got[2] != nil {
+	if got := namedValuesToValues(state.lastQueryArgs); len(got) != 4 || got[0] != int64(42) || got[1] != "" || got[2] != "NULL" || got[3] != nil {
 		t.Fatalf("query args = %#v", got)
 	}
 
@@ -439,6 +440,24 @@ func TestQueryAndExecForwardWireParamsToSQLDriver(t *testing.T) {
 	}
 	if got := namedValuesToValues(state.lastExecArgs); len(got) != 1 || got[0] != true {
 		t.Fatalf("exec args = %#v", got)
+	}
+}
+
+func TestWireParamsRequireExplicitTypeAndPreserveNullTextStates(t *testing.T) {
+	if _, err := paramFromWire(cellValue{"value": "missing type"}); err == nil {
+		t.Fatal("parameter without an explicit type must be rejected")
+	}
+
+	values, err := paramsFromWire([]cellValue{
+		{"type": "null"},
+		{"type": "text", "value": ""},
+		{"type": "text", "value": "NULL"},
+	})
+	if err != nil {
+		t.Fatalf("paramsFromWire returned error: %v", err)
+	}
+	if len(values) != 3 || values[0] != nil || values[1] != "" || values[2] != "NULL" {
+		t.Fatalf("wire values = %#v", values)
 	}
 }
 
@@ -702,6 +721,52 @@ func TestDataExportStreamsNdjsonAndClosesStream(t *testing.T) {
 	}
 }
 
+func TestDataExportCsvDistinguishesNullEmptyAndLiteralNullText(t *testing.T) {
+	driverName, state := registerStreamingDriver(t, [][]driver.Value{
+		{nil, "", "NULL"},
+	})
+	state.columns = []string{"nullable_value", "empty_value", "literal_null"}
+	server := NewServer(testSpecWithSQLDriver(driverName), nil)
+	server.initialized = true
+
+	connID := openTestConn(t, server)
+	exportResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "data/export",
+		Params: []byte(fmt.Sprintf(
+			`{"conn_id":%d,"sql":"SELECT nullable_value, empty_value, literal_null FROM demo","format":"csv","options":{"null_string":"\\N"},"stream_id":"csv-null-states"}`,
+			connID,
+		)),
+	})
+	if exportResp.Error != nil {
+		t.Fatalf("data/export returned error: %#v", exportResp.Error)
+	}
+
+	readResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`3`),
+		Method:  "stream/read",
+		Params:  json.RawMessage(`{"stream_id":"csv-null-states","max_bytes":4096}`),
+	})
+	if readResp.Error != nil {
+		t.Fatalf("stream/read returned error: %#v", readResp.Error)
+	}
+	var result struct {
+		Data string `json:"data"`
+		Done bool   `json:"done"`
+	}
+	decodeResult(t, readResp, &result)
+	raw, err := base64.StdEncoding.DecodeString(result.Data)
+	if err != nil {
+		t.Fatalf("stream/read data is not base64: %v", err)
+	}
+	const expected = "nullable_value,empty_value,literal_null\n\\N,\"\",NULL\n"
+	if string(raw) != expected || !result.Done {
+		t.Fatalf("CSV stream = %q done=%v, want %q", raw, result.Done, expected)
+	}
+}
+
 func TestDataImportBuildsInsertAndCommits(t *testing.T) {
 	driverName, state := registerStreamingDriver(t, nil)
 	server := NewServer(testSpecWithSQLDriver(driverName), nil)
@@ -712,7 +777,7 @@ func TestDataImportBuildsInsertAndCommits(t *testing.T) {
 		JSONRPC: "2.0",
 		ID:      json.RawMessage(`2`),
 		Method:  "data/import_begin",
-		Params:  []byte(fmt.Sprintf(`{"conn_id":%d,"schema":"app","table":"demo","format":"json","columns":["id","name"]}`, connID)),
+		Params:  []byte(fmt.Sprintf(`{"conn_id":%d,"schema":"app","table":"demo","format":"json","columns":["id","empty_value","literal_null","nullable_value"]}`, connID)),
 	})
 	if beginResp.Error != nil {
 		t.Fatalf("data/import_begin returned error: %#v", beginResp.Error)
@@ -726,7 +791,7 @@ func TestDataImportBuildsInsertAndCommits(t *testing.T) {
 		JSONRPC: "2.0",
 		ID:      json.RawMessage(`3`),
 		Method:  "data/import_chunk",
-		Params:  []byte(fmt.Sprintf(`{"import_id":%q,"rows":[[{"type":"i64","value":1},{"type":"text","value":"first"}]]}`, begun.ImportID)),
+		Params:  []byte(fmt.Sprintf(`{"import_id":%q,"rows":[[{"type":"i64","value":1},{"type":"text","value":""},{"type":"text","value":"NULL"},{"type":"null"}]]}`, begun.ImportID)),
 	})
 	if chunkResp.Error != nil {
 		t.Fatalf("data/import_chunk returned error: %#v", chunkResp.Error)
@@ -738,8 +803,11 @@ func TestDataImportBuildsInsertAndCommits(t *testing.T) {
 	if chunkResult.Inserted != 1 {
 		t.Fatalf("chunk inserted = %d, want 1", chunkResult.Inserted)
 	}
-	if state.lastExecSQL != `INSERT INTO "app"."demo" ("id", "name") VALUES (?, ?)` {
+	if state.lastExecSQL != `INSERT INTO "app"."demo" ("id", "empty_value", "literal_null", "nullable_value") VALUES (?, ?, ?, ?)` {
 		t.Fatalf("last exec SQL = %q", state.lastExecSQL)
+	}
+	if got := namedValuesToValues(state.lastExecArgs); len(got) != 4 || got[0] != int64(1) || got[1] != "" || got[2] != "NULL" || got[3] != nil {
+		t.Fatalf("import args = %#v", got)
 	}
 
 	commitResp := server.Handle(context.Background(), ipc.Message{

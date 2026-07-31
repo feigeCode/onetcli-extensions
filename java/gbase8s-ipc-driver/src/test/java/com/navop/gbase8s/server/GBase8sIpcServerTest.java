@@ -25,6 +25,14 @@ public class GBase8sIpcServerTest {
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
+    public void csvCellsDistinguishNullEmptyAndLiteralNullMarker() {
+        assertEquals("\\N", GBase8sIpcServer.csvCell(null, "\\N", ',', '"'));
+        assertEquals("\"\"", GBase8sIpcServer.csvCell("", "\\N", ',', '"'));
+        assertEquals("NULL", GBase8sIpcServer.csvCell("NULL", "\\N", ',', '"'));
+        assertEquals("\"\\N\"", GBase8sIpcServer.csvCell("\\N", "\\N", ',', '"'));
+    }
+
+    @Test
     public void businessMethodsRequireInit() throws Exception {
         GBase8sIpcServer server = newServer();
 

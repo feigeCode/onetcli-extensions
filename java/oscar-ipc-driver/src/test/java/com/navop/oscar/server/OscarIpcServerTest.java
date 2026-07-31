@@ -23,6 +23,14 @@ public class OscarIpcServerTest {
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
+    public void csvCellsDistinguishNullEmptyAndLiteralNullMarker() {
+        assertEquals("\\N", OscarIpcServer.csvCell(null, "\\N", ',', '"'));
+        assertEquals("\"\"", OscarIpcServer.csvCell("", "\\N", ',', '"'));
+        assertEquals("NULL", OscarIpcServer.csvCell("NULL", "\\N", ',', '"'));
+        assertEquals("\"\\N\"", OscarIpcServer.csvCell("\\N", "\\N", ',', '"'));
+    }
+
+    @Test
     public void businessMethodsRequireInit() throws Exception {
         OscarIpcServer server = newServer();
 
