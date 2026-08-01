@@ -28,7 +28,7 @@ async fn opengauss_driver_declares_manifest_methods() {
     let init: InitResult = handle
         .call(
             method::INIT,
-            serde_json::to_value(InitParams::new("navop-test", "opengauss-test")).unwrap(),
+            serde_json::to_value(InitParams::new("0.10.0", "opengauss-test")).unwrap(),
             timeout.clone(),
         )
         .await

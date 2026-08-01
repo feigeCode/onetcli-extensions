@@ -30,7 +30,7 @@ async fn duckdb_driver_declared_methods_are_callable() {
     let init: InitResult = handle
         .call(
             method::INIT,
-            serde_json::to_value(InitParams::new("navop-test", "duckdb-all-methods")).unwrap(),
+            serde_json::to_value(InitParams::new("0.10.0", "duckdb-all-methods")).unwrap(),
             timeout.clone(),
         )
         .await

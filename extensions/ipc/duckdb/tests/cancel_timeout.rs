@@ -23,7 +23,7 @@ async fn timed_out_fetch_interrupts_duckdb_and_connection_recovers() {
     let _: InitResult = handle
         .call(
             method::INIT,
-            serde_json::to_value(InitParams::new("navop-test", "duckdb-cancel-test")).unwrap(),
+            serde_json::to_value(InitParams::new("0.10.0", "duckdb-cancel-test")).unwrap(),
             default_timeout.clone(),
         )
         .await

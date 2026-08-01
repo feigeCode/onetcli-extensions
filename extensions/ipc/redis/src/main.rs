@@ -12,7 +12,7 @@ use extension_driver::{
 };
 use extension_protocol::blob::WireBytes;
 use extension_protocol::conn::{ConnOpenParams, ConnOpenResult};
-use extension_protocol::error::{ProtocolError, error_codes};
+use extension_protocol::error::{ErrorData, ProtocolError, error_codes};
 use extension_protocol::event_stream::{
     EventCloseParams, EventOpenParams, EventOpenResult, EventReadParams, EventReadResult,
 };
@@ -25,7 +25,7 @@ use extension_protocol::redis::{
 use futures::StreamExt;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use redis_client::aio::ConnectionManager;
-use redis_client::{Client, Cmd, Value};
+use redis_client::{Client, Cmd, RedisError, Value};
 use serde_json::{Value as JsonValue, json};
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
@@ -216,7 +216,7 @@ impl RedisConnection {
         let pubsub = match connection_timeout(&self.config) {
             Some(duration) => timeout(duration, client.get_async_pubsub())
                 .await
-                .map_err(|_| connection_error("Redis Pub/Sub connection timed out"))?,
+                .map_err(|_| connection_timeout_error("Redis Pub/Sub connection timed out"))?,
             None => client.get_async_pubsub().await,
         }
         .map_err(connection_error)?;
@@ -450,12 +450,44 @@ fn invalid_params(error: impl std::fmt::Display) -> ProtocolError {
     ProtocolError::new(error_codes::INVALID_PARAMS, error.to_string())
 }
 
-fn connection_error(error: impl std::fmt::Display) -> ProtocolError {
-    ProtocolError::new(error_codes::IO_CONNECTION_REFUSED, error.to_string())
+fn connection_error(error: RedisError) -> ProtocolError {
+    let code = if error.is_timeout() {
+        error_codes::IO_TIMEOUT
+    } else {
+        error_codes::IO_CONNECTION_REFUSED
+    };
+    redis_protocol_error(code, error)
 }
 
-fn command_error(error: impl std::fmt::Display) -> ProtocolError {
-    ProtocolError::new(error_codes::EXTENSION_CUSTOM_START, error.to_string())
+fn command_error(error: RedisError) -> ProtocolError {
+    redis_protocol_error(error_codes::EXTENSION_CUSTOM_START, error)
+}
+
+fn connection_timeout_error(message: impl Into<String>) -> ProtocolError {
+    let message = message.into();
+    ProtocolError::new(error_codes::IO_TIMEOUT, message.clone()).with_data(
+        ErrorData::new().retryable(true).with_extra(json!({
+            "category": "timeout",
+            "source": message,
+        })),
+    )
+}
+
+fn redis_protocol_error(code: i32, error: RedisError) -> ProtocolError {
+    let message = error.to_string();
+    let retryable = error.is_timeout()
+        || error.is_connection_refusal()
+        || error.is_connection_dropped()
+        || error.is_cluster_error();
+    ProtocolError::new(code, message.clone()).with_data(
+        ErrorData::new().retryable(retryable).with_extra(json!({
+            "kind": format!("{:?}", error.kind()),
+            "category": error.category(),
+            "code": error.code(),
+            "detail": error.detail(),
+            "source": message,
+        })),
+    )
 }
 
 fn internal_error(error: impl std::fmt::Display) -> ProtocolError {
@@ -566,6 +598,51 @@ mod tests {
         assert_eq!(
             Some(Duration::from_millis(2500)),
             connection_timeout(&config)
+        );
+    }
+
+    #[test]
+    fn redis_errors_preserve_native_details() {
+        let error = RedisError::from((
+            redis_client::ErrorKind::AuthenticationFailed,
+            "Redis authentication failed",
+            "NOAUTH Authentication required".to_string(),
+        ));
+
+        let protocol_error = command_error(error);
+        let data = protocol_error.data.expect("Redis error data");
+        let extra = data.extra.expect("Redis native details");
+
+        assert!(
+            protocol_error
+                .message
+                .contains("NOAUTH Authentication required")
+        );
+        assert_eq!(
+            Some("AuthenticationFailed"),
+            extra.get("kind").and_then(JsonValue::as_str)
+        );
+        assert_eq!(
+            Some("authentication failed"),
+            extra.get("category").and_then(JsonValue::as_str)
+        );
+        assert_eq!(Some(false), data.retryable);
+    }
+
+    #[test]
+    fn redis_timeouts_use_timeout_code_and_are_retryable() {
+        let error = RedisError::from(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "Redis socket timed out",
+        ));
+
+        let protocol_error = connection_error(error);
+
+        assert_eq!(error_codes::IO_TIMEOUT, protocol_error.code);
+        assert!(protocol_error.message.contains("Redis socket timed out"));
+        assert_eq!(
+            Some(true),
+            protocol_error.data.and_then(|data| data.retryable)
         );
     }
 }

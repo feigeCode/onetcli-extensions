@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -138,7 +139,7 @@ func (s *Server) Handle(ctx context.Context, req ipc.Message) ipc.Message {
 	switch req.Method {
 	case "init":
 		if err := ValidateHostVersion(req.Params); err != nil {
-			return s.err(req.ID, ErrServerIncompatible, err.Error())
+			return s.errFromError(req.ID, ErrServerIncompatible, err)
 		}
 		s.initialized = true
 		return s.ok(req.ID, map[string]any{
@@ -152,7 +153,9 @@ func (s *Server) Handle(ctx context.Context, req ipc.Message) ipc.Message {
 	case "$/ping":
 		return s.ok(req.ID, map[string]bool{"pong": true})
 	case "shutdown":
-		s.closeAll()
+		if err := s.closeAll(); err != nil {
+			return s.errFromError(req.ID, ErrConnectionFailed, err)
+		}
 		return s.ok(req.ID, nil)
 	case "conn/test":
 		return s.handleConnTest(ctx, req)
@@ -248,16 +251,22 @@ func (s *Server) Handle(ctx context.Context, req ipc.Message) ipc.Message {
 func (s *Server) handleConnTest(ctx context.Context, req ipc.Message) ipc.Message {
 	cfg, connSpec, err := s.parseConfig(ctx, req.Params)
 	if err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	start := time.Now()
 	db, err := s.opener(connSpec.DriverName, connSpec.DSN)
 	if err != nil {
-		return s.err(req.ID, ErrConnectionFailed, err.Error())
+		return s.errFromError(req.ID, ErrConnectionFailed, err)
 	}
-	defer db.Close()
 	if err := db.PingContext(ctx); err != nil {
-		return s.err(req.ID, ErrConnectionFailed, err.Error())
+		closeErr := db.Close()
+		if closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close connection after failed ping: %w", closeErr))
+		}
+		return s.errFromError(req.ID, ErrConnectionFailed, err)
+	}
+	if err := db.Close(); err != nil {
+		return s.errFromError(req.ID, ErrConnectionFailed, fmt.Errorf("close test connection: %w", err))
 	}
 	return s.ok(req.ID, map[string]any{
 		"ok":             true,
@@ -270,15 +279,18 @@ func (s *Server) handleConnTest(ctx context.Context, req ipc.Message) ipc.Messag
 func (s *Server) handleConnOpen(ctx context.Context, req ipc.Message) ipc.Message {
 	cfg, connSpec, err := s.parseConfig(ctx, req.Params)
 	if err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	db, err := s.opener(connSpec.DriverName, connSpec.DSN)
 	if err != nil {
-		return s.err(req.ID, ErrConnectionFailed, err.Error())
+		return s.errFromError(req.ID, ErrConnectionFailed, err)
 	}
 	if err := db.PingContext(ctx); err != nil {
-		db.Close()
-		return s.err(req.ID, ErrConnectionFailed, err.Error())
+		closeErr := db.Close()
+		if closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close connection after failed ping: %w", closeErr))
+		}
+		return s.errFromError(req.ID, ErrConnectionFailed, err)
 	}
 
 	connID := s.nextConnID
@@ -298,17 +310,21 @@ func (s *Server) handleConnClose(req ipc.Message) ipc.Message {
 		ConnID uint64 `json:"conn_id"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
 		return s.err(req.ID, ErrUnknownConnID, fmt.Sprintf("unknown conn_id %d", p.ConnID))
 	}
-	s.closeCursorsForConn(p.ConnID)
-	s.rollbackTxsForConn(p.ConnID)
+	var closeErr error
+	closeErr = joinCleanupError(closeErr, "close cursors", s.closeCursorsForConn(p.ConnID))
+	closeErr = joinCleanupError(closeErr, "rollback transactions", s.rollbackTxsForConn(p.ConnID))
 	s.dropImportsForConn(p.ConnID)
-	conn.db.Close()
+	closeErr = joinCleanupError(closeErr, "close connection", conn.db.Close())
 	delete(s.conns, p.ConnID)
+	if closeErr != nil {
+		return s.errFromError(req.ID, ErrConnectionFailed, closeErr)
+	}
 	return s.ok(req.ID, nil)
 }
 
@@ -319,7 +335,7 @@ func (s *Server) handleConnPing(ctx context.Context, req ipc.Message) ipc.Messag
 	}
 	start := time.Now()
 	if err := conn.db.PingContext(ctx); err != nil {
-		return s.err(req.ID, ErrConnectionFailed, err.Error())
+		return s.errFromError(req.ID, ErrConnectionFailed, err)
 	}
 	return s.ok(req.ID, map[string]any{"latency_ms": uint32(time.Since(start).Milliseconds())})
 }
@@ -332,7 +348,7 @@ func (s *Server) handleConnUse(req ipc.Message) ipc.Message {
 		Role     string `json:"role,omitempty"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -353,7 +369,7 @@ func (s *Server) handleQueryStart(ctx context.Context, req ipc.Message) ipc.Mess
 		TxID    string      `json:"tx_id,omitempty"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -361,7 +377,7 @@ func (s *Server) handleQueryStart(ctx context.Context, req ipc.Message) ipc.Mess
 	}
 	args, err := paramsFromWire(p.Params)
 	if err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	var queryer queryExecutor = conn.db
 	if p.TxID != "" {
@@ -373,7 +389,7 @@ func (s *Server) handleQueryStart(ctx context.Context, req ipc.Message) ipc.Mess
 	}
 	columns, rows, err := startQuery(ctx, queryer, p.SQL, args)
 	if err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	cursorID := fmt.Sprintf("%s-cursor-%d", s.spec.ID, s.nextCursor)
 	s.nextCursor++
@@ -396,7 +412,7 @@ func (s *Server) handleCursorFetch(req ipc.Message) ipc.Message {
 		N        *uint32 `json:"n,omitempty"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	cursor, ok := s.cursors[p.CursorID]
 	if !ok {
@@ -411,13 +427,13 @@ func (s *Server) handleCursorFetch(req ipc.Message) ipc.Message {
 	}
 	rows, done, fetched, err := fetchRows(cursor.rows, cursor.columnCount, n, cursor.maxRows, cursor.fetched)
 	if err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	cursor.fetched = fetched
 	if done {
 		cursor.done = true
 		if err := cursor.rows.Close(); err != nil {
-			return s.err(req.ID, ErrSQLSyntax, err.Error())
+			return s.errFromError(req.ID, ErrSQLSyntax, err)
 		}
 		cursor.rows = nil
 	}
@@ -429,13 +445,13 @@ func (s *Server) handleCursorClose(req ipc.Message) ipc.Message {
 		CursorID string `json:"cursor_id"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	if _, ok := s.cursors[p.CursorID]; !ok {
 		return s.err(req.ID, ErrUnknownCursorID, fmt.Sprintf("unknown cursor_id `%s`", p.CursorID))
 	}
 	if err := s.closeCursor(p.CursorID); err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	delete(s.cursors, p.CursorID)
 	return s.ok(req.ID, nil)
@@ -446,14 +462,14 @@ func (s *Server) handleCursorCancel(req ipc.Message) ipc.Message {
 		CursorID string `json:"cursor_id"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	cursor, ok := s.cursors[p.CursorID]
 	if !ok {
 		return s.err(req.ID, ErrUnknownCursorID, fmt.Sprintf("unknown cursor_id `%s`", p.CursorID))
 	}
 	if err := s.closeCursor(p.CursorID); err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	cursor.done = true
 	return s.ok(req.ID, nil)
@@ -467,7 +483,7 @@ func (s *Server) handleExecRun(ctx context.Context, req ipc.Message) ipc.Message
 		TxID   string      `json:"tx_id,omitempty"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -475,7 +491,7 @@ func (s *Server) handleExecRun(ctx context.Context, req ipc.Message) ipc.Message
 	}
 	args, err := paramsFromWire(p.Params)
 	if err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	var execer interface {
 		ExecContext(context.Context, string, ...any) (sql.Result, error)
@@ -489,10 +505,13 @@ func (s *Server) handleExecRun(ctx context.Context, req ipc.Message) ipc.Message
 	}
 	res, err := execer.ExecContext(ctx, p.SQL, args...)
 	if err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
-	affected, _ := res.RowsAffected()
-	return s.ok(req.ID, map[string]any{"affected_rows": uint64(affected), "warnings": []string{}})
+	affected, err := rowsAffected(res)
+	if err != nil {
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
+	}
+	return s.ok(req.ID, map[string]any{"affected_rows": affected, "warnings": []string{}})
 }
 
 func (s *Server) handleExecBatch(ctx context.Context, req ipc.Message) ipc.Message {
@@ -503,7 +522,7 @@ func (s *Server) handleExecBatch(ctx context.Context, req ipc.Message) ipc.Messa
 		InTransaction bool     `json:"in_transaction"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -518,7 +537,7 @@ func (s *Server) handleExecBatch(ctx context.Context, req ipc.Message) ipc.Messa
 		var err error
 		tx, err = conn.db.BeginTx(ctx, nil)
 		if err != nil {
-			return s.err(req.ID, ErrSQLSyntax, err.Error())
+			return s.errFromError(req.ID, ErrSQLSyntax, err)
 		}
 		execer = tx
 	}
@@ -528,28 +547,58 @@ func (s *Server) handleExecBatch(ctx context.Context, req ipc.Message) ipc.Messa
 		results[i] = map[string]any{"affected_rows": uint64(0), "warnings": []string{}}
 	}
 	errorsOut := make([]map[string]any, 0)
+	var batchErr error
 	for index, statement := range p.Statements {
 		res, err := execer.ExecContext(ctx, statement)
 		if err != nil {
-			errorsOut = append(errorsOut, map[string]any{
+			batchErr = errors.Join(batchErr, fmt.Errorf("execute batch statement %d: %w", index, err))
+			protocolError := protocolErrorFromError(ErrSQLSyntax, err)
+			item := map[string]any{
 				"index":   index,
-				"code":    ErrSQLSyntax,
-				"message": err.Error(),
-			})
+				"code":    protocolError.Code,
+				"message": protocolError.Message,
+			}
+			if len(protocolError.Data) > 0 {
+				item["data"] = protocolError.Data
+			}
+			errorsOut = append(errorsOut, item)
 			if p.StopOnError {
 				break
 			}
 			continue
 		}
-		affected, _ := res.RowsAffected()
-		results[index] = map[string]any{"affected_rows": uint64(affected), "warnings": []string{}}
+		affected, err := rowsAffected(res)
+		if err != nil {
+			batchErr = errors.Join(batchErr, fmt.Errorf("read batch statement %d result: %w", index, err))
+			protocolError := protocolErrorFromError(ErrSQLSyntax, err)
+			item := map[string]any{
+				"index":   index,
+				"code":    protocolError.Code,
+				"message": protocolError.Message,
+			}
+			if len(protocolError.Data) > 0 {
+				item["data"] = protocolError.Data
+			}
+			errorsOut = append(errorsOut, item)
+			if p.StopOnError {
+				break
+			}
+			continue
+		}
+		results[index] = map[string]any{"affected_rows": affected, "warnings": []string{}}
 	}
 
 	if tx != nil {
 		if len(errorsOut) > 0 {
-			_ = tx.Rollback()
+			if err := tx.Rollback(); err != nil {
+				return s.errFromError(
+					req.ID,
+					ErrSQLSyntax,
+					joinCleanupError(batchErr, "rollback failed batch", err),
+				)
+			}
 		} else if err := tx.Commit(); err != nil {
-			return s.err(req.ID, ErrSQLSyntax, err.Error())
+			return s.errFromError(req.ID, ErrSQLSyntax, err)
 		}
 	}
 
@@ -563,7 +612,7 @@ func (s *Server) handleTxBegin(ctx context.Context, req ipc.Message) ipc.Message
 		ReadOnly  bool   `json:"read_only,omitempty"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -571,7 +620,7 @@ func (s *Server) handleTxBegin(ctx context.Context, req ipc.Message) ipc.Message
 	}
 	tx, err := conn.db.BeginTx(ctx, &sql.TxOptions{Isolation: isolationLevel(p.Isolation), ReadOnly: p.ReadOnly})
 	if err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	txID := fmt.Sprintf("%s-tx-%d", s.spec.ID, s.nextTx)
 	s.nextTx++
@@ -584,14 +633,14 @@ func (s *Server) handleTxCommit(req ipc.Message) ipc.Message {
 		TxID string `json:"tx_id"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	tx, ok := s.txs[p.TxID]
 	if !ok {
 		return s.err(req.ID, ErrInvalidParams, fmt.Sprintf("unknown tx_id `%s`", p.TxID))
 	}
 	if err := tx.tx.Commit(); err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	delete(s.txs, p.TxID)
 	return s.ok(req.ID, nil)
@@ -603,7 +652,7 @@ func (s *Server) handleTxRollback(req ipc.Message) ipc.Message {
 		ToSavepoint string `json:"to_savepoint,omitempty"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	tx, ok := s.txs[p.TxID]
 	if !ok {
@@ -611,12 +660,12 @@ func (s *Server) handleTxRollback(req ipc.Message) ipc.Message {
 	}
 	if p.ToSavepoint != "" {
 		if _, err := tx.tx.Exec("ROLLBACK TO SAVEPOINT " + quoteIdentifier(s.spec, p.ToSavepoint)); err != nil {
-			return s.err(req.ID, ErrSQLSyntax, err.Error())
+			return s.errFromError(req.ID, ErrSQLSyntax, err)
 		}
 		return s.ok(req.ID, nil)
 	}
 	if err := tx.tx.Rollback(); err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	delete(s.txs, p.TxID)
 	return s.ok(req.ID, nil)
@@ -628,7 +677,7 @@ func (s *Server) handleTxSavepoint(ctx context.Context, req ipc.Message) ipc.Mes
 		Name string `json:"name"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	tx, ok := s.txs[p.TxID]
 	if !ok {
@@ -638,7 +687,7 @@ func (s *Server) handleTxSavepoint(ctx context.Context, req ipc.Message) ipc.Mes
 		return s.err(req.ID, ErrInvalidParams, "missing required parameter `name`")
 	}
 	if _, err := tx.tx.ExecContext(ctx, "SAVEPOINT "+quoteIdentifier(s.spec, p.Name)); err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	return s.ok(req.ID, nil)
 }
@@ -649,7 +698,7 @@ func (s *Server) handleTxRelease(ctx context.Context, req ipc.Message) ipc.Messa
 		Name string `json:"name"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	tx, ok := s.txs[p.TxID]
 	if !ok {
@@ -659,7 +708,7 @@ func (s *Server) handleTxRelease(ctx context.Context, req ipc.Message) ipc.Messa
 		return s.err(req.ID, ErrInvalidParams, "missing required parameter `name`")
 	}
 	if _, err := tx.tx.ExecContext(ctx, "RELEASE SAVEPOINT "+quoteIdentifier(s.spec, p.Name)); err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	return s.ok(req.ID, nil)
 }
@@ -699,7 +748,7 @@ func (s *Server) handleDdlBuild(req ipc.Message) ipc.Message {
 		Payload json.RawMessage `json:"payload"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	spec, errResp := s.ddlSpecForRequest(req.ID, p.ConnID)
 	if errResp != nil {
@@ -712,11 +761,11 @@ func (s *Server) handleDdlBuild(req ipc.Message) ipc.Message {
 			Options createTableOptions `json:"options"`
 		}
 		if err := decodePayload(p.Payload, &payload); err != nil {
-			return s.err(req.ID, ErrInvalidParams, err.Error())
+			return s.errFromError(req.ID, ErrInvalidParams, err)
 		}
 		_, statements, err := buildCreateTableSQL(spec, payload.Spec, payload.Options)
 		if err != nil {
-			return s.err(req.ID, ErrInvalidParams, err.Error())
+			return s.errFromError(req.ID, ErrInvalidParams, err)
 		}
 		return s.ok(req.ID, map[string]any{"statements": statements, "warnings": []string{}})
 	case "drop_table", "drop_view":
@@ -729,7 +778,7 @@ func (s *Server) handleDdlBuild(req ipc.Message) ipc.Message {
 			Cascade  bool   `json:"cascade,omitempty"`
 		}
 		if err := decodePayload(p.Payload, &payload); err != nil {
-			return s.err(req.ID, ErrInvalidParams, err.Error())
+			return s.errFromError(req.ID, ErrInvalidParams, err)
 		}
 		if payload.Kind == "" {
 			if p.Op == "drop_view" {
@@ -740,7 +789,7 @@ func (s *Server) handleDdlBuild(req ipc.Message) ipc.Message {
 		}
 		sqlText, err := buildDropSQL(spec, payload.Kind, payload.Database, payload.Schema, payload.Name, payload.IfExists, payload.Cascade)
 		if err != nil {
-			return s.err(req.ID, ErrInvalidParams, err.Error())
+			return s.errFromError(req.ID, ErrInvalidParams, err)
 		}
 		return s.ok(req.ID, map[string]any{"statements": []string{sqlText}, "warnings": []string{}})
 	default:
@@ -755,7 +804,7 @@ func (s *Server) handleDdlBuildCreateTable(req ipc.Message) ipc.Message {
 		Options createTableOptions `json:"options"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	spec, errResp := s.ddlSpecForRequest(req.ID, p.ConnID)
 	if errResp != nil {
@@ -763,7 +812,7 @@ func (s *Server) handleDdlBuildCreateTable(req ipc.Message) ipc.Message {
 	}
 	sqlText, statements, err := buildCreateTableSQL(spec, p.Spec, p.Options)
 	if err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	return s.ok(req.ID, map[string]any{"sql": sqlText, "statements": statements})
 }
@@ -777,7 +826,7 @@ func (s *Server) handleDdlBuildAlterTable(req ipc.Message) ipc.Message {
 		Options       alterTableOptions `json:"options"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	spec, errResp := s.ddlSpecForRequest(req.ID, p.ConnID)
 	if errResp != nil {
@@ -785,7 +834,7 @@ func (s *Server) handleDdlBuildAlterTable(req ipc.Message) ipc.Message {
 	}
 	statements, rollback, warnings, err := buildAlterTableSQL(spec, p.FromSpec, p.ToSpec, p.ColumnRenames, p.Options)
 	if err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	return s.ok(req.ID, map[string]any{"statements": statements, "rollback_statements": rollback, "warnings": warnings})
 }
@@ -801,7 +850,7 @@ func (s *Server) handleDdlBuildDrop(req ipc.Message) ipc.Message {
 		Cascade  bool   `json:"cascade,omitempty"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	spec, errResp := s.ddlSpecForRequest(req.ID, p.ConnID)
 	if errResp != nil {
@@ -809,7 +858,7 @@ func (s *Server) handleDdlBuildDrop(req ipc.Message) ipc.Message {
 	}
 	sqlText, err := buildDropSQL(spec, p.Kind, p.Database, p.Schema, p.Name, p.IfExists, p.Cascade)
 	if err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	return s.ok(req.ID, map[string]any{"sql": sqlText})
 }
@@ -831,7 +880,7 @@ func (s *Server) handleDataExport(ctx context.Context, req ipc.Message) ipc.Mess
 		StreamID       string         `json:"stream_id"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -842,15 +891,15 @@ func (s *Server) handleDataExport(ctx context.Context, req ipc.Message) ipc.Mess
 	}
 	sqlText, err := buildExportSQL(s.spec, p.Table, p.Schema, p.Database, p.SQL, p.WhereClause, p.IncludeColumns, p.ExcludeColumns)
 	if err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	args, err := paramsFromWire(p.Params)
 	if err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	data, metadata, count, err := exportRows(ctx, conn.db, sqlText, p.Format, args, p.Options)
 	if err != nil {
-		return s.err(req.ID, ErrNotSupported, err.Error())
+		return s.errFromError(req.ID, ErrNotSupported, err)
 	}
 	s.streams[p.StreamID] = &streamState{data: data}
 	return s.ok(req.ID, map[string]any{"estimated_bytes": uint64(len(data)), "estimated_rows": count, "metadata": metadata})
@@ -866,7 +915,7 @@ func (s *Server) handleDataImportBegin(req ipc.Message) ipc.Message {
 		Columns  []string `json:"columns,omitempty"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	if _, ok := s.conns[p.ConnID]; !ok {
 		return s.err(req.ID, ErrUnknownConnID, fmt.Sprintf("unknown conn_id %d", p.ConnID))
@@ -896,7 +945,7 @@ func (s *Server) handleDataImportChunk(ctx context.Context, req ipc.Message) ipc
 		Rows     [][]cellValue `json:"rows"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	imp, ok := s.imports[p.ImportID]
 	if !ok {
@@ -908,7 +957,7 @@ func (s *Server) handleDataImportChunk(ctx context.Context, req ipc.Message) ipc
 	}
 	sqlText, err := buildInsertSQL(s.spec, imp)
 	if err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	var inserted uint64
 	failed := []map[string]any{}
@@ -918,7 +967,16 @@ func (s *Server) handleDataImportChunk(ctx context.Context, req ipc.Message) ipc
 			_, err = conn.db.ExecContext(ctx, sqlText, args...)
 		}
 		if err != nil {
-			failed = append(failed, map[string]any{"row_index": uint64(index), "message": err.Error(), "code": ErrSQLSyntax})
+			protocolError := protocolErrorFromError(ErrSQLSyntax, err)
+			item := map[string]any{
+				"row_index": uint64(index),
+				"message":   protocolError.Message,
+				"code":      protocolError.Code,
+			}
+			if len(protocolError.Data) > 0 {
+				item["data"] = protocolError.Data
+			}
+			failed = append(failed, item)
 			continue
 		}
 		inserted++
@@ -933,7 +991,7 @@ func (s *Server) handleDataImportCommit(req ipc.Message) ipc.Message {
 		ImportID string `json:"import_id"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	imp, ok := s.imports[p.ImportID]
 	if !ok {
@@ -954,7 +1012,7 @@ func (s *Server) handleDataImportAbort(req ipc.Message) ipc.Message {
 		ImportID string `json:"import_id"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	delete(s.imports, p.ImportID)
 	return s.ok(req.ID, nil)
@@ -966,7 +1024,7 @@ func (s *Server) handleStreamRead(req ipc.Message) ipc.Message {
 		MaxBytes *uint32 `json:"max_bytes,omitempty"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	stream, ok := s.streams[p.StreamID]
 	if !ok {
@@ -988,7 +1046,7 @@ func (s *Server) handleStreamClose(req ipc.Message) ipc.Message {
 		StreamID string `json:"stream_id"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	delete(s.streams, p.StreamID)
 	return s.ok(req.ID, nil)
@@ -1018,7 +1076,7 @@ type objectViewColumn struct {
 func (s *Server) handleSchemaObjectView(ctx context.Context, req ipc.Message) ipc.Message {
 	var p objectViewParams
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -1034,7 +1092,7 @@ func (s *Server) handleSchemaObjectView(ctx context.Context, req ipc.Message) ip
 			return []string{stringCell(cols, 0)}
 		})
 		if err != nil {
-			return s.err(req.ID, ErrSQLSyntax, err.Error())
+			return s.errFromError(req.ID, ErrSQLSyntax, err)
 		}
 		return s.ok(req.ID, objectViewResult("Databases", objectViewColumns("name", "Name"), rows))
 	case "schemas":
@@ -1045,7 +1103,7 @@ func (s *Server) handleSchemaObjectView(ctx context.Context, req ipc.Message) ip
 			return []string{stringCell(cols, 0), stringCell(cols, 1)}
 		})
 		if err != nil {
-			return s.err(req.ID, ErrSQLSyntax, err.Error())
+			return s.errFromError(req.ID, ErrSQLSyntax, err)
 		}
 		return s.ok(req.ID, objectViewResult("Schemas", objectViewColumns("name", "Name", "owner", "Owner"), rows))
 	case "tables":
@@ -1058,7 +1116,7 @@ func (s *Server) handleSchemaObjectView(ctx context.Context, req ipc.Message) ip
 			return []string{stringCell(cols, 0), stringCell(cols, 1), stringCell(cols, 2)}
 		})
 		if err != nil {
-			return s.err(req.ID, ErrSQLSyntax, err.Error())
+			return s.errFromError(req.ID, ErrSQLSyntax, err)
 		}
 		return s.ok(req.ID, objectViewResult("Views", objectViewColumns("name", "Name", "kind", "Kind", "comment", "Comment"), rows))
 	case "columns":
@@ -1078,7 +1136,7 @@ func (s *Server) handleSchemaObjectView(ctx context.Context, req ipc.Message) ip
 			}
 		})
 		if err != nil {
-			return s.err(req.ID, ErrSQLSyntax, err.Error())
+			return s.errFromError(req.ID, ErrSQLSyntax, err)
 		}
 		return s.ok(req.ID, objectViewResult("Columns", columnObjectViewColumns(), rows))
 	case "indexes":
@@ -1098,7 +1156,7 @@ func (s *Server) handleSchemaObjectView(ctx context.Context, req ipc.Message) ip
 			}
 		})
 		if err != nil {
-			return s.err(req.ID, ErrSQLSyntax, err.Error())
+			return s.errFromError(req.ID, ErrSQLSyntax, err)
 		}
 		return s.ok(req.ID, objectViewResult("Indexes", indexObjectViewColumns(), rows))
 	case "functions":
@@ -1109,7 +1167,7 @@ func (s *Server) handleSchemaObjectView(ctx context.Context, req ipc.Message) ip
 			return []string{stringCell(cols, 0), stringCell(cols, 2), stringCell(cols, 3), stringCell(cols, 4)}
 		})
 		if err != nil {
-			return s.err(req.ID, ErrSQLSyntax, err.Error())
+			return s.errFromError(req.ID, ErrSQLSyntax, err)
 		}
 		return s.ok(req.ID, objectViewResult("Functions", objectViewColumns("name", "Name", "returns", "Returns", "language", "Language", "comment", "Comment"), rows))
 	case "procedures":
@@ -1120,7 +1178,7 @@ func (s *Server) handleSchemaObjectView(ctx context.Context, req ipc.Message) ip
 			return []string{stringCell(cols, 0), stringCell(cols, 5), stringCell(cols, 6), stringCell(cols, 7)}
 		})
 		if err != nil {
-			return s.err(req.ID, ErrSQLSyntax, err.Error())
+			return s.errFromError(req.ID, ErrSQLSyntax, err)
 		}
 		return s.ok(req.ID, objectViewResult("Procedures", objectViewColumns("name", "Name", "status", "Status", "created", "Created", "modified", "Modified"), rows))
 	case "triggers":
@@ -1131,7 +1189,7 @@ func (s *Server) handleSchemaObjectView(ctx context.Context, req ipc.Message) ip
 			return []string{stringCell(cols, 0), stringCell(cols, 1), stringCell(cols, 3), stringCell(cols, 2), stringCell(cols, 5)}
 		})
 		if err != nil {
-			return s.err(req.ID, ErrSQLSyntax, err.Error())
+			return s.errFromError(req.ID, ErrSQLSyntax, err)
 		}
 		return s.ok(req.ID, objectViewResult("Triggers", objectViewColumns("name", "Name", "table", "Table", "event", "Event", "type", "Type", "status", "Status"), rows))
 	case "sequences":
@@ -1142,7 +1200,7 @@ func (s *Server) handleSchemaObjectView(ctx context.Context, req ipc.Message) ip
 			return []string{stringCell(cols, 0), stringCell(cols, 1), stringCell(cols, 2), stringCell(cols, 3), stringCell(cols, 4), stringCell(cols, 5), stringCell(cols, 6)}
 		})
 		if err != nil {
-			return s.err(req.ID, ErrSQLSyntax, err.Error())
+			return s.errFromError(req.ID, ErrSQLSyntax, err)
 		}
 		return s.ok(req.ID, objectViewResult("Sequences", objectViewColumns("name", "Name", "min", "Min", "max", "Max", "increment", "Increment", "last", "Last Value", "cache", "Cache", "cycle", "Cycle"), rows))
 	default:
@@ -1159,7 +1217,7 @@ func (s *Server) handleObjectListView(ctx context.Context, id json.RawMessage, c
 		return []string{stringCell(cols, 0), stringCell(cols, 1), stringCell(cols, 2)}
 	})
 	if err != nil {
-		return s.err(id, ErrSQLSyntax, err.Error())
+		return s.errFromError(id, ErrSQLSyntax, err)
 	}
 	return s.ok(id, objectViewResult(title, columns, rows))
 }
@@ -1257,7 +1315,7 @@ func (s *Server) handleSchemaDatabases(ctx context.Context, req ipc.Message) ipc
 		return map[string]any{"name": stringCell(cols, 0)}
 	})
 	if err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	return s.ok(req.ID, rows)
 }
@@ -1268,7 +1326,7 @@ func (s *Server) handleSchemaSchemas(ctx context.Context, req ipc.Message) ipc.M
 		Database string `json:"database"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -1281,7 +1339,7 @@ func (s *Server) handleSchemaSchemas(ctx context.Context, req ipc.Message) ipc.M
 		return map[string]any{"name": stringCell(cols, 0), "owner": stringCell(cols, 1)}
 	})
 	if err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	return s.ok(req.ID, rows)
 }
@@ -1294,7 +1352,7 @@ func (s *Server) handleSchemaObjects(ctx context.Context, req ipc.Message) ipc.M
 		Kinds    []string `json:"kinds,omitempty"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -1307,7 +1365,7 @@ func (s *Server) handleSchemaObjects(ctx context.Context, req ipc.Message) ipc.M
 		return map[string]any{"name": stringCell(cols, 0), "kind": stringCell(cols, 1), "comment": stringCell(cols, 2)}
 	})
 	if err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	return s.ok(req.ID, rows)
 }
@@ -1320,7 +1378,7 @@ func (s *Server) handleSchemaColumns(ctx context.Context, req ipc.Message) ipc.M
 		Table    string `json:"table"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -1345,7 +1403,7 @@ func (s *Server) handleSchemaColumns(ctx context.Context, req ipc.Message) ipc.M
 		}
 	})
 	if err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	return s.ok(req.ID, rows)
 }
@@ -1358,7 +1416,7 @@ func (s *Server) handleSchemaIndexes(ctx context.Context, req ipc.Message) ipc.M
 		Table    string `json:"table"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -1382,7 +1440,7 @@ func (s *Server) handleSchemaIndexes(ctx context.Context, req ipc.Message) ipc.M
 		}
 	})
 	if err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	return s.ok(req.ID, rows)
 }
@@ -1395,7 +1453,7 @@ func (s *Server) handleSchemaForeignKeys(ctx context.Context, req ipc.Message) i
 		Table    string `json:"table"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -1422,7 +1480,7 @@ func (s *Server) handleSchemaForeignKeys(ctx context.Context, req ipc.Message) i
 		}
 	})
 	if err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	return s.ok(req.ID, rows)
 }
@@ -1434,7 +1492,7 @@ func (s *Server) handleSchemaViews(ctx context.Context, req ipc.Message) ipc.Mes
 		Schema   string `json:"schema,omitempty"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -1459,7 +1517,7 @@ func (s *Server) handleSchemaViews(ctx context.Context, req ipc.Message) ipc.Mes
 		}
 	})
 	if err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	return s.ok(req.ID, rows)
 }
@@ -1471,7 +1529,7 @@ func (s *Server) handleSchemaFunctions(ctx context.Context, req ipc.Message) ipc
 		Schema   string `json:"schema,omitempty"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -1491,7 +1549,7 @@ func (s *Server) handleSchemaFunctions(ctx context.Context, req ipc.Message) ipc
 		}
 	})
 	if err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	return s.ok(req.ID, rows)
 }
@@ -1503,7 +1561,7 @@ func (s *Server) handleSchemaProcedures(ctx context.Context, req ipc.Message) ip
 		Schema   string `json:"schema,omitempty"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -1522,7 +1580,7 @@ func (s *Server) handleSchemaProcedures(ctx context.Context, req ipc.Message) ip
 		}
 	})
 	if err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	return s.ok(req.ID, rows)
 }
@@ -1535,7 +1593,7 @@ func (s *Server) handleSchemaTriggers(ctx context.Context, req ipc.Message) ipc.
 		Table    string `json:"table,omitempty"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -1554,7 +1612,7 @@ func (s *Server) handleSchemaTriggers(ctx context.Context, req ipc.Message) ipc.
 		}
 	})
 	if err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	return s.ok(req.ID, rows)
 }
@@ -1566,7 +1624,7 @@ func (s *Server) handleSchemaSequences(ctx context.Context, req ipc.Message) ipc
 		Schema   string `json:"schema,omitempty"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -1586,7 +1644,7 @@ func (s *Server) handleSchemaSequences(ctx context.Context, req ipc.Message) ipc
 		}
 	})
 	if err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	return s.ok(req.ID, rows)
 }
@@ -1599,7 +1657,7 @@ func (s *Server) handleSchemaViewDefinition(ctx context.Context, req ipc.Message
 		View     string `json:"view"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		return s.err(req.ID, ErrInvalidParams, err.Error())
+		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -1618,7 +1676,7 @@ func (s *Server) handleSchemaViewDefinition(ctx context.Context, req ipc.Message
 		}
 	})
 	if err != nil {
-		return s.err(req.ID, ErrSQLSyntax, err.Error())
+		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}
 	if len(rows) == 0 {
 		return s.ok(req.ID, map[string]any{"sql": "", "is_materialized": false})
@@ -1742,7 +1800,7 @@ func (s *Server) connFromParams(req ipc.Message) (*connectionState, *ipc.Message
 		ConnID uint64 `json:"conn_id"`
 	}
 	if err := decodeParams(req.Params, &p); err != nil {
-		resp := s.err(req.ID, ErrInvalidParams, err.Error())
+		resp := s.errFromError(req.ID, ErrInvalidParams, err)
 		return nil, &resp
 	}
 	conn, ok := s.conns[p.ConnID]
@@ -1753,13 +1811,14 @@ func (s *Server) connFromParams(req ipc.Message) (*connectionState, *ipc.Message
 	return conn, nil
 }
 
-func (s *Server) closeAll() {
+func (s *Server) closeAll() error {
+	var closeErr error
 	for id := range s.cursors {
-		_ = s.closeCursor(id)
+		closeErr = joinCleanupError(closeErr, fmt.Sprintf("close cursor %s", id), s.closeCursor(id))
 		delete(s.cursors, id)
 	}
 	for id, tx := range s.txs {
-		_ = tx.tx.Rollback()
+		closeErr = joinCleanupError(closeErr, fmt.Sprintf("rollback transaction %s", id), tx.tx.Rollback())
 		delete(s.txs, id)
 	}
 	for id := range s.imports {
@@ -1769,27 +1828,32 @@ func (s *Server) closeAll() {
 		delete(s.streams, id)
 	}
 	for id, conn := range s.conns {
-		conn.db.Close()
+		closeErr = joinCleanupError(closeErr, fmt.Sprintf("close connection %d", id), conn.db.Close())
 		delete(s.conns, id)
 	}
+	return closeErr
 }
 
-func (s *Server) closeCursorsForConn(connID uint64) {
+func (s *Server) closeCursorsForConn(connID uint64) error {
+	var closeErr error
 	for cursorID, cursor := range s.cursors {
 		if cursor.connID == connID {
-			_ = s.closeCursor(cursorID)
+			closeErr = joinCleanupError(closeErr, fmt.Sprintf("close cursor %s", cursorID), s.closeCursor(cursorID))
 			delete(s.cursors, cursorID)
 		}
 	}
+	return closeErr
 }
 
-func (s *Server) rollbackTxsForConn(connID uint64) {
+func (s *Server) rollbackTxsForConn(connID uint64) error {
+	var rollbackErr error
 	for txID, tx := range s.txs {
 		if tx.connID == connID {
-			_ = tx.tx.Rollback()
+			rollbackErr = joinCleanupError(rollbackErr, fmt.Sprintf("rollback transaction %s", txID), tx.tx.Rollback())
 			delete(s.txs, txID)
 		}
 	}
+	return rollbackErr
 }
 
 func (s *Server) dropImportsForConn(connID uint64) {
@@ -1817,7 +1881,7 @@ func (s *Server) closeCursor(cursorID string) error {
 func (s *Server) ok(id json.RawMessage, result any) ipc.Message {
 	raw, err := json.Marshal(result)
 	if err != nil {
-		return s.err(id, ErrInternalError, err.Error())
+		return s.errFromError(id, ErrInternalError, err)
 	}
 	return ipc.Message{JSONRPC: ipc.JSONRPCVersion, ID: id, Result: raw}
 }
@@ -1827,6 +1891,14 @@ func (s *Server) err(id json.RawMessage, code int32, message string) ipc.Message
 		JSONRPC: ipc.JSONRPCVersion,
 		ID:      id,
 		Error:   &ipc.ProtocolError{Code: code, Message: message},
+	}
+}
+
+func (s *Server) errFromError(id json.RawMessage, code int32, err error) ipc.Message {
+	return ipc.Message{
+		JSONRPC: ipc.JSONRPCVersion,
+		ID:      id,
+		Error:   protocolErrorFromError(code, err),
 	}
 }
 

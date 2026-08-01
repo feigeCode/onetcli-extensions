@@ -1,6 +1,6 @@
 use crate::common::{
-    BlobStore, append_admin_auth_source, close_blob, command_error, connection_error,
-    decode_document, encode_document, internal_error, invalid_params, next_blob_id, read_blob,
+    BlobStore, append_admin_auth_source, close_blob, decode_document, encode_document,
+    internal_error, invalid_params, mongo_error, next_blob_id, read_blob,
     should_retry_with_admin_auth_source, unsupported_method,
 };
 use async_trait::async_trait;
@@ -8,7 +8,7 @@ use extension_driver::{
     AsyncDriverConnection, AsyncNativeDriver, AsyncOpenedConnection, serve_async_from_env,
 };
 use extension_protocol::conn::{ConnOpenParams, ConnOpenResult};
-use extension_protocol::error::ProtocolError;
+use extension_protocol::error::{ProtocolError, error_codes};
 use extension_protocol::lifecycle::{Capability, InitResult};
 use extension_protocol::method;
 use extension_protocol::mongodb::MongoFindResult;
@@ -71,9 +71,9 @@ impl AsyncNativeDriver for MongoDriver {
             {
                 connect_and_read_build_info(&append_admin_auth_source(&config.connection_string))
                     .await
-                    .map_err(connection_error)?
+                    .map_err(legacy_connection_error)?
             }
-            Err(error) => return Err(connection_error(error)),
+            Err(error) => return Err(legacy_connection_error(error)),
         };
         let conn_id = self.next_conn_id.fetch_add(1, Ordering::Relaxed);
         Ok(AsyncOpenedConnection {
@@ -121,7 +121,7 @@ impl AsyncDriverConnection for MongoConnection {
                     .database(&params.database)
                     .run_command(decode_document(params.command.bson)?, None)
                     .await
-                    .map_err(command_error)?;
+                    .map_err(legacy_command_error)?;
                 serde_json::to_value(encode_document(&result)?).map_err(internal_error)
             }
             method::MONGODB_FIND => self.find(params).await,
@@ -174,10 +174,10 @@ impl MongoConnection {
         let mut cursor = collection
             .find(filter, options)
             .await
-            .map_err(command_error)?;
+            .map_err(legacy_command_error)?;
         let mut documents = Vec::new();
         let mut packed = Vec::new();
-        while let Some(document) = cursor.try_next().await.map_err(command_error)? {
+        while let Some(document) = cursor.try_next().await.map_err(legacy_command_error)? {
             let bytes = mongodb_legacy::bson::to_vec(&document).map_err(internal_error)?;
             packed.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
             packed.extend_from_slice(&bytes);
@@ -204,4 +204,33 @@ impl MongoConnection {
         })
         .map_err(internal_error)
     }
+}
+
+fn legacy_connection_error(error: mongodb_legacy::error::Error) -> ProtocolError {
+    legacy_protocol_error(error_codes::IO_CONNECTION_REFUSED, error)
+}
+
+fn legacy_command_error(error: mongodb_legacy::error::Error) -> ProtocolError {
+    legacy_protocol_error(error_codes::EXTENSION_CUSTOM_START, error)
+}
+
+fn legacy_protocol_error(protocol_code: i32, error: mongodb_legacy::error::Error) -> ProtocolError {
+    let (vendor_code, code_name, server_message) = match error.kind.as_ref() {
+        mongodb_legacy::error::ErrorKind::Command(command) => (
+            Some(i64::from(command.code)),
+            (!command.code_name.is_empty()).then(|| command.code_name.clone()),
+            (!command.message.is_empty()).then(|| command.message.clone()),
+        ),
+        _ => (None, None, None),
+    };
+    let labels = error.labels().iter().cloned().collect();
+    mongo_error(
+        protocol_code,
+        error.to_string(),
+        format!("{:?}", error.kind),
+        labels,
+        vendor_code,
+        code_name,
+        server_message,
+    )
 }

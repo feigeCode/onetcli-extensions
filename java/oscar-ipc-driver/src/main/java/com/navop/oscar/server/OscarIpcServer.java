@@ -62,7 +62,7 @@ public final class OscarIpcServer {
         } catch (IllegalArgumentException error) {
             return error(id, ProtocolError.INVALID_PARAMS, error.getMessage());
         } catch (SQLException error) {
-            return error(id, ProtocolError.SQL_SYNTAX, error.getMessage());
+            return sqlError(id, ProtocolError.SQL_SYNTAX, error);
         } catch (Exception error) {
             return error(id, ProtocolError.INTERNAL_ERROR, error.getMessage());
         }
@@ -1291,7 +1291,8 @@ public final class OscarIpcServer {
                     Map<String, Object> item = new LinkedHashMap<String, Object>();
                     item.put("index", Integer.valueOf(i));
                     item.put("code", Integer.valueOf(ProtocolError.SQL_SYNTAX));
-                    item.put("message", error.getMessage());
+                    item.put("message", sqlErrorMessage(error));
+                    item.put("data", sqlErrorData(error));
                     errors.add(item);
                     if (stopOnError) {
                         break;
@@ -1966,6 +1967,65 @@ public final class OscarIpcServer {
         error.put("message", message == null ? "" : message);
         response.set("error", error);
         return response;
+    }
+
+    private JsonNode sqlError(JsonNode id, int code, SQLException exception) {
+        ObjectNode response = (ObjectNode) error(id, code, sqlErrorMessage(exception));
+        ((ObjectNode) response.get("error")).set("data", mapper.valueToTree(sqlErrorData(exception)));
+        return response;
+    }
+
+    private Map<String, Object> sqlErrorData(SQLException exception) {
+        Map<String, Object> data = new LinkedHashMap<String, Object>();
+        if (exception.getSQLState() != null && !exception.getSQLState().isEmpty()) {
+            data.put("sqlstate", exception.getSQLState());
+        }
+        data.put("vendor_code", Integer.valueOf(exception.getErrorCode()));
+
+        List<Map<String, Object>> chain = new ArrayList<Map<String, Object>>();
+        SQLException current = exception;
+        for (int depth = 0; current != null && depth < 32; depth++) {
+            Map<String, Object> item = new LinkedHashMap<String, Object>();
+            item.put("message", current.getMessage() == null ? "" : current.getMessage());
+            if (current.getSQLState() != null && !current.getSQLState().isEmpty()) {
+                item.put("sqlstate", current.getSQLState());
+            }
+            item.put("vendor_code", Integer.valueOf(current.getErrorCode()));
+            chain.add(item);
+            SQLException next = current.getNextException();
+            if (next == current) {
+                break;
+            }
+            current = next;
+        }
+        Map<String, Object> extra = new LinkedHashMap<String, Object>();
+        extra.put("chain", chain);
+        data.put("extra", extra);
+        return data;
+    }
+
+    private String sqlErrorMessage(SQLException exception) {
+        StringBuilder message = new StringBuilder();
+        SQLException current = exception;
+        for (int depth = 0; current != null && depth < 32; depth++) {
+            if (message.length() > 0) {
+                message.append("\nCaused by: ");
+            }
+            String currentMessage = current.getMessage();
+            message.append(currentMessage == null || currentMessage.isEmpty()
+                ? current.getClass().getName()
+                : currentMessage);
+            if (current.getSQLState() != null && !current.getSQLState().isEmpty()) {
+                message.append(" [SQLSTATE ").append(current.getSQLState()).append(']');
+            }
+            message.append(" [vendor code ").append(current.getErrorCode()).append(']');
+            SQLException next = current.getNextException();
+            if (next == current) {
+                break;
+            }
+            current = next;
+        }
+        return message.toString();
     }
 
     private void closeAll() throws SQLException {

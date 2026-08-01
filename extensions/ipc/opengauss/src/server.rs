@@ -41,14 +41,45 @@ pub(crate) fn params_deserialize_error(error: serde_json::Error) -> ProtocolErro
 }
 
 pub(crate) fn protocol_error_from_anyhow(code: ErrorCode, error: anyhow::Error) -> ProtocolError {
-    let mut pe = ProtocolError::new(code, format!("{error:#}"));
-    pe = pe.with_data(ErrorData::new().with_extra(serde_json::json!({
-        "chain": error
-            .chain()
-            .map(|e| e.to_string())
-            .collect::<Vec<_>>(),
-    })));
-    pe
+    let chain = error
+        .chain()
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>();
+    let mut data = ErrorData::new();
+    let mut extra = serde_json::json!({ "chain": chain });
+
+    if let Some(database_error) = error.chain().find_map(|source| {
+        source
+            .downcast_ref::<tokio_opengauss::Error>()
+            .and_then(tokio_opengauss::Error::as_db_error)
+    }) {
+        data.sqlstate = Some(database_error.code().code().to_owned());
+        data.schema = database_error.schema().map(ToOwned::to_owned);
+        data.table = database_error.table().map(ToOwned::to_owned);
+        data.column = database_error.column().map(ToOwned::to_owned);
+        data.constraint = database_error.constraint().map(ToOwned::to_owned);
+        extra["severity"] = serde_json::json!(database_error.severity());
+        extra["server_message"] = serde_json::json!(database_error.message());
+        extra["detail"] = serde_json::json!(database_error.detail());
+        extra["hint"] = serde_json::json!(database_error.hint());
+        extra["where"] = serde_json::json!(database_error.where_());
+        extra["datatype"] = serde_json::json!(database_error.datatype());
+        extra["file"] = serde_json::json!(database_error.file());
+        extra["line"] = serde_json::json!(database_error.line());
+        extra["routine"] = serde_json::json!(database_error.routine());
+        match database_error.position() {
+            Some(tokio_opengauss::error::ErrorPosition::Original(position)) => {
+                extra["position"] = serde_json::json!(position);
+            }
+            Some(tokio_opengauss::error::ErrorPosition::Internal { position, query }) => {
+                extra["internal_position"] = serde_json::json!(position);
+                extra["internal_query"] = serde_json::json!(query);
+            }
+            None => {}
+        }
+    }
+
+    ProtocolError::new(code, format!("{error:#}")).with_data(data.with_extra(extra))
 }
 
 pub(crate) fn not_supported(message: impl Into<String>) -> ProtocolError {

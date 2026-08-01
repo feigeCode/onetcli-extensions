@@ -106,6 +106,26 @@ public class GBase8sIpcServerTest {
     }
 
     @Test
+    public void sqlErrorsPreserveJdbcDetailsForSingleAndBatchExecution() throws Exception {
+        GBase8sIpcServer server = newServer();
+        server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));
+        JsonNode open = server.handle(request(2, "conn/open", "{\"driver_id\":\"gbase8s\",\"config\":" + configJson() + "}"));
+        long connId = open.get("result").get("conn_id").asLong();
+
+        JsonNode single = server.handle(request(3, "exec/run", "{\"conn_id\":" + connId + ",\"sql\":\"INSERT INTO missing_table VALUES (1)\"}"));
+        assertTrue(single.toString(), single.has("error"));
+        assertTrue(single.get("error").get("message").asText().contains("missing_table"));
+        assertFalse(single.get("error").get("data").get("sqlstate").asText().isEmpty());
+        assertTrue(single.get("error").get("data").get("extra").get("chain").size() >= 1);
+
+        JsonNode batch = server.handle(request(4, "exec/batch", "{\"conn_id\":" + connId + ",\"statements\":[\"INSERT INTO missing_table VALUES (1)\"],\"stop_on_error\":true}"));
+        JsonNode batchError = batch.get("result").get("errors").get(0);
+        assertTrue(batchError.get("message").asText().contains("missing_table"));
+        assertFalse(batchError.get("data").get("sqlstate").asText().isEmpty());
+        assertTrue(batchError.get("data").get("extra").get("chain").size() >= 1);
+    }
+
+    @Test
     public void schemaMethodsReadGBase8sCatalogRows() throws Exception {
         GBase8sIpcServer server = newServer();
         server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));

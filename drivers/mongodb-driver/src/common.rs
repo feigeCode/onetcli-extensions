@@ -1,8 +1,8 @@
 use base64::Engine as _;
 use extension_protocol::blob::{BlobReadParams, BlobReadResult, WireBytes};
-use extension_protocol::error::{ProtocolError, error_codes};
+use extension_protocol::error::{ErrorData, ProtocolError, error_codes};
 use extension_protocol::mongodb::MongoBsonDocument;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -92,12 +92,35 @@ pub fn invalid_params(error: impl std::fmt::Display) -> ProtocolError {
     ProtocolError::new(error_codes::INVALID_PARAMS, error.to_string())
 }
 
-pub fn connection_error(error: impl std::fmt::Display) -> ProtocolError {
-    ProtocolError::new(error_codes::IO_CONNECTION_REFUSED, error.to_string())
-}
-
-pub fn command_error(error: impl std::fmt::Display) -> ProtocolError {
-    ProtocolError::new(error_codes::EXTENSION_CUSTOM_START, error.to_string())
+pub fn mongo_error(
+    protocol_code: i32,
+    message: String,
+    kind: String,
+    mut labels: Vec<String>,
+    vendor_code: Option<i64>,
+    code_name: Option<String>,
+    server_message: Option<String>,
+) -> ProtocolError {
+    labels.sort();
+    let retryable = labels.iter().any(|label| {
+        matches!(
+            label.as_str(),
+            "RetryableWriteError" | "TransientTransactionError" | "UnknownTransactionCommitResult"
+        )
+    });
+    let data = ErrorData {
+        vendor_code,
+        retryable: retryable.then_some(true),
+        extra: Some(json!({
+            "kind": kind,
+            "labels": labels,
+            "code_name": code_name,
+            "server_message": server_message,
+            "source": message,
+        })),
+        ..ErrorData::default()
+    };
+    ProtocolError::new(protocol_code, message).with_data(data)
 }
 
 pub fn internal_error(error: impl std::fmt::Display) -> ProtocolError {
@@ -148,5 +171,31 @@ mod tests {
             "mongodb://user:pass@mongo.internal/app?authSource=users",
             "AuthenticationFailed code 18"
         ));
+    }
+
+    #[test]
+    fn mongo_error_preserves_native_details_and_retryable_label() {
+        let error = mongo_error(
+            error_codes::EXTENSION_CUSTOM_START,
+            "command failed: duplicate key".to_string(),
+            "Command".to_string(),
+            vec!["RetryableWriteError".to_string()],
+            Some(11000),
+            Some("DuplicateKey".to_string()),
+            Some("duplicate key".to_string()),
+        );
+        let data = error.data.expect("MongoDB error data");
+        let extra = data.extra.expect("MongoDB native details");
+
+        assert_eq!(Some(11000), data.vendor_code);
+        assert_eq!(Some(true), data.retryable);
+        assert_eq!(
+            Some("DuplicateKey"),
+            extra.get("code_name").and_then(Value::as_str)
+        );
+        assert_eq!(
+            Some("duplicate key"),
+            extra.get("server_message").and_then(Value::as_str)
+        );
     }
 }

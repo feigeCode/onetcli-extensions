@@ -1,6 +1,6 @@
 use crate::common::{
-    BlobStore, append_admin_auth_source, close_blob, command_error, connection_error,
-    decode_document, encode_document, internal_error, invalid_params, next_blob_id, read_blob,
+    BlobStore, append_admin_auth_source, close_blob, decode_document, encode_document,
+    internal_error, invalid_params, mongo_error, next_blob_id, read_blob,
     should_retry_with_admin_auth_source, unsupported_method,
 };
 use async_trait::async_trait;
@@ -129,7 +129,7 @@ impl AsyncDriverConnection for MongoConnection {
                     .database(&params.database)
                     .run_command(decode_document(params.command.bson)?)
                     .await
-                    .map_err(command_error)?;
+                    .map_err(modern_command_error)?;
                 serde_json::to_value(encode_document(&result)?).map_err(internal_error)
             }
             method::MONGODB_FIND => self.find(params).await,
@@ -183,10 +183,10 @@ impl MongoConnection {
             .find(filter)
             .with_options(options)
             .await
-            .map_err(command_error)?;
+            .map_err(modern_command_error)?;
         let mut documents = Vec::new();
         let mut packed = Vec::new();
-        while let Some(document) = cursor.try_next().await.map_err(command_error)? {
+        while let Some(document) = cursor.try_next().await.map_err(modern_command_error)? {
             let bytes = mongodb_modern::bson::to_vec(&document).map_err(internal_error)?;
             packed.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
             packed.extend_from_slice(&bytes);
@@ -215,16 +215,41 @@ impl MongoConnection {
     }
 }
 
-fn modern_connection_error(error: impl std::fmt::Display) -> ProtocolError {
+fn modern_connection_error(error: mongodb_modern::error::Error) -> ProtocolError {
     let message = error.to_string();
     if message.contains("wire version")
         || message.contains("incompatible server")
         || message.contains("requires at least")
     {
-        ProtocolError::new(error_codes::SERVER_INCOMPATIBLE, message)
+        modern_protocol_error(error_codes::SERVER_INCOMPATIBLE, error)
     } else {
-        connection_error(message)
+        modern_protocol_error(error_codes::IO_CONNECTION_REFUSED, error)
     }
+}
+
+fn modern_command_error(error: mongodb_modern::error::Error) -> ProtocolError {
+    modern_protocol_error(error_codes::EXTENSION_CUSTOM_START, error)
+}
+
+fn modern_protocol_error(protocol_code: i32, error: mongodb_modern::error::Error) -> ProtocolError {
+    let (vendor_code, code_name, server_message) = match error.kind.as_ref() {
+        mongodb_modern::error::ErrorKind::Command(command) => (
+            Some(i64::from(command.code)),
+            (!command.code_name.is_empty()).then(|| command.code_name.clone()),
+            (!command.message.is_empty()).then(|| command.message.clone()),
+        ),
+        _ => (None, None, None),
+    };
+    let labels = error.labels().iter().cloned().collect();
+    mongo_error(
+        protocol_code,
+        error.to_string(),
+        format!("{:?}", error.kind),
+        labels,
+        vendor_code,
+        code_name,
+        server_message,
+    )
 }
 
 fn server_requires_legacy(build_info: &mongodb_modern::bson::Document) -> bool {
@@ -242,13 +267,17 @@ mod tests {
 
     #[test]
     fn modern_driver_only_classifies_compatibility_errors_for_fallback() {
-        let incompatible = modern_connection_error(
-            "Server reports wire version 6, but this driver requires at least 8",
-        );
-        let operational = modern_connection_error("authentication failed");
+        let incompatible =
+            modern_connection_error(mongodb_modern::error::Error::from(std::io::Error::other(
+                "Server reports wire version 6, but this driver requires at least 8",
+            )));
+        let operational = modern_connection_error(mongodb_modern::error::Error::from(
+            std::io::Error::other("authentication failed"),
+        ));
 
         assert_eq!(error_codes::SERVER_INCOMPATIBLE, incompatible.code);
         assert_eq!(error_codes::IO_CONNECTION_REFUSED, operational.code);
+        assert!(incompatible.data.is_some());
     }
 
     #[test]

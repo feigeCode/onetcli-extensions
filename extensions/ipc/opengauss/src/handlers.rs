@@ -141,11 +141,13 @@ pub fn handle_conn_test(params: &Value) -> Result<Value, ProtocolError> {
     session
         .ping()
         .map_err(|e| protocol_error_from_anyhow(error_codes::SERVER_CLOSED_CONNECTION, e))?;
-    let version = session.server_version().ok();
+    let version = session
+        .server_version()
+        .map_err(|e| protocol_error_from_anyhow(error_codes::SERVER_CLOSED_CONNECTION, e))?;
     session.close();
     Ok(json!({
         "ok": true,
-        "server_version": version,
+        "server_version": Some(version),
         "warnings": [],
         "latency_ms": started.elapsed().as_millis() as u32,
     }))

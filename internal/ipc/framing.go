@@ -27,6 +27,20 @@ type ProtocolError struct {
 	Data    json.RawMessage `json:"data,omitempty"`
 }
 
+type ErrorData struct {
+	StartOffset *uint32        `json:"start_offset,omitempty"`
+	EndOffset   *uint32        `json:"end_offset,omitempty"`
+	Database    string         `json:"database,omitempty"`
+	Schema      string         `json:"schema,omitempty"`
+	Table       string         `json:"table,omitempty"`
+	Column      string         `json:"column,omitempty"`
+	Constraint  string         `json:"constraint,omitempty"`
+	SQLState    string         `json:"sqlstate,omitempty"`
+	VendorCode  *int64         `json:"vendor_code,omitempty"`
+	Retryable   *bool          `json:"retryable,omitempty"`
+	Extra       map[string]any `json:"extra,omitempty"`
+}
+
 func ReadFrame(r io.Reader) (Message, error) {
 	var prefix [4]byte
 	if _, err := io.ReadFull(r, prefix[:]); err != nil {

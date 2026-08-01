@@ -6,7 +6,7 @@ use extension_driver::{
 };
 use extension_protocol::blob::{BlobReadParams, BlobReadResult, WireBytes};
 use extension_protocol::conn::{ConnOpenParams, ConnOpenResult};
-use extension_protocol::error::{ProtocolError, error_codes};
+use extension_protocol::error::{ErrorData, ProtocolError, error_codes};
 use extension_protocol::lifecycle::{Capability, InitResult};
 use extension_protocol::method;
 use extension_protocol::mongodb::{
@@ -109,7 +109,7 @@ fn connect(connection_string: &str) -> Result<Client, ProtocolError> {
     }
 
     let parsed =
-        mongodb_legacy32::connstring::parse(connection_string).map_err(connection_error)?;
+        mongodb_legacy32::connstring::parse(connection_string).map_err(mongo_connection_error)?;
     let username = parsed.user.as_deref().map(percent_decode);
     let password = parsed.password.as_deref().map(percent_decode);
     let auth_source = parsed
@@ -125,13 +125,13 @@ fn connect(connection_string: &str) -> Result<Client, ProtocolError> {
         .or_else(|| parsed.database.clone().filter(|value| !value.is_empty()))
         .unwrap_or_else(|| "admin".to_string());
 
-    let client = Client::with_uri(connection_string).map_err(connection_error)?;
+    let client = Client::with_uri(connection_string).map_err(mongo_connection_error)?;
     if let Some(username) = username {
         let password = password.unwrap_or_default();
         client
             .db(&auth_source)
             .auth(&username, &password)
-            .map_err(connection_error)?;
+            .map_err(mongo_connection_error)?;
     }
     client
         .db("admin")
@@ -140,7 +140,7 @@ fn connect(connection_string: &str) -> Result<Client, ProtocolError> {
             CommandType::BuildInfo,
             None,
         )
-        .map_err(connection_error)?;
+        .map_err(mongo_connection_error)?;
     Ok(client)
 }
 
@@ -294,12 +294,119 @@ fn uri_option_is_true(connection_string: &str, option: &str) -> bool {
         })
 }
 
-fn connection_error(error: impl std::fmt::Display) -> ProtocolError {
-    ProtocolError::new(error_codes::IO_CONNECTION_REFUSED, error.to_string())
+fn connection_error(error: impl std::fmt::Display + std::fmt::Debug) -> ProtocolError {
+    legacy_protocol_error(error_codes::IO_CONNECTION_REFUSED, error)
 }
 
-fn command_error(error: impl std::fmt::Display) -> ProtocolError {
-    ProtocolError::new(error_codes::EXTENSION_CUSTOM_START, error.to_string())
+fn mongo_connection_error(error: mongodb_legacy32::Error) -> ProtocolError {
+    legacy_mongo_protocol_error(error_codes::IO_CONNECTION_REFUSED, error)
+}
+
+fn command_error(error: mongodb_legacy32::Error) -> ProtocolError {
+    legacy_mongo_protocol_error(error_codes::EXTENSION_CUSTOM_START, error)
+}
+
+fn legacy_mongo_protocol_error(code: i32, error: mongodb_legacy32::Error) -> ProtocolError {
+    use mongodb_legacy32::Error;
+
+    let message = error.to_string();
+    let mut extra = serde_json::Map::from_iter([
+        ("kind".to_string(), Value::String(format!("{error:?}"))),
+        ("source".to_string(), Value::String(message.clone())),
+        (
+            "chain".to_string(),
+            Value::Array(
+                legacy_mongo_error_chain(&error)
+                    .into_iter()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        ),
+    ]);
+    let mut vendor_code = None;
+
+    match error {
+        Error::CodedError(error_code) => {
+            extra.insert(
+                "code_name".to_string(),
+                Value::String(format!("{error_code:?}")),
+            );
+            vendor_code = Some(error_code as i64);
+        }
+        Error::WriteError(exception) => {
+            if let Some(write_error) = exception.write_error {
+                extra.insert(
+                    "server_message".to_string(),
+                    Value::String(write_error.message),
+                );
+                vendor_code = Some(i64::from(write_error.code));
+            } else if let Some(write_concern_error) = exception.write_concern_error {
+                extra.insert(
+                    "server_message".to_string(),
+                    Value::String(write_concern_error.message),
+                );
+                vendor_code = Some(i64::from(write_concern_error.code));
+            }
+        }
+        Error::BulkWriteError(exception) => {
+            let write_errors = exception
+                .write_errors
+                .iter()
+                .map(|write_error| {
+                    serde_json::json!({
+                        "index": write_error.index,
+                        "code": write_error.code,
+                        "message": write_error.message,
+                    })
+                })
+                .collect::<Vec<_>>();
+            if !write_errors.is_empty() {
+                extra.insert("write_errors".to_string(), Value::Array(write_errors));
+            }
+            if let Some(write_error) = exception.write_errors.first() {
+                vendor_code = Some(i64::from(write_error.code));
+            } else if let Some(write_concern_error) = exception.write_concern_error {
+                extra.insert(
+                    "server_message".to_string(),
+                    Value::String(write_concern_error.message),
+                );
+                vendor_code = Some(i64::from(write_concern_error.code));
+            }
+        }
+        _ => {}
+    }
+
+    let mut data = ErrorData::new().with_extra(Value::Object(extra));
+    if let Some(vendor_code) = vendor_code {
+        data = data.with_vendor_code(vendor_code);
+    }
+    ProtocolError::new(code, message).with_data(data)
+}
+
+fn legacy_mongo_error_chain(error: &mongodb_legacy32::Error) -> Vec<String> {
+    let mut chain = Vec::new();
+    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(source) = current {
+        chain.push(source.to_string());
+        if chain.len() >= 64 {
+            break;
+        }
+        current = source.source();
+    }
+    chain
+}
+
+fn legacy_protocol_error(
+    code: i32,
+    error: impl std::fmt::Display + std::fmt::Debug,
+) -> ProtocolError {
+    let message = error.to_string();
+    ProtocolError::new(code, message.clone()).with_data(ErrorData::new().with_extra(
+        serde_json::json!({
+            "kind": format!("{error:?}"),
+            "source": message,
+        }),
+    ))
 }
 
 fn invalid_params(error: impl std::fmt::Display) -> ProtocolError {
@@ -374,5 +481,49 @@ mod tests {
         assert!(uri_option_is_true("mongodb://localhost/?TLS=true", "tls"));
         assert!(uri_option_is_true("mongodb://localhost/?ssl=1", "ssl"));
         assert!(!uri_option_is_true("mongodb://localhost/?tls=false", "tls"));
+    }
+
+    #[test]
+    fn legacy_errors_preserve_original_message_and_kind() {
+        let error = mongodb_legacy32::Error::OperationError(
+            "server rejected the command with code 123".to_string(),
+        );
+
+        let protocol_error = command_error(error);
+        let data = protocol_error.data.expect("legacy MongoDB error data");
+        let extra = data.extra.expect("legacy MongoDB native details");
+
+        assert!(
+            protocol_error
+                .message
+                .contains("server rejected the command with code 123")
+        );
+        assert!(
+            extra
+                .get("kind")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| kind.contains("OperationError"))
+        );
+    }
+
+    #[test]
+    fn legacy_coded_errors_preserve_vendor_code() {
+        let error = mongodb_legacy32::Error::CodedError(mongodb_legacy32::ErrorCode::Unauthorized);
+
+        let protocol_error = command_error(error);
+        let data = protocol_error.data.expect("legacy MongoDB error data");
+        let extra = data.extra.expect("legacy MongoDB native details");
+
+        assert_eq!(data.vendor_code, Some(13));
+        assert_eq!(
+            extra.get("code_name").and_then(Value::as_str),
+            Some("Unauthorized")
+        );
+        assert!(
+            extra
+                .get("chain")
+                .and_then(Value::as_array)
+                .is_some_and(|chain| !chain.is_empty())
+        );
     }
 }

@@ -3,6 +3,7 @@ package iotdb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	iotdbclient "github.com/apache/iotdb-client-go/client"
+	iotdbcommon "github.com/apache/iotdb-client-go/common"
 
 	"navop-db-ipc-drivers/internal/dbipc"
 	"navop-db-ipc-drivers/internal/ipc"
@@ -130,7 +132,7 @@ func (s *Server) Handle(ctx context.Context, req ipc.Message) ipc.Message {
 	switch req.Method {
 	case "init":
 		if err := dbipc.ValidateHostVersion(req.Params); err != nil {
-			return errResp(req.ID, dbipc.ErrServerIncompatible, err.Error())
+			return errRespFromError(req.ID, dbipc.ErrServerIncompatible, err)
 		}
 		s.initialized = true
 		return okResp(req.ID, map[string]any{
@@ -144,7 +146,9 @@ func (s *Server) Handle(ctx context.Context, req ipc.Message) ipc.Message {
 	case "$/ping":
 		return okResp(req.ID, map[string]bool{"pong": true})
 	case "shutdown":
-		s.closeAll()
+		if err := s.closeAll(); err != nil {
+			return errRespFromError(req.ID, dbipc.ErrConnectionFailed, err)
+		}
 		return okResp(req.ID, nil)
 	case "conn/test":
 		return s.handleConnTest(req)
@@ -198,15 +202,18 @@ func (s *Server) Handle(ctx context.Context, req ipc.Message) ipc.Message {
 func (s *Server) handleConnTest(req ipc.Message) ipc.Message {
 	cfg, err := parseConfig(req.Params)
 	if err != nil {
-		return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 	}
 	start := time.Now()
 	session, err := openSession(cfg)
 	if err != nil {
-		return errResp(req.ID, dbipc.ErrConnectionFailed, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrConnectionFailed, err)
 	}
-	defer session.Close()
-	version, _ := queryServerVersion(session)
+	version, versionErr := queryServerVersion(session)
+	closeErr := closeSession(session)
+	if err := joinCleanupError(versionErr, "close test connection", closeErr); err != nil {
+		return errRespFromError(req.ID, dbipc.ErrConnectionFailed, err)
+	}
 	return okResp(req.ID, map[string]any{
 		"ok":             true,
 		"latency_ms":     uint32(time.Since(start).Milliseconds()),
@@ -218,16 +225,20 @@ func (s *Server) handleConnTest(req ipc.Message) ipc.Message {
 func (s *Server) handleConnOpen(req ipc.Message) ipc.Message {
 	cfg, err := parseConfig(req.Params)
 	if err != nil {
-		return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 	}
 	session, err := openSession(cfg)
 	if err != nil {
-		return errResp(req.ID, dbipc.ErrConnectionFailed, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrConnectionFailed, err)
+	}
+	version, versionErr := queryServerVersion(session)
+	if versionErr != nil {
+		versionErr = joinCleanupError(versionErr, "close connection after version query failure", closeSession(session))
+		return errRespFromError(req.ID, dbipc.ErrConnectionFailed, versionErr)
 	}
 	connID := s.nextConnID
 	s.nextConnID++
 	s.conns[connID] = &connection{cfg: cfg, session: session}
-	version, _ := queryServerVersion(session)
 	return okResp(req.ID, map[string]any{
 		"conn_id": connID,
 		"server_info": map[string]any{
@@ -242,15 +253,18 @@ func (s *Server) handleConnClose(req ipc.Message) ipc.Message {
 		ConnID uint64 `json:"conn_id"`
 	}
 	if err := decode(req.Params, &p); err != nil {
-		return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
 		return errResp(req.ID, dbipc.ErrUnknownConnID, fmt.Sprintf("unknown conn_id %d", p.ConnID))
 	}
-	s.closeCursorsForConn(p.ConnID)
-	_, _ = conn.session.Close()
+	closeErr := s.closeCursorsForConn(p.ConnID)
+	closeErr = joinCleanupError(closeErr, fmt.Sprintf("close connection %d", p.ConnID), closeSession(conn.session))
 	delete(s.conns, p.ConnID)
+	if closeErr != nil {
+		return errRespFromError(req.ID, dbipc.ErrConnectionFailed, closeErr)
+	}
 	return okResp(req.ID, nil)
 }
 
@@ -261,7 +275,7 @@ func (s *Server) handleConnPing(req ipc.Message) ipc.Message {
 	}
 	start := time.Now()
 	if _, err := conn.session.GetTimeZone(); err != nil {
-		return errResp(req.ID, dbipc.ErrConnectionFailed, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrConnectionFailed, err)
 	}
 	return okResp(req.ID, map[string]any{"latency_ms": uint32(time.Since(start).Milliseconds())})
 }
@@ -274,7 +288,7 @@ func (s *Server) handleConnUse(req ipc.Message) ipc.Message {
 		Role     string `json:"role,omitempty"`
 	}
 	if err := decode(req.Params, &p); err != nil {
-		return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -297,7 +311,7 @@ func (s *Server) handleQueryStart(req ipc.Message) ipc.Message {
 		MaxRows *uint64     `json:"max_rows,omitempty"`
 	}
 	if err := decode(req.Params, &p); err != nil {
-		return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 	}
 	if len(p.Params) > 0 {
 		return errResp(req.ID, dbipc.ErrInvalidParams, "IoTDB driver does not support query parameters")
@@ -310,7 +324,7 @@ func (s *Server) handleQueryStart(req ipc.Message) ipc.Message {
 	timeout := timeoutMs(conn.cfg)
 	dataSet, err := conn.session.ExecuteQueryStatement(sql, &timeout)
 	if err != nil {
-		return errResp(req.ID, dbipc.ErrSQLSyntax, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrSQLSyntax, err)
 	}
 	cursorID := fmt.Sprintf("%s-cursor-%d", driverID, s.nextCursor)
 	s.nextCursor++
@@ -328,7 +342,7 @@ func (s *Server) handleCursorFetch(req ipc.Message) ipc.Message {
 		N        *uint32 `json:"n,omitempty"`
 	}
 	if err := decode(req.Params, &p); err != nil {
-		return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 	}
 	cur, ok := s.cursors[p.CursorID]
 	if !ok {
@@ -349,7 +363,7 @@ func (s *Server) handleCursorFetch(req ipc.Message) ipc.Message {
 		}
 		next, err := nextDataSet(cur.dataSet)
 		if err != nil {
-			return errResp(req.ID, dbipc.ErrSQLSyntax, err.Error())
+			return errRespFromError(req.ID, dbipc.ErrSQLSyntax, err)
 		}
 		if !next {
 			cur.done = true
@@ -361,7 +375,7 @@ func (s *Server) handleCursorFetch(req ipc.Message) ipc.Message {
 	if cur.done {
 		if err := cur.dataSet.Close(); err != nil {
 			if !isStatementIDNotSet(err) {
-				return errResp(req.ID, dbipc.ErrSQLSyntax, err.Error())
+				return errRespFromError(req.ID, dbipc.ErrSQLSyntax, err)
 			}
 		}
 		cur.dataSet = nil
@@ -374,12 +388,15 @@ func (s *Server) handleCursorClose(req ipc.Message) ipc.Message {
 		CursorID string `json:"cursor_id"`
 	}
 	if err := decode(req.Params, &p); err != nil {
-		return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 	}
 	if _, ok := s.cursors[p.CursorID]; !ok {
 		return errResp(req.ID, dbipc.ErrUnknownCursorID, fmt.Sprintf("unknown cursor_id `%s`", p.CursorID))
 	}
-	s.closeCursor(p.CursorID)
+	if err := s.closeCursor(p.CursorID); err != nil {
+		delete(s.cursors, p.CursorID)
+		return errRespFromError(req.ID, dbipc.ErrSQLSyntax, err)
+	}
 	delete(s.cursors, p.CursorID)
 	return okResp(req.ID, nil)
 }
@@ -389,13 +406,16 @@ func (s *Server) handleCursorCancel(req ipc.Message) ipc.Message {
 		CursorID string `json:"cursor_id"`
 	}
 	if err := decode(req.Params, &p); err != nil {
-		return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 	}
 	cur, ok := s.cursors[p.CursorID]
 	if !ok {
 		return errResp(req.ID, dbipc.ErrUnknownCursorID, fmt.Sprintf("unknown cursor_id `%s`", p.CursorID))
 	}
-	s.closeCursor(p.CursorID)
+	if err := s.closeCursor(p.CursorID); err != nil {
+		cur.done = true
+		return errRespFromError(req.ID, dbipc.ErrSQLSyntax, err)
+	}
 	cur.done = true
 	return okResp(req.ID, nil)
 }
@@ -407,7 +427,7 @@ func (s *Server) handleExecRun(req ipc.Message) ipc.Message {
 		Params []cellValue `json:"params,omitempty"`
 	}
 	if err := decode(req.Params, &p); err != nil {
-		return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 	}
 	if len(p.Params) > 0 {
 		return errResp(req.ID, dbipc.ErrInvalidParams, "IoTDB driver does not support exec parameters")
@@ -417,7 +437,7 @@ func (s *Server) handleExecRun(req ipc.Message) ipc.Message {
 		return errResp(req.ID, dbipc.ErrUnknownConnID, fmt.Sprintf("unknown conn_id %d", p.ConnID))
 	}
 	if err := execStatement(conn, p.SQL); err != nil {
-		return errResp(req.ID, dbipc.ErrSQLSyntax, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrSQLSyntax, err)
 	}
 	return okResp(req.ID, map[string]any{"affected_rows": uint64(0), "warnings": []string{}})
 }
@@ -429,7 +449,7 @@ func (s *Server) handleExecBatch(req ipc.Message) ipc.Message {
 		StopOnError bool     `json:"stop_on_error"`
 	}
 	if err := decode(req.Params, &p); err != nil {
-		return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -439,11 +459,13 @@ func (s *Server) handleExecBatch(req ipc.Message) ipc.Message {
 	errors := []map[string]any{}
 	for idx, stmt := range p.Statements {
 		if err := execStatement(conn, stmt); err != nil {
+			protocolError := iotdbProtocolError(dbipc.ErrSQLSyntax, err)
 			results = append(results, map[string]any{"affected_rows": uint64(0), "warnings": []string{}})
 			errors = append(errors, map[string]any{
 				"index":   uint32(idx),
-				"code":    dbipc.ErrSQLSyntax,
-				"message": err.Error(),
+				"code":    protocolError.Code,
+				"message": protocolError.Message,
+				"data":    json.RawMessage(protocolError.Data),
 			})
 			if p.StopOnError {
 				break
@@ -462,7 +484,7 @@ func (s *Server) handleSchemaDatabases(req ipc.Message) ipc.Message {
 	}
 	names, err := firstColumn(conn.session, "SHOW STORAGE GROUP")
 	if err != nil {
-		return errResp(req.ID, dbipc.ErrSQLSyntax, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrSQLSyntax, err)
 	}
 	filter := conn.storageGroup()
 	out := make([]map[string]any, 0, len(names))
@@ -484,7 +506,7 @@ func (s *Server) handleSchemaSchemas(req ipc.Message) ipc.Message {
 		Database string `json:"database"`
 	}
 	if err := decode(req.Params, &p); err != nil {
-		return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 	}
 	if _, ok := s.conns[p.ConnID]; !ok {
 		return errResp(req.ID, dbipc.ErrUnknownConnID, fmt.Sprintf("unknown conn_id %d", p.ConnID))
@@ -508,7 +530,7 @@ func (s *Server) handleSchemaObjects(req ipc.Message) ipc.Message {
 		Kinds    []string `json:"kinds,omitempty"`
 	}
 	if err := decode(req.Params, &p); err != nil {
-		return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -520,7 +542,7 @@ func (s *Server) handleSchemaObjects(req ipc.Message) ipc.Message {
 	prefix := effectivePrefix(conn.storageGroup(), p.Database, p.Schema)
 	names, err := firstColumn(conn.session, "SHOW DEVICES "+prefix+".**")
 	if err != nil {
-		return errResp(req.ID, dbipc.ErrSQLSyntax, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrSQLSyntax, err)
 	}
 	out := make([]map[string]any, 0, len(names))
 	for _, name := range names {
@@ -542,7 +564,7 @@ func (s *Server) handleSchemaColumns(req ipc.Message) ipc.Message {
 		Table    string `json:"table"`
 	}
 	if err := decode(req.Params, &p); err != nil {
-		return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -551,7 +573,7 @@ func (s *Server) handleSchemaColumns(req ipc.Message) ipc.Message {
 	tablePath := qualifyPath(effectivePrefix(conn.storageGroup(), p.Database, p.Schema), p.Table)
 	rows, err := queryRows(conn.session, "SHOW TIMESERIES "+tablePath+".*")
 	if err != nil {
-		return errResp(req.ID, dbipc.ErrSQLSyntax, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrSQLSyntax, err)
 	}
 	out := []map[string]any{{
 		"ordinal":    uint32(1),
@@ -628,7 +650,7 @@ type objectViewColumn struct {
 func (s *Server) handleSchemaObjectView(req ipc.Message) ipc.Message {
 	var p objectViewParams
 	if err := decode(req.Params, &p); err != nil {
-		return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 	}
 	conn, ok := s.conns[p.ConnID]
 	if !ok {
@@ -640,7 +662,7 @@ func (s *Server) handleSchemaObjectView(req ipc.Message) ipc.Message {
 	case "databases":
 		names, err := firstColumn(conn.session, "SHOW STORAGE GROUP")
 		if err != nil {
-			return errResp(req.ID, dbipc.ErrSQLSyntax, err.Error())
+			return errRespFromError(req.ID, dbipc.ErrSQLSyntax, err)
 		}
 		filter := conn.storageGroup()
 		rows := make([][]string, 0, len(names))
@@ -660,7 +682,7 @@ func (s *Server) handleSchemaObjectView(req ipc.Message) ipc.Message {
 		prefix := effectivePrefix(conn.storageGroup(), p.Database, p.Schema)
 		names, err := firstColumn(conn.session, "SHOW DEVICES "+prefix+".**")
 		if err != nil {
-			return errResp(req.ID, dbipc.ErrSQLSyntax, err.Error())
+			return errRespFromError(req.ID, dbipc.ErrSQLSyntax, err)
 		}
 		rows := make([][]string, 0, len(names))
 		for _, name := range names {
@@ -674,7 +696,7 @@ func (s *Server) handleSchemaObjectView(req ipc.Message) ipc.Message {
 		tablePath := qualifyPath(effectivePrefix(conn.storageGroup(), p.Database, p.Schema), p.Table)
 		rows, err := queryRows(conn.session, "SHOW TIMESERIES "+tablePath+".*")
 		if err != nil {
-			return errResp(req.ID, dbipc.ErrSQLSyntax, err.Error())
+			return errRespFromError(req.ID, dbipc.ErrSQLSyntax, err)
 		}
 		return okResp(req.ID, objectViewResult("Timeseries", timeseriesObjectViewColumns(), timeseriesObjectRows(rows)))
 	case "views":
@@ -777,31 +799,31 @@ func (s *Server) handleDdlBuild(req ipc.Message) ipc.Message {
 		Payload json.RawMessage `json:"payload"`
 	}
 	if err := decode(req.Params, &p); err != nil {
-		return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 	}
 	switch p.Op {
 	case "create_database":
 		sql, err := buildCreateDatabaseFromRaw(p.Payload)
 		if err != nil {
-			return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+			return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 		}
 		return okResp(req.ID, map[string]any{"statements": []string{sql}, "warnings": []string{}})
 	case "drop_database":
 		sql, err := buildDropDatabaseFromRaw(p.Payload)
 		if err != nil {
-			return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+			return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 		}
 		return okResp(req.ID, map[string]any{"statements": []string{sql}, "warnings": []string{}})
 	case "create_table":
 		statements, warnings, err := buildCreateTableFromRaw(p.Payload, false)
 		if err != nil {
-			return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+			return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 		}
 		return okResp(req.ID, map[string]any{"statements": statements, "warnings": warnings})
 	case "drop_table":
 		sql, err := buildDropFromRaw(p.Payload)
 		if err != nil {
-			return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+			return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 		}
 		return okResp(req.ID, map[string]any{"statements": []string{sql}, "warnings": []string{}})
 	default:
@@ -817,7 +839,7 @@ func (s *Server) handleDdlBuildCreateTable(req ipc.Message) ipc.Message {
 		} `json:"options"`
 	}
 	if err := decode(req.Params, &p); err != nil {
-		return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 	}
 	statements, _ := buildCreateTimeseriesStatements(p.Spec, p.Options.IfNotExists)
 	return okResp(req.ID, map[string]any{"sql": strings.Join(statements, ";\n"), "statements": statements})
@@ -830,7 +852,7 @@ func (s *Server) handleDdlBuildAlterTable(req ipc.Message) ipc.Message {
 		ColumnRenames []any     `json:"column_renames"`
 	}
 	if err := decode(req.Params, &p); err != nil {
-		return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 	}
 	existing := map[string]bool{}
 	for _, col := range p.FromSpec.Columns {
@@ -857,7 +879,7 @@ func (s *Server) handleDdlBuildAlterTable(req ipc.Message) ipc.Message {
 func (s *Server) handleDdlBuildDrop(req ipc.Message) ipc.Message {
 	sql, err := buildDropFromRaw(req.Params)
 	if err != nil {
-		return errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+		return errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 	}
 	return okResp(req.ID, map[string]any{"sql": sql})
 }
@@ -867,7 +889,7 @@ func (s *Server) connFromParams(req ipc.Message) (*connection, *ipc.Message) {
 		ConnID uint64 `json:"conn_id"`
 	}
 	if err := decode(req.Params, &p); err != nil {
-		resp := errResp(req.ID, dbipc.ErrInvalidParams, err.Error())
+		resp := errRespFromError(req.ID, dbipc.ErrInvalidParams, err)
 		return nil, &resp
 	}
 	conn, ok := s.conns[p.ConnID]
@@ -878,31 +900,40 @@ func (s *Server) connFromParams(req ipc.Message) (*connection, *ipc.Message) {
 	return conn, nil
 }
 
-func (s *Server) closeAll() {
+func (s *Server) closeAll() error {
+	var closeErr error
 	for id := range s.cursors {
-		s.closeCursor(id)
+		closeErr = joinCleanupError(closeErr, fmt.Sprintf("close cursor %s", id), s.closeCursor(id))
+		delete(s.cursors, id)
 	}
 	for id, conn := range s.conns {
-		_, _ = conn.session.Close()
+		closeErr = joinCleanupError(closeErr, fmt.Sprintf("close connection %d", id), closeSession(conn.session))
 		delete(s.conns, id)
 	}
+	return closeErr
 }
 
-func (s *Server) closeCursorsForConn(connID uint64) {
+func (s *Server) closeCursorsForConn(connID uint64) error {
+	var closeErr error
 	for id, cur := range s.cursors {
 		if cur.connID == connID {
-			s.closeCursor(id)
+			closeErr = joinCleanupError(closeErr, fmt.Sprintf("close cursor %s", id), s.closeCursor(id))
 			delete(s.cursors, id)
 		}
 	}
+	return closeErr
 }
 
-func (s *Server) closeCursor(cursorID string) {
+func (s *Server) closeCursor(cursorID string) error {
 	if cur, ok := s.cursors[cursorID]; ok && cur.dataSet != nil {
-		_ = cur.dataSet.Close()
+		err := cur.dataSet.Close()
 		cur.dataSet = nil
 		cur.done = true
+		if err != nil && !isStatementIDNotSet(err) {
+			return err
+		}
 	}
+	return nil
 }
 
 func (c *connection) storageGroup() string {
@@ -1002,10 +1033,7 @@ func execStatement(conn *connection, sql string) error {
 	if err != nil {
 		return err
 	}
-	if status != nil {
-		return iotdbclient.VerifySuccess(status)
-	}
-	return nil
+	return statusError(status)
 }
 
 func columnsFromDataSet(ds *iotdbclient.SessionDataSet) []columnSpec {
@@ -1053,15 +1081,19 @@ func (r queryRow) textAtName(name string) string {
 	return ""
 }
 
-func queryRows(session *iotdbclient.Session, sql string) ([]queryRow, error) {
+func queryRows(session *iotdbclient.Session, sql string) (rows []queryRow, resultErr error) {
 	timeout := int64(30000)
 	ds, err := session.ExecuteQueryStatement(sql, &timeout)
 	if err != nil {
 		return nil, err
 	}
-	defer ds.Close()
+	defer func() {
+		if closeErr := ds.Close(); closeErr != nil && !isStatementIDNotSet(closeErr) {
+			resultErr = joinCleanupError(resultErr, "close query dataset", closeErr)
+		}
+	}()
 	columns := ds.GetColumnNames()
-	rows := []queryRow{}
+	rows = []queryRow{}
 	for {
 		next, err := nextDataSet(ds)
 		if err != nil {
@@ -1233,7 +1265,7 @@ func shortColumnName(column string) string {
 func okResp(id json.RawMessage, result any) ipc.Message {
 	raw, err := json.Marshal(result)
 	if err != nil {
-		return errResp(id, dbipc.ErrInternalError, err.Error())
+		return errRespFromError(id, dbipc.ErrInternalError, err)
 	}
 	return ipc.Message{JSONRPC: ipc.JSONRPCVersion, ID: id, Result: raw}
 }
@@ -1244,6 +1276,226 @@ func errResp(id json.RawMessage, code int32, message string) ipc.Message {
 		ID:      id,
 		Error:   &ipc.ProtocolError{Code: code, Message: message},
 	}
+}
+
+func errRespFromError(id json.RawMessage, code int32, err error) ipc.Message {
+	return ipc.Message{
+		JSONRPC: ipc.JSONRPCVersion,
+		ID:      id,
+		Error:   iotdbProtocolError(code, err),
+	}
+}
+
+func iotdbProtocolError(code int32, err error) *ipc.ProtocolError {
+	if err == nil {
+		return &ipc.ProtocolError{Code: code}
+	}
+
+	message, data := iotdbErrorDetails(err)
+	raw, marshalErr := json.Marshal(data)
+	if marshalErr != nil {
+		return &ipc.ProtocolError{Code: code, Message: message}
+	}
+	return &ipc.ProtocolError{
+		Code:    code,
+		Message: message,
+		Data:    raw,
+	}
+}
+
+func iotdbErrorDetails(err error) (string, ipc.ErrorData) {
+	message := safeIoTDBErrorMessage(err)
+	data := ipc.ErrorData{
+		Extra: map[string]any{
+			"chain":  safeIoTDBErrorChain(err),
+			"source": message,
+		},
+	}
+
+	var batchError *iotdbclient.BatchError
+	if errors.As(err, &batchError) && batchError != nil {
+		batchMessage, batchData := batchErrorDetails(batchError)
+		batchData.Extra["chain"] = safeIoTDBErrorChain(err)
+		batchData.Extra["source"] = batchMessage
+		return batchMessage, batchData
+	}
+
+	var singleStatusError *iotdbStatusError
+	if errors.As(err, &singleStatusError) && singleStatusError != nil {
+		return statusErrorDetails(singleStatusError.status, data)
+	}
+
+	return message, data
+}
+
+func safeIoTDBErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	var batchError *iotdbclient.BatchError
+	if errors.As(err, &batchError) && batchError != nil {
+		message, _ := batchErrorDetails(batchError)
+		return message
+	}
+	var singleStatusError *iotdbStatusError
+	if errors.As(err, &singleStatusError) && singleStatusError != nil {
+		return formatIoTDBStatus(singleStatusError.status)
+	}
+	return err.Error()
+}
+
+func safeIoTDBErrorChain(err error) []string {
+	chain := []string{}
+	var visit func(error, int)
+	visit = func(current error, depth int) {
+		if current == nil || depth >= 64 {
+			return
+		}
+		chain = append(chain, safeIoTDBErrorMessage(current))
+		switch unwrapped := current.(type) {
+		case interface{ Unwrap() []error }:
+			for _, child := range unwrapped.Unwrap() {
+				visit(child, depth+1)
+			}
+		case interface{ Unwrap() error }:
+			visit(unwrapped.Unwrap(), depth+1)
+		}
+	}
+	visit(err, 0)
+	return chain
+}
+
+func batchErrorDetails(batch *iotdbclient.BatchError) (string, ipc.ErrorData) {
+	data := ipc.ErrorData{Extra: map[string]any{}}
+	if batch == nil {
+		return "IoTDB batch error", data
+	}
+
+	statuses := batch.GetStatuses()
+	entries := make([]map[string]any, 0, len(statuses))
+	messages := make([]string, 0, len(statuses))
+	var retryable bool
+	var retryableSet bool
+	for _, status := range statuses {
+		entries = append(entries, iotdbStatusData(status))
+		if status == nil || !iotdbStatusFailed(status) {
+			continue
+		}
+		messages = append(messages, formatIoTDBStatus(status))
+		if data.VendorCode == nil {
+			vendorCode := int64(status.Code)
+			data.VendorCode = &vendorCode
+		}
+		if status.NeedRetry != nil {
+			retryableSet = true
+			retryable = retryable || *status.NeedRetry
+		}
+	}
+	if retryableSet {
+		data.Retryable = &retryable
+	}
+	data.Extra["statuses"] = entries
+	if len(messages) == 0 {
+		return "IoTDB batch error", data
+	}
+	return strings.Join(messages, "; "), data
+}
+
+func statusErrorDetails(status *iotdbcommon.TSStatus, data ipc.ErrorData) (string, ipc.ErrorData) {
+	message := formatIoTDBStatus(status)
+	if status != nil {
+		vendorCode := int64(status.Code)
+		data.VendorCode = &vendorCode
+		if status.NeedRetry != nil {
+			retryable := *status.NeedRetry
+			data.Retryable = &retryable
+		}
+		data.Extra["status"] = iotdbStatusData(status)
+	}
+	data.Extra["source"] = message
+	return message, data
+}
+
+func iotdbStatusData(status *iotdbcommon.TSStatus) map[string]any {
+	if status == nil {
+		return map[string]any{"message": "IoTDB returned a nil status"}
+	}
+	entry := map[string]any{
+		"code":    status.Code,
+		"message": formatIoTDBStatus(status),
+	}
+	if status.NeedRetry != nil {
+		entry["retryable"] = *status.NeedRetry
+	}
+	if len(status.SubStatus) > 0 {
+		subStatuses := make([]map[string]any, 0, len(status.SubStatus))
+		for _, child := range status.SubStatus {
+			subStatuses = append(subStatuses, iotdbStatusData(child))
+		}
+		entry["sub_statuses"] = subStatuses
+	}
+	return entry
+}
+
+func formatIoTDBStatus(status *iotdbcommon.TSStatus) string {
+	if status == nil {
+		return "IoTDB returned a nil status"
+	}
+	if status.Message != nil && strings.TrimSpace(*status.Message) != "" {
+		return fmt.Sprintf("IoTDB error code %d: %s", status.Code, *status.Message)
+	}
+	return fmt.Sprintf("IoTDB error code %d", status.Code)
+}
+
+func iotdbStatusFailed(status *iotdbcommon.TSStatus) bool {
+	return status != nil &&
+		status.Code != iotdbclient.SuccessStatus &&
+		status.Code != iotdbclient.RedirectionRecommend
+}
+
+type iotdbStatusError struct {
+	status *iotdbcommon.TSStatus
+}
+
+func (e *iotdbStatusError) Error() string {
+	return formatIoTDBStatus(e.status)
+}
+
+func statusError(status *iotdbcommon.TSStatus) error {
+	if status == nil || !iotdbStatusFailed(status) {
+		return nil
+	}
+	if status.Code == iotdbclient.MultipleError {
+		for _, child := range status.SubStatus {
+			if iotdbStatusFailed(child) {
+				return iotdbclient.NewBatchError(status.SubStatus)
+			}
+		}
+		return nil
+	}
+	return &iotdbStatusError{status: status}
+}
+
+func closeSession(session *iotdbclient.Session) error {
+	if session == nil {
+		return nil
+	}
+	status, err := session.Close()
+	if err != nil {
+		return err
+	}
+	return statusError(status)
+}
+
+func joinCleanupError(existing error, operation string, err error) error {
+	if err == nil {
+		return existing
+	}
+	wrapped := fmt.Errorf("%s: %w", operation, err)
+	if existing == nil {
+		return wrapped
+	}
+	return errors.Join(existing, wrapped)
 }
 
 func decode(raw json.RawMessage, target any) error {
