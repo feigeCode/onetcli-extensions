@@ -8,13 +8,13 @@ publish = false
 
 [dependencies]
 anyhow = "1"
-ironrdp = { git = "https://github.com/feigeCode/IronRDP", rev = "478b9b143215091771458f02abe4dad82b8aa5ac", features = [
+ironrdp = { git = "https://github.com/feigeCode/IronRDP", rev = "93bfefab945b378ea17cf9fe54afff53572d0a2c", features = [
     "connector",
     "cliprdr",
     "input",
     "pdu",
 ] }
-ironrdp-client = { git = "https://github.com/feigeCode/IronRDP", rev = "478b9b143215091771458f02abe4dad82b8aa5ac", default-features = false, features = [
+ironrdp-client = { git = "https://github.com/feigeCode/IronRDP", rev = "93bfefab945b378ea17cf9fe54afff53572d0a2c", default-features = false, features = [
     "native-tls",
 ] }
 semver = "1"
