@@ -2,56 +2,126 @@ use super::security;
 use crate::{VncError, VncVersion};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub(super) enum SecurityType {
-    Invalid = 0,
-    None = 1,
-    VncAuth = 2,
-    RA2 = 5,
-    RA2ne = 6,
-    Tight = 16,
-    Ultra = 17,
-    Tls = 18,
-    VeNCrypt = 19,
-    GtkVncSasl = 20,
-    Md5Hash = 21,
-    ColinDeanXvp = 22,
+const MAX_SECURITY_REASON_BYTES: usize = 64 * 1024;
+
+pub(super) async fn read_failure_reason<S>(reader: &mut S) -> Result<String, VncError>
+where
+    S: AsyncRead + Unpin,
+{
+    let reason_len = reader.read_u32().await? as usize;
+    if reason_len > MAX_SECURITY_REASON_BYTES {
+        return Err(VncError::General(format!(
+            "VNC security failure has an oversized reason ({reason_len} bytes)"
+        )));
+    }
+    let mut reason = vec![0; reason_len];
+    reader.read_exact(&mut reason).await?;
+    Ok(String::from_utf8_lossy(&reason).into_owned())
 }
 
-impl TryFrom<u8> for SecurityType {
-    type Error = VncError;
-    fn try_from(num: u8) -> Result<Self, Self::Error> {
-        match num {
-            0 | 1 | 2 | 5 | 6 | 16 | 17 | 18 | 19 | 20 | 21 | 22 => {
-                Ok(unsafe { std::mem::transmute::<u8, SecurityType>(num) })
-            }
-            invalid => Err(VncError::InvalidSecurityTyep(invalid)),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SecurityType {
+    Invalid,
+    None,
+    VncAuth,
+    RA2,
+    RA2ne,
+    Tight,
+    Ultra,
+    Tls,
+    VeNCrypt,
+    GtkVncSasl,
+    Md5Hash,
+    ColinDeanXvp,
+    Unknown(u8),
+}
+
+impl From<u8> for SecurityType {
+    fn from(id: u8) -> Self {
+        match id {
+            0 => Self::Invalid,
+            1 => Self::None,
+            2 => Self::VncAuth,
+            5 => Self::RA2,
+            6 => Self::RA2ne,
+            16 => Self::Tight,
+            17 => Self::Ultra,
+            18 => Self::Tls,
+            19 => Self::VeNCrypt,
+            20 => Self::GtkVncSasl,
+            21 => Self::Md5Hash,
+            22 => Self::ColinDeanXvp,
+            unknown => Self::Unknown(unknown),
         }
     }
 }
 
 impl From<SecurityType> for u8 {
-    fn from(e: SecurityType) -> Self {
-        e as u8
+    fn from(security_type: SecurityType) -> Self {
+        security_type.id()
     }
 }
 
 impl SecurityType {
+    pub(super) const fn id(self) -> u8 {
+        match self {
+            Self::Invalid => 0,
+            Self::None => 1,
+            Self::VncAuth => 2,
+            Self::RA2 => 5,
+            Self::RA2ne => 6,
+            Self::Tight => 16,
+            Self::Ultra => 17,
+            Self::Tls => 18,
+            Self::VeNCrypt => 19,
+            Self::GtkVncSasl => 20,
+            Self::Md5Hash => 21,
+            Self::ColinDeanXvp => 22,
+            Self::Unknown(id) => id,
+        }
+    }
+
+    pub(super) const fn name(self) -> &'static str {
+        match self {
+            Self::Invalid => "Invalid",
+            Self::None => "None",
+            Self::VncAuth => "VncAuth",
+            Self::RA2 => "RA2",
+            Self::RA2ne => "RA2ne",
+            Self::Tight => "Tight",
+            Self::Ultra => "Ultra",
+            Self::Tls => "TLS",
+            Self::VeNCrypt => "VeNCrypt",
+            Self::GtkVncSasl => "GtkVncSasl",
+            Self::Md5Hash => "Md5Hash",
+            Self::ColinDeanXvp => "ColinDeanXvp",
+            Self::Unknown(_) => "Unknown",
+        }
+    }
+
+    pub(super) fn describe(self) -> String {
+        format!("{}({})", self.name(), self.id())
+    }
+
+    pub(super) const fn is_authenticated(self) -> bool {
+        !matches!(self, Self::Invalid | Self::None)
+    }
+
     pub(super) async fn read<S>(reader: &mut S, version: &VncVersion) -> Result<Vec<Self>, VncError>
     where
         S: AsyncRead + Unpin,
     {
         match version {
             VncVersion::RFB33 => {
-                let security_type = reader.read_u32().await?;
-                let security_type = (security_type as u8).try_into()?;
+                let raw_security_type = reader.read_u32().await?;
+                let raw_security_type = u8::try_from(raw_security_type).map_err(|_| {
+                    VncError::General(format!(
+                        "RFB 3.3 security type {raw_security_type} exceeds one byte"
+                    ))
+                })?;
+                let security_type = raw_security_type.into();
                 if let SecurityType::Invalid = security_type {
-                    let _ = reader.read_u32().await?;
-                    let mut err_msg = String::new();
-                    reader.read_to_string(&mut err_msg).await?;
-                    return Err(VncError::General(err_msg));
+                    return Err(VncError::General(read_failure_reason(reader).await?));
                 }
                 Ok(vec![security_type])
             }
@@ -66,14 +136,11 @@ impl SecurityType {
                 let num = reader.read_u8().await?;
 
                 if num == 0 {
-                    let _ = reader.read_u32().await?;
-                    let mut err_msg = String::new();
-                    reader.read_to_string(&mut err_msg).await?;
-                    return Err(VncError::General(err_msg));
+                    return Err(VncError::General(read_failure_reason(reader).await?));
                 }
                 let mut sec_types = vec![];
                 for _ in 0..num {
-                    sec_types.push(reader.read_u8().await?.try_into()?);
+                    sec_types.push(reader.read_u8().await?.into());
                 }
                 tracing::trace!("Server supported security type: {:?}", sec_types);
                 Ok(sec_types)
@@ -90,16 +157,20 @@ impl SecurityType {
     }
 }
 
-#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub(super) enum AuthResult {
     Ok = 0,
     Failed = 1,
 }
 
-impl From<u32> for AuthResult {
-    fn from(num: u32) -> Self {
-        unsafe { std::mem::transmute(num) }
+impl AuthResult {
+    pub(super) fn decode(raw: u32) -> Result<Self, VncError> {
+        match raw {
+            0 => Ok(Self::Ok),
+            1 => Ok(Self::Failed),
+            invalid => Err(VncError::InvalidAuthResult(invalid)),
+        }
     }
 }
 
@@ -154,6 +225,10 @@ impl AuthHelper {
         S: AsyncRead + AsyncWrite + Unpin,
     {
         let result = reader.read_u32().await?;
-        Ok(result.into())
+        AuthResult::decode(result)
     }
 }
+
+#[cfg(test)]
+#[path = "auth_tests.rs"]
+mod tests;

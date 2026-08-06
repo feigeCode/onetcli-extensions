@@ -15,6 +15,22 @@ fn reads_first_stdin_line_as_connect_request() {
 }
 
 #[test]
+fn connect_options_preserve_structured_credentials() {
+    let options = connect_options(protocol::ConnectRequest {
+        destination: "host:5900".to_string(),
+        username: Some("alice".to_string()),
+        password: Some("secret".to_string()),
+        domain: Some("example".to_string()),
+        width: 800,
+        height: 600,
+    });
+
+    assert_eq!(options.username.as_deref(), Some("alice"));
+    assert_eq!(options.password.as_deref(), Some("secret"));
+    assert_eq!(options.domain.as_deref(), Some("example"));
+}
+
+#[test]
 fn converts_extended_key_request_to_prefixed_scancode() {
     let input = request_to_input(HelperRequest::Key {
         code: 0x48,

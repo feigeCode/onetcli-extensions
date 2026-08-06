@@ -7,7 +7,9 @@ impl fmt::Debug for RemoteDesktopConnectionOptions {
         formatter
             .debug_struct("RemoteDesktopConnectionOptions")
             .field("destination", &self.destination)
+            .field("username_present", &self.username.is_some())
             .field("password_present", &self.password.is_some())
+            .field("domain_present", &self.domain.is_some())
             .finish()
     }
 }

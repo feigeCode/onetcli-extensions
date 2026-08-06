@@ -1,7 +1,9 @@
 #[derive(Clone)]
 pub struct RemoteDesktopConnectionOptions {
     pub destination: String,
+    pub username: Option<String>,
     pub password: Option<String>,
+    pub domain: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -159,6 +161,25 @@ mod tests {
 
         assert!(capabilities.clipboard_text);
         assert!(!capabilities.cursor_shape);
+    }
+
+    #[test]
+    fn connection_options_debug_redacts_structured_credentials() {
+        let options = RemoteDesktopConnectionOptions {
+            destination: "host:5900".to_string(),
+            username: Some("alice-secret".to_string()),
+            password: Some("password-secret".to_string()),
+            domain: Some("domain-secret".to_string()),
+        };
+
+        let debug = format!("{options:?}");
+
+        assert!(debug.contains("username_present: true"));
+        assert!(debug.contains("password_present: true"));
+        assert!(debug.contains("domain_present: true"));
+        assert!(!debug.contains("alice-secret"));
+        assert!(!debug.contains("password-secret"));
+        assert!(!debug.contains("domain-secret"));
     }
 
     #[test]

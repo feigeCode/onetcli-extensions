@@ -1,6 +1,8 @@
 use anyhow::Context as _;
 use tokio::net::TcpStream;
-use vnc_client::{PixelFormat, VncClient, VncConnector, VncEncoding, X11Event};
+use vnc_client::{
+    PixelFormat, SecurityPolicy, VncClient, VncConnector, VncCredentials, VncEncoding, X11Event,
+};
 
 use crate::output_mailbox::OutputSender;
 use crate::runtime::{
@@ -123,9 +125,14 @@ async fn connect_vnc(options: &RemoteDesktopConnectionOptions) -> anyhow::Result
     let tcp = TcpStream::connect(&options.destination)
         .await
         .with_context(|| format!("failed to connect VNC {}", options.destination))?;
-    let password = options.password.clone().unwrap_or_default();
+    let credentials = VncCredentials {
+        username: options.username.clone(),
+        password: options.password.clone(),
+        domain: options.domain.clone(),
+    };
     let state = VncConnector::new(tcp)
-        .set_auth_method(async move { Ok(password) })
+        .set_credentials(credentials)
+        .set_security_policy(SecurityPolicy::Auto)
         .add_encoding(VncEncoding::Zrle)
         .add_encoding(VncEncoding::CopyRect)
         .add_encoding(VncEncoding::CursorPseudo)

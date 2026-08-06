@@ -215,6 +215,7 @@ pub mod event;
 
 pub use client::VncClient;
 pub use client::VncConnector;
+pub use client::{SecurityPolicy, VncCredentials};
 pub use config::*;
 pub use error::*;
 pub use event::*;

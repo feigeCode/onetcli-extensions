@@ -36,6 +36,8 @@ upstream = "https://github.com/HsuJv/vnc-rs"
 version = "0.5.3"
 reason = "Preserve bounded VNC clipboard payloads as raw protocol bytes"
 
+[workspace]
+
 [profile.release]
 opt-level = "s"
 

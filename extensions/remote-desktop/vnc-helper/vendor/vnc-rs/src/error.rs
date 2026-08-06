@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::client::security::SecurityPolicy;
+
 #[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum VncError {
@@ -9,6 +11,17 @@ pub enum VncError {
     NoEncoding,
     #[error("Unknow VNC security type: {0}")]
     InvalidSecurityTyep(u8),
+    #[error("Invalid VNC authentication result: {0}")]
+    InvalidAuthResult(u32),
+    #[error(
+        "VNC security negotiation failed: {reason}; policy={policy}, advertised=[{advertised}], supported=[{supported}]"
+    )]
+    SecurityNegotiation {
+        reason: String,
+        policy: SecurityPolicy,
+        advertised: String,
+        supported: String,
+    },
     #[error("Wrong password")]
     WrongPassword,
     #[error("Connect error with unknown reason")]

@@ -91,7 +91,9 @@ fn read_connect_request(
 fn connect_options(connect: protocol::ConnectRequest) -> RemoteDesktopConnectionOptions {
     RemoteDesktopConnectionOptions {
         destination: connect.destination,
+        username: connect.username,
         password: connect.password,
+        domain: connect.domain,
     }
 }
 
