@@ -86,14 +86,47 @@ test("Go IPC driver metadata declares all cross-compiled release targets", () =>
     "x86_64-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",
     "x86_64-pc-windows-msvc",
+    "i686-pc-windows-msvc",
   ];
 
-  for (const id of ["dm", "kingbase", "oceanbase", "oracle-go"]) {
+  for (const id of ["dm", "iotdb", "kingbase", "oceanbase", "oracle-go"]) {
     const metadata = JSON.parse(
       fs.readFileSync(path.join(repoRoot, "extensions/ipc", id, "extension.build.json"), "utf8"),
     );
     assert.equal(metadata.language, "go");
     assert.deepEqual(metadata.targets, expectedTargets, `${id} target list drifted`);
+  }
+});
+
+test("native Windows extensions declare the Windows x86 release target", () => {
+  const extensionPaths = [
+    "extensions/ipc/dm",
+    "extensions/ipc/iotdb",
+    "extensions/ipc/kingbase",
+    "extensions/ipc/oceanbase",
+    "extensions/ipc/oracle-go",
+    "extensions/ipc/redis",
+    "extensions/ipc/mongodb-legacy",
+    "extensions/ipc/mongodb-modern",
+    "extensions/ipc/mongodb-legacy-3-2",
+    "extensions/ipc/opengauss",
+    "extensions/ipc/duckdb",
+    "extensions/remote-desktop/vnc",
+    "extensions/remote-desktop/rdp",
+  ];
+
+  for (const extensionPath of extensionPaths) {
+    const metadata = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, extensionPath, "extension.build.json"), "utf8"),
+    );
+    assert.ok(
+      metadata.targets.includes("x86_64-pc-windows-msvc"),
+      `${metadata.id} is missing x86_64-pc-windows-msvc`,
+    );
+    assert.ok(
+      metadata.targets.includes("i686-pc-windows-msvc"),
+      `${metadata.id} is missing i686-pc-windows-msvc`,
+    );
   }
 });
 
@@ -2265,6 +2298,49 @@ test("build-go-driver builds a Go command into the target release directory", ()
   );
 });
 
+test("build-go-driver cross-compiles Windows x86 executables", () => {
+  const workdir = makeTempDir();
+  copyScript("build-go-driver.sh", workdir);
+  fs.writeFileSync(path.join(workdir, "go.mod"), "module example.com/go-driver-fixture\n\ngo 1.23\n");
+  fs.mkdirSync(path.join(workdir, "cmd/test-ipc-driver"), { recursive: true });
+  fs.writeFileSync(
+    path.join(workdir, "cmd/test-ipc-driver/main.go"),
+    "package main\n\nfunc main() {}\n",
+  );
+  writeJson(path.join(workdir, "extensions/ipc/testdb/extension.build.json"), {
+    id: "testdb",
+    kind: "database_driver",
+    language: "go",
+    package: "./cmd/test-ipc-driver",
+    binary: "test-ipc-driver",
+    path: "extensions/ipc/testdb",
+    targets: ["i686-pc-windows-msvc"],
+  });
+
+  execFileSync(
+    "bash",
+    [
+      path.join(workdir, "scripts/build-go-driver.sh"),
+      "testdb",
+      "i686-pc-windows-msvc",
+    ],
+    {
+      cwd: workdir,
+      env: {
+        ...process.env,
+        GOCACHE: path.join(workdir, "go-cache"),
+        CGO_ENABLED: "0",
+      },
+    },
+  );
+
+  assert.ok(
+    fs.existsSync(
+      path.join(workdir, "target/i686-pc-windows-msvc/release/test-ipc-driver.exe"),
+    ),
+  );
+});
+
 test("build-go-driver prefers vendored Go driver dependencies", () => {
   const workdir = makeTempDir();
   copyScript("build-go-driver.sh", workdir);
@@ -2346,7 +2422,11 @@ test("changed-extensions emits matrix entries only for changed extension paths",
     kind: "database_driver",
     package: "duckdb_driver",
     path: "extensions/ipc/duckdb",
-    targets: ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"],
+    targets: [
+      "x86_64-unknown-linux-gnu",
+      "x86_64-pc-windows-msvc",
+      "i686-pc-windows-msvc",
+    ],
   });
   writeJson(path.join(workdir, "extensions/ipc/postgres/extension.build.json"), {
     id: "postgres",
@@ -2382,6 +2462,7 @@ test("changed-extensions emits matrix entries only for changed extension paths",
         kind: "database_driver",
         language: "rust",
         os: "ubuntu-latest",
+        windows_x86: true,
       },
     ],
   });
@@ -2402,6 +2483,7 @@ test("changed-extensions emits one Ubuntu test entry for Go extensions", () => {
       "x86_64-unknown-linux-gnu",
       "aarch64-unknown-linux-gnu",
       "x86_64-pc-windows-msvc",
+      "i686-pc-windows-msvc",
     ],
   });
   fs.writeFileSync(path.join(workdir, "README.md"), "base\n");
@@ -2430,6 +2512,7 @@ test("changed-extensions emits one Ubuntu test entry for Go extensions", () => {
       kind: "database_driver",
       language: "go",
       os: "ubuntu-latest",
+      windows_x86: true,
     },
   ]);
 });
@@ -2477,6 +2560,7 @@ test("changed-extensions includes Rust WASM extensions for workspace Rust change
       kind: "database_driver",
       language: "rust",
       os: "ubuntu-latest",
+      windows_x86: false,
     },
     {
       extension: "dbeaver-importer",
@@ -2485,6 +2569,7 @@ test("changed-extensions includes Rust WASM extensions for workspace Rust change
       kind: "composite",
       language: "rust-wasm",
       os: "ubuntu-latest",
+      windows_x86: false,
     },
   ]);
 });
@@ -2534,6 +2619,7 @@ test("changed-extensions maps declared source paths to the owning extension", ()
       kind: "database_driver",
       language: "java",
       os: "ubuntu-latest",
+      windows_x86: false,
     },
   ]);
 });
@@ -2549,7 +2635,7 @@ test("changed-extensions emits manifest-path metadata for standalone Rust helper
     manifest_path: "extensions/remote-desktop/rdp-helper/Cargo.toml",
     path: "extensions/remote-desktop/rdp",
     source_paths: ["extensions/remote-desktop/rdp-helper"],
-    targets: ["x86_64-unknown-linux-gnu"],
+    targets: ["x86_64-unknown-linux-gnu", "i686-pc-windows-msvc"],
   });
   fs.mkdirSync(path.join(workdir, "extensions/remote-desktop/rdp-helper/src"), {
     recursive: true,
@@ -2578,6 +2664,7 @@ test("changed-extensions emits manifest-path metadata for standalone Rust helper
       kind: "remote_desktop_provider",
       language: "rust",
       os: "ubuntu-latest",
+      windows_x86: true,
     },
   ]);
 });
@@ -2627,6 +2714,7 @@ test("changed-extensions emits manifest-path metadata for MCP helpers", () => {
       kind: "mcp_helper",
       language: "rust",
       os: "ubuntu-latest",
+      windows_x86: false,
     },
   ]);
 });
@@ -2676,6 +2764,7 @@ test("changed-extensions emits shell metadata for ACP agents", () => {
       kind: "acp_agent",
       language: "shell",
       os: "ubuntu-latest",
+      windows_x86: false,
     },
   ]);
 });
@@ -3262,12 +3351,16 @@ test("CI workflow routes Rust, Rust WASM, Go, and Java extension jobs by languag
   assert.match(workflow, /cargo test -p "\$\{\{ matrix\.package \}\}" -- --nocapture/);
   assert.match(workflow, /run: go test \.\/\.\.\./);
   assert.match(workflow, /run: mvn -f "\$\{\{ matrix\.package \}\}\/pom\.xml" test/);
-  assert.doesNotMatch(workflow, /name: Package/);
-  assert.doesNotMatch(workflow, /cargo build --release/);
-  assert.doesNotMatch(workflow, /scripts\/build-go-driver\.sh/);
+  assert.match(workflow, /name: Build Windows x86/);
+  assert.match(workflow, /target: i686-pc-windows-msvc/);
+  assert.match(workflow, /cargo build --release/);
+  assert.match(workflow, /scripts\/build-go-driver\.sh/);
+  assert.match(workflow, /scripts\/package-driver\.sh/);
+  assert.match(workflow, /scripts\/verify-package\.sh/);
+  assert.match(workflow, /scripts\/package-remote-desktop-provider\.sh/);
+  assert.match(workflow, /scripts\/verify-remote-desktop-provider-package\.sh/);
+  assert.match(workflow, /matrix\.windows_x86 == true/);
   assert.doesNotMatch(workflow, /scripts\/build-java-driver\.sh/);
-  assert.doesNotMatch(workflow, /scripts\/package-driver\.sh/);
-  assert.doesNotMatch(workflow, /scripts\/verify-package\.sh/);
   assert.doesNotMatch(workflow, /aarch64-unknown-linux-gnu/);
   assert.match(releaseWorkflow, /if: \$\{\{ matrix\.language == 'java' \}\}\n\s+run: bash scripts\/build-java-driver\.sh/);
   assert.match(releaseWorkflow, /matrix\.language == 'rust-wasm'/);

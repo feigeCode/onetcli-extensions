@@ -90,3 +90,66 @@ jobs:
       - name: Test Java driver
         if: ${{ matrix.language == 'java' }}
         run: mvn -f "${{ matrix.package }}/pom.xml" test
+
+  windows-x86-build:
+    name: Build Windows x86 (${{ matrix.extension }})
+    needs: detect
+    if: ${{ needs.detect.outputs.has_changes == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.detect.outputs.matrix) }}
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        if: ${{ matrix.windows_x86 == true }}
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        if: ${{ matrix.windows_x86 == true && matrix.language == 'rust' }}
+        with:
+          target: i686-pc-windows-msvc
+      - uses: actions/setup-go@v5
+        if: ${{ matrix.windows_x86 == true && matrix.language == 'go' }}
+        with:
+          go-version-file: go.mod
+      - name: Install Windows Rust CMake dependencies
+        if: ${{ matrix.windows_x86 == true && matrix.language == 'rust' && matrix.kind == 'remote_desktop_provider' }}
+        shell: pwsh
+        run: choco install ninja -y --no-progress
+      - name: Build Rust extension
+        if: ${{ matrix.windows_x86 == true && matrix.language == 'rust' && matrix.package != '' }}
+        shell: bash
+        run: |
+          export CARGO_TARGET_DIR="${GITHUB_WORKSPACE}/target"
+          if [ "${{ matrix.kind }}" = "remote_desktop_provider" ]; then
+            export CMAKE_GENERATOR=Ninja
+          fi
+          if [ -n "${{ matrix.manifest_path }}" ]; then
+            cargo build --release --manifest-path "${{ matrix.manifest_path }}" --target i686-pc-windows-msvc
+          else
+            cargo build --release -p "${{ matrix.package }}" --target i686-pc-windows-msvc
+          fi
+      - name: Build Go extension
+        if: ${{ matrix.windows_x86 == true && matrix.language == 'go' }}
+        shell: bash
+        run: bash scripts/build-go-driver.sh "${{ matrix.extension }}" i686-pc-windows-msvc
+      - name: Package and verify Windows x86 extension
+        if: ${{ matrix.windows_x86 == true }}
+        shell: bash
+        run: |
+          export CARGO_TARGET_DIR="${GITHUB_WORKSPACE}/target"
+          mkdir -p artifacts
+          if [ "${{ matrix.kind }}" = "database_driver" ]; then
+            bash scripts/package-driver.sh "${{ matrix.extension }}" i686-pc-windows-msvc artifacts 0.0.0-ci
+            bash scripts/verify-package.sh "artifacts/${{ matrix.extension }}-driver-i686-pc-windows-msvc.tar.gz"
+          elif [ "${{ matrix.kind }}" = "remote_desktop_provider" ]; then
+            bash scripts/package-remote-desktop-provider.sh "${{ matrix.extension }}" i686-pc-windows-msvc artifacts 0.0.0-ci
+            bash scripts/verify-remote-desktop-provider-package.sh "artifacts/${{ matrix.extension }}-remote-desktop-provider-i686-pc-windows-msvc.tar.gz"
+          else
+            echo "::error::Unsupported Windows x86 extension kind: ${{ matrix.kind }}"
+            exit 1
+          fi
+      - name: Upload Windows x86 package
+        if: ${{ matrix.windows_x86 == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.extension }}-i686-pc-windows-msvc
+          path: artifacts/*.tar.gz

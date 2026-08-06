@@ -44,6 +44,7 @@ for (const extension of extensions) {
     kind: extension.kind,
     language: extension.language || "rust",
     os: "ubuntu-latest",
+    windows_x86: extension.targets.includes("i686-pc-windows-msvc"),
   });
 }
 

@@ -164,6 +164,11 @@ case "$TARGET" in
     GOARCH_VALUE="amd64"
     EXE_SUFFIX=".exe"
     ;;
+  i686-pc-windows-msvc)
+    GOOS_VALUE="windows"
+    GOARCH_VALUE="386"
+    EXE_SUFFIX=".exe"
+    ;;
   *)
     echo "Unsupported Go target triple: ${TARGET}" >&2
     exit 1
