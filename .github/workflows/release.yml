@@ -182,6 +182,9 @@ jobs:
           elif [ "${{ matrix.kind }}" = "composite" ]; then
             bash scripts/package-composite-extension.sh "${{ matrix.extension }}" "${{ matrix.target }}" artifacts "${{ needs.prepare.outputs.version }}"
             bash scripts/verify-composite-package.sh "artifacts/${{ matrix.extension }}-composite-${{ matrix.target }}.tar.gz"
+          elif [ "${{ matrix.kind }}" = "language" ]; then
+            bash scripts/package-language-extension.sh "${{ matrix.extension }}" "${{ matrix.target }}" artifacts "${{ needs.prepare.outputs.version }}"
+            bash scripts/verify-language-package.sh "artifacts/${{ matrix.extension }}-language-${{ matrix.target }}.tar.gz"
           elif [ "${{ matrix.kind }}" = "language_bundle" ]; then
             bash scripts/package-language-bundle-extension.sh "${{ matrix.extension }}" "${{ matrix.target }}" artifacts "${{ needs.prepare.outputs.version }}"
             bash scripts/verify-language-bundle-package.sh "artifacts/${{ matrix.extension }}-language-bundle-${{ matrix.target }}.tar.gz"

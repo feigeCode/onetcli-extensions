@@ -143,6 +143,9 @@ jobs:
           elif [ "${{ matrix.kind }}" = "remote_desktop_provider" ]; then
             bash scripts/package-remote-desktop-provider.sh "${{ matrix.extension }}" i686-pc-windows-msvc artifacts 0.0.0-ci
             bash scripts/verify-remote-desktop-provider-package.sh "artifacts/${{ matrix.extension }}-remote-desktop-provider-i686-pc-windows-msvc.tar.gz"
+          elif [ "${{ matrix.kind }}" = "acp_agent" ]; then
+            bash scripts/package-acp-agent.sh "${{ matrix.extension }}" i686-pc-windows-msvc artifacts 0.0.0-ci
+            bash scripts/verify-acp-agent-package.sh "artifacts/${{ matrix.extension }}-acp-agent-i686-pc-windows-msvc.tar.gz"
           else
             echo "::error::Unsupported Windows x86 extension kind: ${{ matrix.kind }}"
             exit 1

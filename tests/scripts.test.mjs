@@ -130,6 +130,69 @@ test("native Windows extensions declare the Windows x86 release target", () => {
   }
 });
 
+test("ACP agents declare both Windows x64 and Windows x86 release targets", () => {
+  for (const id of ["claude-acp", "codex-acp", "opencode-acp"]) {
+    const metadata = JSON.parse(
+      fs.readFileSync(
+        path.join(repoRoot, "extensions/acp-agent", id, "extension.build.json"),
+        "utf8",
+      ),
+    );
+    assert.ok(
+      metadata.targets.includes("x86_64-pc-windows-msvc"),
+      `${id} is missing x86_64-pc-windows-msvc`,
+    );
+    assert.ok(
+      metadata.targets.includes("i686-pc-windows-msvc"),
+      `${id} is missing i686-pc-windows-msvc`,
+    );
+    assert.equal(
+      new Set(metadata.targets).size,
+      metadata.targets.length,
+      `${id} declares duplicate release targets`,
+    );
+  }
+});
+
+test("architecture-independent extensions remain universal for Windows x86 fallback", () => {
+  const universalLanguages = new Set([
+    "java",
+    "rust-wasm",
+    "static",
+    "tree-sitter-wasm",
+    "tree-sitter-wasm-bundle",
+  ]);
+  const roots = [
+    "extensions/ipc",
+    "extensions/wasm",
+    "extensions/language",
+    "extensions/language-bundle",
+  ];
+  const checked = [];
+
+  for (const root of roots) {
+    for (const id of fs.readdirSync(path.join(repoRoot, root))) {
+      const metadataPath = path.join(repoRoot, root, id, "extension.build.json");
+      if (!fs.existsSync(metadataPath)) continue;
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
+      if (!universalLanguages.has(metadata.language)) continue;
+      assert.deepEqual(
+        metadata.targets,
+        ["universal"],
+        `${metadata.id} must use the architecture-independent universal artifact`,
+      );
+      checked.push(metadata.id);
+    }
+  }
+
+  assert.ok(checked.includes("gbase8s"));
+  assert.ok(checked.includes("oscar"));
+  assert.ok(checked.includes("dbeaver-importer"));
+  assert.ok(checked.includes("notepad-plus-plus-editor"));
+  assert.ok(checked.includes("java"));
+  assert.ok(checked.includes("tree-sitter-languages"));
+});
+
 test("IPC driver metadata declares Linux ARM64 release target", () => {
   const ids = fs
     .readdirSync(path.join(repoRoot, "extensions/ipc"))
@@ -821,6 +884,22 @@ test("R2 upload workflow handles composite extension assets", () => {
     workflow.split(compositeAssetName).length - 1,
     2,
     "Verify and upload steps should both generate composite package names",
+  );
+});
+
+test("R2 upload workflow handles language extension assets", () => {
+  const workflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/upload-r2.yml"), "utf8");
+  const languageAssetName = "${process.env.EXTENSION_ID}-language-${target}.tar.gz";
+  const languagePackagePattern = "${{ steps.release.outputs.extension_id }}-language-*.tar.gz";
+
+  assert.ok(
+    workflow.includes(languagePackagePattern),
+    "Download GitHub Release assets should request language packages",
+  );
+  assert.equal(
+    workflow.split(languageAssetName).length - 1,
+    2,
+    "Verify and upload steps should both generate language package names",
   );
 });
 
@@ -1603,7 +1682,7 @@ test("verify-language-bundle-package rejects empty bundles", () => {
   );
 });
 
-test("package-acp-agent selects a cmd launcher for Windows packages", () => {
+test("package-acp-agent selects a cmd launcher for Windows x86 packages", () => {
   const workdir = makeTempDir();
   createAcpAgentFixture(workdir, {
     id: "claude-acp",
@@ -1616,14 +1695,14 @@ test("package-acp-agent selects a cmd launcher for Windows packages", () => {
     [
       path.join(workdir, "scripts/package-acp-agent.sh"),
       "claude-acp",
-      "x86_64-pc-windows-msvc",
+      "i686-pc-windows-msvc",
       path.join(workdir, "artifacts"),
       "1.2.3",
     ],
     { cwd: workdir, encoding: "utf8" },
   ).trim();
 
-  assert.equal(path.basename(archivePath), "claude-acp-acp-agent-x86_64-pc-windows-msvc.tar.gz");
+  assert.equal(path.basename(archivePath), "claude-acp-acp-agent-i686-pc-windows-msvc.tar.gz");
   execFileSync("tar", ["xzf", archivePath, "-C", path.join(workdir, "unpacked")]);
 
   const manifest = JSON.parse(
@@ -1634,6 +1713,12 @@ test("package-acp-agent selects a cmd launcher for Windows packages", () => {
     fs.readFileSync(path.join(workdir, "unpacked/bin/claude-agent-acp.cmd"), "utf8"),
     "@echo off\r\nnpm exec --yes -- @agentclientprotocol/claude-agent-acp@0.52.0 %*\r\n",
   );
+  const output = execFileSync(
+    "bash",
+    [path.join(workdir, "scripts/verify-acp-agent-package.sh"), archivePath],
+    { cwd: workdir, encoding: "utf8" },
+  );
+  assert.match(output, /Verified ACP agent package/);
 });
 
 test("package-remote-desktop-provider finds manifest-path helper target output", () => {
@@ -2729,7 +2814,11 @@ test("changed-extensions emits shell metadata for ACP agents", () => {
     package: "",
     binary: "codex-acp",
     path: "extensions/acp-agent/codex-acp",
-    targets: ["x86_64-unknown-linux-gnu"],
+    targets: [
+      "x86_64-unknown-linux-gnu",
+      "x86_64-pc-windows-msvc",
+      "i686-pc-windows-msvc",
+    ],
   });
   fs.mkdirSync(path.join(workdir, "extensions/acp-agent/codex-acp/bin"), {
     recursive: true,
@@ -2764,7 +2853,7 @@ test("changed-extensions emits shell metadata for ACP agents", () => {
       kind: "acp_agent",
       language: "shell",
       os: "ubuntu-latest",
-      windows_x86: false,
+      windows_x86: true,
     },
   ]);
 });
@@ -3324,6 +3413,8 @@ test("release workflow keeps extension releases scoped to current extension", ()
   assert.match(workflow, /scripts\/verify-acp-agent-package\.sh/);
   assert.match(workflow, /scripts\/package-composite-extension\.sh/);
   assert.match(workflow, /scripts\/verify-composite-package\.sh/);
+  assert.match(workflow, /scripts\/package-language-extension\.sh/);
+  assert.match(workflow, /scripts\/verify-language-package\.sh/);
   assert.match(workflow, /wasm32-wasip2/);
   assert.match(workflow, /matrix\.target == 'aarch64-unknown-linux-gnu' && matrix\.kind != 'remote_desktop_provider'/);
   assert.match(workflow, /export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc/);
@@ -3359,6 +3450,9 @@ test("CI workflow routes Rust, Rust WASM, Go, and Java extension jobs by languag
   assert.match(workflow, /scripts\/verify-package\.sh/);
   assert.match(workflow, /scripts\/package-remote-desktop-provider\.sh/);
   assert.match(workflow, /scripts\/verify-remote-desktop-provider-package\.sh/);
+  assert.match(workflow, /scripts\/package-acp-agent\.sh/);
+  assert.match(workflow, /scripts\/verify-acp-agent-package\.sh/);
+  assert.match(workflow, /acp-agent-i686-pc-windows-msvc\.tar\.gz/);
   assert.match(workflow, /matrix\.windows_x86 == true/);
   assert.doesNotMatch(workflow, /scripts\/build-java-driver\.sh/);
   assert.doesNotMatch(workflow, /aarch64-unknown-linux-gnu/);
