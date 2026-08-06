@@ -1,6 +1,12 @@
 name: Upload R2
 
 on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Extension release tag, for example duckdb-v1.0.0
+        required: true
+        type: string
   workflow_run:
     workflows:
       - Release
@@ -24,7 +30,7 @@ concurrency:
 jobs:
   upload:
     name: Upload extension assets to R2
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,7 +39,7 @@ jobs:
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
-          INPUT_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
+          INPUT_TAG: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.tag || '' }}
           WORKFLOW_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || '' }}
         run: |
           set -euo pipefail
@@ -50,6 +56,18 @@ jobs:
             release_tag="$(node -e 'const fs = require("fs"); const d = JSON.parse(fs.readFileSync("run-metadata/release-metadata.json", "utf8")); process.stdout.write(d.release_tag);')"
             extension_id="$(node -e 'const fs = require("fs"); const d = JSON.parse(fs.readFileSync("run-metadata/release-metadata.json", "utf8")); process.stdout.write(d.extension_id);')"
             extension_version="$(node -e 'const fs = require("fs"); const d = JSON.parse(fs.readFileSync("run-metadata/release-metadata.json", "utf8")); process.stdout.write(d.extension_version);')"
+          fi
+          if [[ ! "$extension_id" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+            echo "::error::Invalid extension id resolved from release tag: $extension_id"
+            exit 1
+          fi
+          if [[ ! "$extension_version" =~ ^[0-9][0-9A-Za-z.+-]*$ ]]; then
+            echo "::error::Invalid extension version resolved from release tag: $extension_version"
+            exit 1
+          fi
+          if [ "$release_tag" != "${extension_id}-v${extension_version}" ]; then
+            echo "::error::Release tag must match <extension-id>-v<version>: $release_tag"
+            exit 1
           fi
           gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null
           echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
@@ -133,45 +151,93 @@ jobs:
         env:
           EXTENSION_ID: ${{ steps.release.outputs.extension_id }}
           EXTENSION_KIND: ${{ steps.extension.outputs.kind }}
+          EXTENSION_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
           TARGETS_JSON: ${{ steps.extension.outputs.targets }}
         run: |
           set -euo pipefail
-          node <<'NODE' > expected-assets.txt
+          node <<'NODE'
+          const { createHash } = require("node:crypto");
+          const fs = require("node:fs");
+          const path = require("node:path");
+
           const targets = JSON.parse(process.env.TARGETS_JSON);
-          for (const target of targets) {
+          const fileNameForTarget = (target) => {
             switch (process.env.EXTENSION_KIND) {
               case "database_driver":
-                console.log(`${process.env.EXTENSION_ID}-driver-${target}.tar.gz`);
-                break;
+                return `${process.env.EXTENSION_ID}-driver-${target}.tar.gz`;
               case "remote_desktop_provider":
-                console.log(`${process.env.EXTENSION_ID}-remote-desktop-provider-${target}.tar.gz`);
-                break;
+                return `${process.env.EXTENSION_ID}-remote-desktop-provider-${target}.tar.gz`;
               case "mcp_helper":
-                console.log(`${process.env.EXTENSION_ID}-mcp-helper-${target}.tar.gz`);
-                break;
+                return `${process.env.EXTENSION_ID}-mcp-helper-${target}.tar.gz`;
               case "acp_agent":
-                console.log(`${process.env.EXTENSION_ID}-acp-agent-${target}.tar.gz`);
-                break;
+                return `${process.env.EXTENSION_ID}-acp-agent-${target}.tar.gz`;
               case "composite":
-                console.log(`${process.env.EXTENSION_ID}-composite-${target}.tar.gz`);
-                break;
+                return `${process.env.EXTENSION_ID}-composite-${target}.tar.gz`;
               case "language":
-                console.log(`${process.env.EXTENSION_ID}-language-${target}.tar.gz`);
-                break;
+                return `${process.env.EXTENSION_ID}-language-${target}.tar.gz`;
               case "language_bundle":
-                console.log(`${process.env.EXTENSION_ID}-language-bundle-${target}.tar.gz`);
-                break;
+                return `${process.env.EXTENSION_ID}-language-bundle-${target}.tar.gz`;
               default:
                 throw new Error(`unsupported extension kind: ${process.env.EXTENSION_KIND}`);
             }
+          };
+          const checksumLines = fs.readFileSync("artifacts/sha256sums.txt", "utf8")
+            .split(/\r?\n/)
+            .filter(Boolean);
+          const checksums = new Map();
+          for (const line of checksumLines) {
+            const match = line.match(/^([0-9a-f]{64})\s+(.+)$/);
+            if (!match) throw new Error(`invalid checksum line: ${line}`);
+            if (checksums.has(match[2])) throw new Error(`duplicate checksum entry: ${match[2]}`);
+            checksums.set(match[2], match[1]);
+          }
+          const manifest = JSON.parse(fs.readFileSync("artifacts/extension-manifest.json", "utf8"));
+          if (manifest.release_version !== process.env.RELEASE_TAG) {
+            throw new Error("extension manifest release tag mismatch");
+          }
+          if (!Array.isArray(manifest.extensions) || manifest.extensions.length !== 1) {
+            throw new Error("extension manifest must contain exactly one extension");
+          }
+          const extension = manifest.extensions[0];
+          if (
+            extension.id !== process.env.EXTENSION_ID
+            || extension.kind !== process.env.EXTENSION_KIND
+            || extension.version !== process.env.EXTENSION_VERSION
+            || extension.release_tag !== process.env.RELEASE_TAG
+          ) {
+            throw new Error("extension manifest metadata mismatch");
+          }
+          const expectedFiles = new Set();
+          for (const target of targets) {
+            const file = fileNameForTarget(target);
+            expectedFiles.add(file);
+            const filePath = path.join("artifacts", file);
+            const stat = fs.statSync(filePath, { throwIfNoEntry: false });
+            if (!stat?.isFile() || stat.size === 0) throw new Error(`missing or empty asset: ${file}`);
+            const actualSha256 = createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+            if (checksums.get(file) !== actualSha256) {
+              throw new Error(`checksum file mismatch for ${file}`);
+            }
+            const artifact = extension.artifacts?.[target];
+            if (artifact?.file !== file || artifact.sha256 !== actualSha256) {
+              throw new Error(`extension manifest artifact mismatch for ${target}`);
+            }
+          }
+          if (
+            checksums.size !== expectedFiles.size
+            || [...checksums.keys()].some((file) => !expectedFiles.has(file))
+          ) {
+            throw new Error("checksum file contains unexpected assets");
+          }
+          if (
+            !extension.artifacts
+            || Object.keys(extension.artifacts).length !== targets.length
+            || Object.keys(extension.artifacts).some((target) => !targets.includes(target))
+          ) {
+            throw new Error("extension manifest contains unexpected targets");
           }
           NODE
-          while read -r file; do
-            test -s "artifacts/${file}"
-            awk -v file="$file" '$2 == file && $1 ~ /^[0-9a-f]{64}$/ { found = 1 } END { exit found ? 0 : 1 }' artifacts/sha256sums.txt
-          done < expected-assets.txt
-          test -s artifacts/extension-manifest.json
-          node -e 'const fs = require("fs"); const m = JSON.parse(fs.readFileSync("artifacts/extension-manifest.json", "utf8")); if (!m.extensions || !m.extensions.length) process.exit(1);'
 
       - name: Upload extension assets to R2
         env:

@@ -1,0 +1,261 @@
+name: Backfill Windows x86 extension artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      extension:
+        description: Extension id, or "all"
+        required: true
+        default: all
+        type: string
+      publish_release:
+        description: Update the existing GitHub Releases
+        required: true
+        default: false
+        type: boolean
+      publish_r2:
+        description: Publish the updated Releases to R2
+        required: true
+        default: false
+        type: boolean
+      force:
+        description: Replace an existing Windows x86 asset when its checksum differs
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: windows-x86-extension-backfill
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  WINDOWS_X86_TARGET: i686-pc-windows-msvc
+
+jobs:
+  prepare:
+    name: Resolve Windows x86 extensions
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.prepare.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: prepare
+        env:
+          EXTENSION: ${{ inputs.extension }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
+          PUBLISH_R2: ${{ inputs.publish_r2 }}
+        run: |
+          set -euo pipefail
+          if [ "$PUBLISH_R2" = "true" ] && [ "$PUBLISH_RELEASE" != "true" ]; then
+            echo "::error::publish_r2 requires publish_release"
+            exit 1
+          fi
+          matrix="$(node scripts/backfill-windows-x86.mjs matrix "$EXTENSION")"
+          echo "$matrix" | node -e 'let data=""; process.stdin.on("data", c => data += c); process.stdin.on("end", () => console.log(JSON.stringify(JSON.parse(data), null, 2)));'
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build Windows x86 (${{ matrix.extension }})
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        if: ${{ matrix.language == 'rust' }}
+        with:
+          target: i686-pc-windows-msvc
+      - uses: actions/setup-go@v5
+        if: ${{ matrix.language == 'go' }}
+        with:
+          go-version-file: go.mod
+      - name: Install Windows Rust CMake dependencies
+        if: ${{ matrix.language == 'rust' && matrix.kind == 'remote_desktop_provider' }}
+        shell: pwsh
+        run: choco install ninja -y --no-progress
+      - name: Build Rust extension
+        if: ${{ matrix.language == 'rust' && matrix.package != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CARGO_TARGET_DIR="${GITHUB_WORKSPACE}/target"
+          if [ "${{ matrix.kind }}" = "remote_desktop_provider" ]; then
+            export CMAKE_GENERATOR=Ninja
+          fi
+          if [ -n "${{ matrix.manifest_path }}" ]; then
+            cargo build --release --manifest-path "${{ matrix.manifest_path }}" --target "$WINDOWS_X86_TARGET"
+          else
+            cargo build --release -p "${{ matrix.package }}" --target "$WINDOWS_X86_TARGET"
+          fi
+      - name: Build Go extension
+        if: ${{ matrix.language == 'go' }}
+        shell: bash
+        run: bash scripts/build-go-driver.sh "${{ matrix.extension }}" "$WINDOWS_X86_TARGET"
+      - name: Package and verify Windows x86 extension
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CARGO_TARGET_DIR="${GITHUB_WORKSPACE}/target"
+          mkdir -p artifacts
+          if [ "${{ matrix.kind }}" = "database_driver" ]; then
+            bash scripts/package-driver.sh "${{ matrix.extension }}" "$WINDOWS_X86_TARGET" artifacts "${{ matrix.version }}"
+            bash scripts/verify-package.sh "artifacts/${{ matrix.package_file }}"
+          elif [ "${{ matrix.kind }}" = "remote_desktop_provider" ]; then
+            bash scripts/package-remote-desktop-provider.sh "${{ matrix.extension }}" "$WINDOWS_X86_TARGET" artifacts "${{ matrix.version }}"
+            bash scripts/verify-remote-desktop-provider-package.sh "artifacts/${{ matrix.package_file }}"
+          elif [ "${{ matrix.kind }}" = "acp_agent" ]; then
+            bash scripts/package-acp-agent.sh "${{ matrix.extension }}" "$WINDOWS_X86_TARGET" artifacts "${{ matrix.version }}"
+            bash scripts/verify-acp-agent-package.sh "artifacts/${{ matrix.package_file }}"
+          else
+            echo "::error::Unsupported Windows x86 extension kind: ${{ matrix.kind }}"
+            exit 1
+          fi
+      - name: Upload Windows x86 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: backfill-${{ matrix.extension }}-i686-pc-windows-msvc
+          path: artifacts/${{ matrix.package_file }}
+          if-no-files-found: error
+          retention-days: 7
+
+  merge:
+    name: Merge Release assets (${{ matrix.extension }})
+    needs:
+      - prepare
+      - build
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download new Windows x86 package
+        uses: actions/download-artifact@v4
+        with:
+          name: backfill-${{ matrix.extension }}-i686-pc-windows-msvc
+          path: new-package
+      - name: Download existing GitHub Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ matrix.release_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p existing-release
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "${{ matrix.extension }}-*.tar.gz" \
+            --pattern "sha256sums.txt" \
+            --pattern "extension-manifest.json" \
+            --dir existing-release
+      - name: Merge and verify complete Release assets
+        id: merge
+        env:
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          force_arg=()
+          if [ "$FORCE" = "true" ]; then
+            force_arg+=(--force)
+          fi
+          result="$(node scripts/backfill-windows-x86.mjs merge \
+            --extension "${{ matrix.extension }}" \
+            --version "${{ matrix.version }}" \
+            --release-tag "${{ matrix.release_tag }}" \
+            --existing-dir existing-release \
+            --new-package "new-package/${{ matrix.package_file }}" \
+            --output-dir merged-release \
+            "${force_arg[@]}")"
+          echo "$result"
+          printf '%s\n' "$result" > merged-release/merge-result.json
+      - name: Upload merged dry-run bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: merged-release-${{ matrix.release_tag }}
+          path: merged-release/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-release:
+    name: Update GitHub Release (${{ matrix.extension }})
+    needs:
+      - prepare
+      - merge
+    if: ${{ inputs.publish_release }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download merged Release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: merged-release-${{ matrix.release_tag }}
+          path: merged-release
+      - name: Publish Windows x86 package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ matrix.release_tag }}
+        run: |
+          set -euo pipefail
+          package_action="$(node -e 'const fs = require("fs"); const data = JSON.parse(fs.readFileSync("merged-release/merge-result.json", "utf8")); process.stdout.write(data.package_action);')"
+          case "$package_action" in
+            upload)
+              gh release upload "$RELEASE_TAG" \
+                "merged-release/${{ matrix.package_file }}" \
+                --repo "$GITHUB_REPOSITORY"
+              ;;
+            replace)
+              gh release upload "$RELEASE_TAG" \
+                "merged-release/${{ matrix.package_file }}" \
+                --repo "$GITHUB_REPOSITORY" \
+                --clobber
+              ;;
+            skip)
+              echo "Windows x86 package already exists with the expected checksum; skipping upload"
+              ;;
+            *)
+              echo "::error::Unknown package action: $package_action"
+              exit 1
+              ;;
+          esac
+      - name: Upload complete checksum and extension manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ matrix.release_tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" \
+            merged-release/sha256sums.txt \
+            merged-release/extension-manifest.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+  publish-r2:
+    name: Publish R2 (${{ matrix.extension }})
+    needs:
+      - prepare
+      - publish-release
+    if: ${{ inputs.publish_release && inputs.publish_r2 }}
+    permissions:
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    uses: ./.github/workflows/upload-r2.yml
+    with:
+      tag: ${{ matrix.release_tag }}
+    secrets: inherit

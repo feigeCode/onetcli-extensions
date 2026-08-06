@@ -903,6 +903,168 @@ test("R2 upload workflow handles language extension assets", () => {
   );
 });
 
+test("Windows x86 backfill matrix resolves every supported published extension", () => {
+  const output = execFileSync(
+    "node",
+    [path.join(repoRoot, "scripts/backfill-windows-x86.mjs"), "matrix", "all"],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  const matrix = JSON.parse(output);
+
+  assert.equal(matrix.include.length, 16);
+  assert.deepEqual(
+    matrix.include.map((entry) => entry.extension),
+    [
+      "claude-acp",
+      "codex-acp",
+      "dm",
+      "duckdb",
+      "iotdb",
+      "kingbase",
+      "mongodb-legacy",
+      "mongodb-legacy-3-2",
+      "mongodb-modern",
+      "oceanbase",
+      "opencode-acp",
+      "opengauss",
+      "oracle-go",
+      "rdp",
+      "redis",
+      "vnc",
+    ],
+  );
+  assert.ok(matrix.include.every((entry) => entry.target === "i686-pc-windows-msvc"));
+  assert.ok(matrix.include.every((entry) => entry.version && entry.release_tag));
+});
+
+test("Windows x86 backfill merge preserves old targets and adds the new target", () => {
+  const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "navop-x86-backfill-"));
+  const existingDir = path.join(workdir, "existing");
+  const outputDir = path.join(workdir, "merged");
+  const newPackageDir = path.join(workdir, "new");
+  fs.mkdirSync(existingDir, { recursive: true });
+  fs.mkdirSync(newPackageDir, { recursive: true });
+
+  const metadata = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, "extensions/ipc/dm/extension.build.json"), "utf8"),
+  );
+  const oldTargets = metadata.targets.filter((target) => target !== "i686-pc-windows-msvc");
+  const artifacts = {};
+  const checksumLines = [];
+  for (const target of oldTargets) {
+    const file = `dm-driver-${target}.tar.gz`;
+    const contents = Buffer.from(`old package ${target}`);
+    fs.writeFileSync(path.join(existingDir, file), contents);
+    const sha256 = createHash("sha256").update(contents).digest("hex");
+    artifacts[target] = { file, sha256 };
+    checksumLines.push(`${sha256}  ${file}`);
+  }
+  fs.writeFileSync(path.join(existingDir, "sha256sums.txt"), `${checksumLines.join("\n")}\n`);
+  fs.writeFileSync(
+    path.join(existingDir, "extension-manifest.json"),
+    `${JSON.stringify({
+      schema_version: 2,
+      release_version: "dm-v0.1.5",
+      extensions: [{
+        id: "dm",
+        kind: "database_driver",
+        name: "Dameng DM",
+        version: "0.1.5",
+        release_tag: "dm-v0.1.5",
+        description: "",
+        artifacts,
+      }],
+    }, null, 2)}\n`,
+  );
+  const newPackage = path.join(
+    newPackageDir,
+    "dm-driver-i686-pc-windows-msvc.tar.gz",
+  );
+  fs.writeFileSync(newPackage, "new Windows x86 package");
+
+  const result = JSON.parse(execFileSync(
+    "node",
+    [
+      path.join(repoRoot, "scripts/backfill-windows-x86.mjs"),
+      "merge",
+      "--extension", "dm",
+      "--version", "0.1.5",
+      "--release-tag", "dm-v0.1.5",
+      "--existing-dir", existingDir,
+      "--new-package", newPackage,
+      "--output-dir", outputDir,
+    ],
+    { cwd: repoRoot, encoding: "utf8" },
+  ));
+  const merged = JSON.parse(
+    fs.readFileSync(path.join(outputDir, "extension-manifest.json"), "utf8"),
+  );
+
+  assert.equal(result.package_action, "upload");
+  assert.equal(result.target_count, metadata.targets.length);
+  assert.deepEqual(Object.keys(merged.extensions[0].artifacts), metadata.targets);
+  assert.ok(fs.statSync(path.join(outputDir, result.package_file)).size > 0);
+  assert.equal(
+    fs.readFileSync(path.join(outputDir, "sha256sums.txt"), "utf8").trim().split("\n").length,
+    metadata.targets.length,
+  );
+});
+
+test("Windows x86 backfill refuses to overwrite a mismatched existing package", () => {
+  const script = fs.readFileSync(
+    path.join(repoRoot, "scripts/backfill-windows-x86.mjs"),
+    "utf8",
+  );
+  assert.match(script, /already exists with a different checksum; rerun with --force/);
+  assert.match(script, /merged manifest dropped old target/);
+  assert.match(script, /old manifest is missing target/);
+});
+
+test("temporary Windows x86 backfill workflow is manual, dry-run by default, and guarded", () => {
+  const workflow = fs.readFileSync(
+    path.join(repoRoot, ".github/workflows/backfill-windows-x86.yml"),
+    "utf8",
+  );
+  const r2Workflow = fs.readFileSync(
+    path.join(repoRoot, ".github/workflows/upload-r2.yml"),
+    "utf8",
+  );
+
+  assert.match(workflow, /^name: Backfill Windows x86 extension artifacts/m);
+  assert.match(workflow, /\n  workflow_dispatch:\n/);
+  assert.doesNotMatch(workflow, /\n  workflow_run:/);
+  assert.doesNotMatch(workflow, /\n  push:/);
+  assert.match(workflow, /publish_release:[\s\S]*default: false/);
+  assert.match(workflow, /publish_r2:[\s\S]*default: false/);
+  assert.match(workflow, /force:[\s\S]*default: false/);
+  assert.match(workflow, /runs-on: windows-2022/);
+  assert.match(workflow, /i686-pc-windows-msvc/);
+  assert.match(workflow, /scripts\/verify-package\.sh/);
+  assert.match(workflow, /scripts\/verify-remote-desktop-provider-package\.sh/);
+  assert.match(workflow, /scripts\/verify-acp-agent-package\.sh/);
+  assert.match(workflow, /gh release download "\$RELEASE_TAG"/);
+  assert.match(workflow, /scripts\/backfill-windows-x86\.mjs merge/);
+  assert.match(workflow, /\n  merge:\n/);
+  assert.match(workflow, /\n  publish-release:\n/);
+  assert.match(workflow, /package_action="\$\(node -e/);
+  assert.match(workflow, /upload\)/);
+  assert.match(workflow, /replace\)/);
+  assert.match(workflow, /skip\)/);
+  assert.match(workflow, /--clobber/);
+  assert.match(workflow, /max-parallel: 1/);
+  assert.match(workflow, /merge:\n[\s\S]*permissions:\n      contents: read/);
+  assert.match(workflow, /publish-release:\n[\s\S]*permissions:\n      contents: write/);
+  assert.match(workflow, /uses: \.\/\.github\/workflows\/upload-r2\.yml/);
+  assert.match(workflow, /with:\n      tag: \$\{\{ matrix\.release_tag \}\}/);
+  assert.match(workflow, /secrets: inherit/);
+  assert.match(workflow, /group: windows-x86-extension-backfill/);
+  assert.match(workflow, /cancel-in-progress: false/);
+  assert.match(r2Workflow, /\n  workflow_call:\n/);
+  assert.match(r2Workflow, /workflow_call:\n    inputs:\n      tag:/);
+  assert.match(r2Workflow, /github\.event_name == 'workflow_call'/);
+  assert.match(r2Workflow, /extension manifest artifact mismatch/);
+});
+
 test("RDP helper keeps native TLS backend for RDP compatibility", () => {
   const cargoToml = fs.readFileSync(
     path.join(repoRoot, "extensions/remote-desktop/rdp-helper/Cargo.toml"),
