@@ -346,8 +346,8 @@
       "id": "vnc",
       "kind": "remote_desktop_provider",
       "name": "VNC",
-      "version": "0.2.3",
-      "release_tag": "vnc-v0.2.3",
+      "version": "0.2.4",
+      "release_tag": "vnc-v0.2.4",
       "description": "使用 Rust 开发的 VNC 远程桌面 Provider，为 Navop 提供跨平台远程画面访问、交互输入、窗口缩放和剪贴板协作能力。 Rust-based VNC provider for Navop with cross-platform remote display, interactive input, window resizing, and clipboard integration.",
       "file_extensions": [],
       "manifest": "vnc/manifest.json"
