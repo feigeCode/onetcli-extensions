@@ -79,7 +79,7 @@ fn reads_requested_file_range_without_loading_whole_file() {
         data_id: None,
     };
 
-    let response = read_file_contents(&file.path().to_path_buf(), &request).unwrap();
+    let response = read_file_contents(file.path(), &request).unwrap();
 
     assert_eq!(7, response.stream_id());
     assert_eq!(b"3456", response.data());
