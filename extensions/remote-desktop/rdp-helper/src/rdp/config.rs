@@ -1,73 +1,46 @@
-use ironrdp::connector::{self, Credentials};
-use ironrdp::pdu::rdp::capability_sets::{MajorPlatformType, client_codecs_capabilities};
-use ironrdp::pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
-use ironrdp_client::config::{ClipboardType, Config, Destination};
+use ironrdp::pdu::rdp::capability_sets::MajorPlatformType;
+use ironrdp::pdu::rdp::client_info::PerformanceFlags;
+use ironrdp_client::config::{ClipboardType, Config, ConfigBuilder, Destination};
 
 use crate::protocol::ConnectRequest;
 
 pub(super) fn build_config(connect: ConnectRequest) -> anyhow::Result<Config> {
-    let codecs = client_codecs_capabilities(&[])
-        .map_err(|help| anyhow::anyhow!("failed to build bitmap codec capabilities: {help}"))?;
-    let connector = connector::Config {
-        credentials: Credentials::UsernamePassword {
-            username: connect.username.unwrap_or_default(),
-            password: connect.password.unwrap_or_default(),
-        },
-        domain: connect.domain,
-        enable_tls: true,
-        enable_credssp: true,
-        desktop_size: connector::DesktopSize {
-            width: connect.width,
-            height: connect.height,
-        },
-        desktop_scale_factor: connect.scale_factor,
-        keyboard_type: ironrdp::pdu::gcc::KeyboardType::IbmEnhanced,
-        keyboard_subtype: 0,
-        keyboard_layout: 0,
-        keyboard_functional_keys_count: 12,
-        ime_file_name: String::new(),
-        bitmap: Some(connector::BitmapConfig {
-            lossy_compression: true,
-            color_depth: 32,
-            codecs,
-        }),
-        dig_product_id: String::new(),
-        client_build: client_build()?,
-        client_name: whoami::fallible::hostname().unwrap_or_else(|_| "navop-rdp".to_string()),
-        client_dir: "C:\\Windows\\System32\\mstscax.dll".to_string(),
-        alternate_shell: String::new(),
-        work_dir: String::new(),
-        platform: platform_type(),
-        hardware_id: None,
-        license_cache: None,
-        request_data: None,
-        autologon: true,
-        enable_audio_playback: connect.audio_playback,
-        enable_server_pointer: true,
-        pointer_software_rendering: false,
-        multitransport_flags: None,
-        // Do not advertise bulk compression until IronRDP can safely carry its
-        // decompressor state across Deactivation-Reactivation. Reusing that
-        // history currently corrupts some FastPath bitmap updates after a
-        // resize/reconnect and disconnects the session with a decode error.
-        compression_type: None,
-        performance_flags: PerformanceFlags::default(),
-        timezone_info: TimezoneInfo::default(),
-    };
+    let mut builder = ConfigBuilder::new()
+        .with_destination(connect.destination.parse::<Destination>()?)
+        .with_username(connect.username.unwrap_or_default())
+        .with_password(connect.password.unwrap_or_default())
+        .with_client_build(client_build()?)
+        .with_client_dir("C:\\Windows\\System32\\mstscax.dll")
+        .with_client_name(whoami::fallible::hostname().unwrap_or_else(|_| "navop-rdp".to_string()))
+        .with_platform(platform_type())
+        .with_tls(true)
+        .with_credssp(true)
+        .with_desktop_width(connect.width)
+        .with_desktop_height(connect.height)
+        .with_desktop_scale_factor(connect.scale_factor)
+        .with_keyboard_type(ironrdp::pdu::gcc::KeyboardType::IbmEnhanced)
+        .with_keyboard_subtype(0)
+        .with_keyboard_layout(0)
+        .with_keyboard_functional_keys_count(12)
+        .with_ime_file_name("")
+        .with_color_depth(32)
+        .with_lossy_compression(true)
+        .with_codecs(Vec::new())
+        .with_autologon(true)
+        .with_sound(connect.audio_playback)
+        .with_server_pointer(true)
+        .with_pointer_software_rendering(false)
+        .with_performance_flags(PerformanceFlags::default())
+        // Keep bulk compression disabled. ConfigBuilder defaults compression
+        // to K64 unless with_compression(false) is set explicitly.
+        .with_compression(false)
+        .with_clipboard(ClipboardType::Enable);
 
-    Ok(Config {
-        log_file: None,
-        gw: None,
-        kerberos_config: None,
-        destination: connect.destination.parse::<Destination>()?,
-        connector,
-        clipboard_type: ClipboardType::Enable,
-        rdcleanpath: None,
-        fake_events_interval: None,
-        dvc_pipe_proxies: Vec::new(),
-        #[cfg(windows)]
-        dvc_plugins: Vec::new(),
-    })
+    if let Some(domain) = connect.domain {
+        builder = builder.with_domain(domain);
+    }
+
+    builder.build()
 }
 
 fn client_build() -> anyhow::Result<u32> {
@@ -108,8 +81,8 @@ mod tests {
         })
         .expect("config builds");
 
-        let flags = config.connector.performance_flags;
-        assert_eq!(200, config.connector.desktop_scale_factor);
+        let flags = config.connector().performance_flags;
+        assert_eq!(200, config.connector().desktop_scale_factor);
         assert_eq!(PerformanceFlags::default(), flags);
         assert!(!flags.contains(PerformanceFlags::DISABLE_THEMING));
         assert!(!flags.contains(PerformanceFlags::ENABLE_DESKTOP_COMPOSITION));
@@ -133,8 +106,14 @@ mod tests {
             .expect("config builds");
 
             assert_eq!(
-                audio_playback, config.connector.enable_audio_playback,
+                audio_playback,
+                config.connector().enable_audio_playback,
                 "connector audio playback must follow the Connect request"
+            );
+            assert_eq!(
+                audio_playback,
+                config.channels().sound,
+                "RDPSND channel must follow the Connect request"
             );
         }
     }
@@ -155,6 +134,6 @@ mod tests {
         })
         .expect("config builds");
 
-        assert_eq!(None, config.connector.compression_type);
+        assert_eq!(None, config.connector().compression_type);
     }
 }

@@ -65,10 +65,15 @@ fn process_input_requests(
     runtime: &rdp::RdpRuntime,
     database: &mut Database,
 ) -> anyhow::Result<()> {
+    let mut pending_mouse_position = None;
     for line in lines {
         let request = protocol::decode_request_line(&line?)?;
-        let mut context =
-            rdp::RdpInputContext::new(&runtime.input_tx, database, &runtime.clipboard);
+        let mut context = rdp::RdpInputContext::new(
+            &runtime.input_tx,
+            database,
+            &mut pending_mouse_position,
+            &runtime.clipboard,
+        );
         if rdp::apply_input_request(request, &mut context)? == rdp::RdpInputAction::Close {
             break;
         }

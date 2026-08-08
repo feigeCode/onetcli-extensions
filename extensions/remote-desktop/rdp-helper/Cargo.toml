@@ -1,6 +1,6 @@
 [package]
 name = "navop-rdp-helper"
-version = "0.3.4"
+version = "0.3.5"
 edition = "2024"
 publish = false
 
@@ -8,14 +8,17 @@ publish = false
 
 [dependencies]
 anyhow = "1"
-ironrdp = { git = "https://github.com/feigeCode/IronRDP", rev = "e176942d5c16dd7ae4166f9fb9a191ac3b816afa", features = [
+ironrdp = { git = "https://github.com/feigeCode/IronRDP", rev = "149606a4f3d10c94649a81855b8902e65d0c3766", features = [
     "connector",
     "cliprdr",
+    "graphics",
     "input",
     "pdu",
 ] }
-ironrdp-client = { git = "https://github.com/feigeCode/IronRDP", rev = "e176942d5c16dd7ae4166f9fb9a191ac3b816afa", default-features = false, features = [
+ironrdp-client = { git = "https://github.com/feigeCode/IronRDP", rev = "149606a4f3d10c94649a81855b8902e65d0c3766", default-features = false, features = [
+    "clipboard",
     "native-tls",
+    "sound",
 ] }
 semver = "1"
 serde = { version = "1", features = ["derive"] }

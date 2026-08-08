@@ -5,10 +5,9 @@ use std::sync::{Arc, Mutex};
 
 use ironrdp::cliprdr::backend::CliprdrBackendFactory;
 use ironrdp::cliprdr::pdu::{ClipboardFormat, ClipboardFormatId};
-use ironrdp_client::rdp::RdpInputEvent;
-use tokio::sync::mpsc;
 
 use crate::output_mailbox::OutputSender;
+use crate::rdp::HelperInputSender;
 
 use self::backend::TextClipboardBackendFactory;
 use self::controller::TextClipboardState;
@@ -31,7 +30,7 @@ pub(crate) const FIRST_SEQUENCE_ID: u64 = 1;
 pub use controller::TextClipboardController;
 
 pub fn text_clipboard(
-    input_tx: mpsc::UnboundedSender<RdpInputEvent>,
+    input_tx: HelperInputSender,
     output_tx: OutputSender,
 ) -> (
     TextClipboardController,
@@ -42,7 +41,7 @@ pub fn text_clipboard(
 }
 
 fn build_text_clipboard(
-    input_tx: mpsc::UnboundedSender<RdpInputEvent>,
+    input_tx: HelperInputSender,
     output_tx: OutputSender,
     staging_root: PathBuf,
 ) -> (
@@ -65,7 +64,7 @@ fn text_formats() -> Vec<ClipboardFormat> {
 
 #[cfg(test)]
 fn text_clipboard_at(
-    input_tx: mpsc::UnboundedSender<RdpInputEvent>,
+    input_tx: HelperInputSender,
     output_tx: OutputSender,
     staging_root: PathBuf,
 ) -> (

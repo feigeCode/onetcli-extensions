@@ -72,12 +72,41 @@ impl TextClipboardBackend {
     ) {
         match result {
             Ok(RemoteTransferAction::Request(request)) => {
-                self.send_clipboard(ClipboardMessage::SendFileContentsRequest(request));
+                if let Err(error) =
+                    self.send_clipboard(ClipboardMessage::SendFileContentsRequest(request))
+                {
+                    let mut state = lock_state(&self.shared);
+                    if state
+                        .remote_transfer
+                        .as_ref()
+                        .is_some_and(|transfer| transfer.transfer_id() == transfer_id)
+                    {
+                        state.remote_transfer = None;
+                    }
+                    drop(state);
+                    tracing::warn!(
+                        ?error,
+                        transfer_id,
+                        "failed to request remote RDP clipboard file contents"
+                    );
+                    let _ = self.output_tx.send(HelperEvent::ClipboardTransferFailed {
+                        transfer_id,
+                        message: "RDP clipboard channel closed during the file transfer"
+                            .to_string(),
+                    });
+                }
             }
             Ok(RemoteTransferAction::Ready(paths)) => {
-                let _ = self
+                if self
                     .output_tx
-                    .send(HelperEvent::ClipboardFilesReady { transfer_id, paths });
+                    .send(HelperEvent::ClipboardFilesReady { transfer_id, paths })
+                    .is_err()
+                {
+                    tracing::warn!(
+                        transfer_id,
+                        "RDP clipboard files completed after the helper output channel closed"
+                    );
+                }
             }
             Ok(RemoteTransferAction::Ignore) => {}
             Err(error) => {

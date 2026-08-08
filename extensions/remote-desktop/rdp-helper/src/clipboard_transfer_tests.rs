@@ -4,9 +4,12 @@ use ironrdp::cliprdr::pdu::{
     ClipboardFileAttributes, ClipboardFormat, ClipboardFormatId, ClipboardFormatName,
     FileContentsFlags, FileContentsRequest, FileContentsResponse, FileDescriptor,
 };
+use ironrdp_client::rdp::RdpInputEvent;
+use tokio::sync::mpsc;
 
 use crate::output_mailbox::output_mailbox;
 use crate::protocol::HelperEvent;
+use crate::rdp::HelperInputSender;
 
 const LOCAL_TRANSFER_ID: u64 = 41;
 const FIRST_REMOTE_TRANSFER_ID: u64 = (1_u64 << 63) | 1;
@@ -20,7 +23,7 @@ fn local_directory_copy_preserves_hierarchy_and_descriptor_indexes() {
     std::fs::write(top.join("README.md"), b"readme").expect("top-level file");
     std::fs::write(nested.join("main.rs"), b"fn main() {}").expect("nested file");
 
-    let (input_tx, mut input_rx) = RdpInputEvent::create_channel();
+    let (input_tx, mut input_rx) = HelperInputSender::test_channel();
     let (output_tx, _output_rx) = output_mailbox();
     let staging = tempfile::tempdir().expect("staging root");
     let (controller, factory) =
@@ -31,7 +34,7 @@ fn local_directory_copy_preserves_hierarchy_and_descriptor_indexes() {
         .expect("directory clipboard starts");
 
     let descriptors = match input_rx.try_recv().expect("file copy event") {
-        RdpInputEvent::ClipboardFileCopy(files) => files,
+        RdpInputEvent::Clipboard(ClipboardMessage::SendInitiateFileCopy(files)) => files,
         other => panic!("expected file copy event, got {other:?}"),
     };
     assert_eq!(4, descriptors.len());
@@ -63,7 +66,7 @@ fn local_directory_copy_preserves_hierarchy_and_descriptor_indexes() {
 fn cancelling_local_transfer_stops_serving_its_snapshot() {
     let file = tempfile::NamedTempFile::new().expect("source file");
     std::fs::write(file.path(), b"secret").expect("file contents");
-    let (input_tx, mut input_rx) = RdpInputEvent::create_channel();
+    let (input_tx, mut input_rx) = HelperInputSender::test_channel();
     let (output_tx, _output_rx) = output_mailbox();
     let staging = tempfile::tempdir().expect("staging root");
     let (controller, factory) =
@@ -90,7 +93,7 @@ fn cancelling_local_transfer_stops_serving_its_snapshot() {
 
 #[test]
 fn remote_directory_download_streams_files_and_emits_staged_top_level_path() {
-    let (input_tx, mut input_rx) = RdpInputEvent::create_channel();
+    let (input_tx, mut input_rx) = HelperInputSender::test_channel();
     let (output_tx, output_rx) = output_mailbox();
     let staging_parent = tempfile::tempdir().expect("staging parent");
     let staging_root = staging_parent.path().join("navop-rdp-clipboard");
@@ -144,7 +147,7 @@ fn remote_directory_download_streams_files_and_emits_staged_top_level_path() {
 
 #[test]
 fn invalid_remote_hierarchy_fails_without_leaving_partial_staging() {
-    let (input_tx, mut input_rx) = RdpInputEvent::create_channel();
+    let (input_tx, mut input_rx) = HelperInputSender::test_channel();
     let (output_tx, output_rx) = output_mailbox();
     let staging_parent = tempfile::tempdir().expect("staging parent");
     let staging_root = staging_parent.path().join("navop-rdp-clipboard");
@@ -168,6 +171,36 @@ fn invalid_remote_hierarchy_fails_without_leaving_partial_staging() {
                 .next()
                 .is_none()
     );
+}
+
+#[test]
+fn remote_file_transfer_reports_when_clipboard_channel_closes() {
+    let (input_tx, mut input_rx) = HelperInputSender::test_channel();
+    let (output_tx, output_rx) = output_mailbox();
+    let staging_parent = tempfile::tempdir().expect("staging parent");
+    let staging_root = staging_parent.path().join("navop-rdp-clipboard");
+    let (controller, factory) = text_clipboard_at(input_tx, output_tx, staging_root);
+    let mut backend = factory.build_cliprdr_backend();
+
+    backend.on_remote_copy(&[remote_file_format()]);
+    assert_initiate_file_paste(&mut input_rx);
+    drop(input_rx);
+
+    backend.on_remote_file_list(&[file_descriptor("remote.txt", None, 4)], Some(7));
+
+    match output_rx.recv().expect("clipboard failure event") {
+        HelperEvent::ClipboardTransferFailed {
+            transfer_id,
+            message,
+        } => {
+            assert_eq!(FIRST_REMOTE_TRANSFER_ID, transfer_id);
+            assert!(message.contains("clipboard channel closed"));
+        }
+        other => panic!("expected clipboard failure event, got {other:?}"),
+    }
+    let state = controller::lock_state(&controller.shared);
+    assert!(state.pending_remote.is_none());
+    assert!(state.remote_transfer.is_none());
 }
 
 fn assert_descriptor(

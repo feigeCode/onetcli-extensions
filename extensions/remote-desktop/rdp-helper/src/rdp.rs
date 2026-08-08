@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use ironrdp_client::rdp::{DvcPipeProxyFactory, RdpClient, RdpInputEvent, RdpOutputEvent};
+use ironrdp_client::rdp::{RdpClient, RdpOutputEvent};
 use tokio::sync::mpsc;
 
 use crate::clipboard::{TextClipboardController, text_clipboard};
@@ -9,13 +9,15 @@ use crate::threading::join_worker;
 
 mod config;
 mod input;
+mod input_sender;
 mod output;
 
 pub(crate) use input::{RdpInputAction, RdpInputContext, apply_input_request, shutdown_inputs};
+pub(crate) use input_sender::{HelperInputSender, InputQueueStatus};
 use output::RdpOutputMapper;
 
 pub struct RdpRuntime {
-    pub input_tx: mpsc::UnboundedSender<RdpInputEvent>,
+    pub input_tx: HelperInputSender,
     output_rx: Option<OutputReceiver>,
     pub clipboard: TextClipboardController,
     client_thread: std::thread::JoinHandle<anyhow::Result<()>>,
@@ -23,18 +25,12 @@ pub struct RdpRuntime {
 
 pub fn start(connect: ConnectRequest) -> anyhow::Result<RdpRuntime> {
     let config = config::build_config(connect)?;
-    let (input_tx, input_rx) = RdpInputEvent::create_channel();
     let (output_tx, output_rx) = mpsc::channel::<RdpOutputEvent>(64);
     let (helper_output_tx, helper_output_rx) = output_mailbox();
+    let client = RdpClient::new(config, output_tx);
+    let input_tx = HelperInputSender::production(client.input_sender());
     let (clipboard, cliprdr_factory) = text_clipboard(input_tx.clone(), helper_output_tx.clone());
-    let dvc_pipe_proxy_factory = DvcPipeProxyFactory::new(input_tx.clone());
-    let client = RdpClient {
-        config,
-        output_event_sender: output_tx,
-        input_event_receiver: input_rx,
-        cliprdr_factory: Some(cliprdr_factory),
-        dvc_pipe_proxy_factory,
-    };
+    let client = client.with_cliprdr_backend_factory(cliprdr_factory);
 
     let client_thread = spawn_client_thread(client, output_rx, helper_output_tx)?;
     Ok(RdpRuntime {

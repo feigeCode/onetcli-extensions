@@ -1,13 +1,18 @@
+use std::time::Duration;
+
 use anyhow::Context as _;
 use ironrdp::input::{Database, MouseButton, MousePosition, Operation, Scancode, WheelRotations};
 use ironrdp_client::rdp::RdpInputEvent;
 use smallvec::SmallVec;
-use tokio::sync::mpsc;
 
 use crate::clipboard::TextClipboardController;
 use crate::protocol::{HelperMouseButton, HelperRequest};
 
+use super::{HelperInputSender, InputQueueStatus};
+
 type FastPathEvents = SmallVec<[ironrdp::pdu::input::fast_path::FastPathInputEvent; 2]>;
+
+const INPUT_BACKPRESSURE_RETRY_INTERVAL: Duration = Duration::from_millis(1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RdpInputAction {
@@ -16,20 +21,23 @@ pub(crate) enum RdpInputAction {
 }
 
 pub(crate) struct RdpInputContext<'a> {
-    input_tx: &'a mpsc::UnboundedSender<RdpInputEvent>,
+    input_tx: &'a HelperInputSender,
     database: &'a mut Database,
+    pending_mouse_position: &'a mut Option<MousePosition>,
     clipboard: &'a TextClipboardController,
 }
 
 impl<'a> RdpInputContext<'a> {
     pub(crate) fn new(
-        input_tx: &'a mpsc::UnboundedSender<RdpInputEvent>,
+        input_tx: &'a HelperInputSender,
         database: &'a mut Database,
+        pending_mouse_position: &'a mut Option<MousePosition>,
         clipboard: &'a TextClipboardController,
     ) -> Self {
         Self {
             input_tx,
             database,
+            pending_mouse_position,
             clipboard,
         }
     }
@@ -44,19 +52,22 @@ pub(crate) fn apply_input_request(
             width,
             height,
             scale_factor,
-        } => send_resize(context.input_tx, (width, height, scale_factor))?,
-        HelperRequest::MouseMove { x, y } => {
-            send_operations(context, [Operation::MouseMove(MousePosition { x, y })])?
+        } => {
+            // A coalesced move uses coordinates from the previous desktop size.
+            // Do not replay it after the resize in a potentially different coordinate space.
+            *context.pending_mouse_position = None;
+            send_resize(context.input_tx, (width, height, scale_factor))?;
         }
+        HelperRequest::MouseMove { x, y } => send_mouse_move(context, MousePosition { x, y })?,
         HelperRequest::MouseButton { button, pressed } => {
-            send_operations(context, [mouse_button_operation(button, pressed)])?
+            send_pointer_operation(context, mouse_button_operation(button, pressed))?
         }
-        HelperRequest::Wheel { vertical, units } => send_operations(
+        HelperRequest::Wheel { vertical, units } => send_pointer_operation(
             context,
-            [Operation::WheelRotations(WheelRotations {
+            Operation::WheelRotations(WheelRotations {
                 is_vertical: vertical,
                 rotation_units: units,
-            })],
+            }),
         )?,
         HelperRequest::Key {
             code,
@@ -81,38 +92,75 @@ pub(crate) fn apply_input_request(
 
 pub(crate) fn shutdown_inputs(
     database: &mut Database,
-    input_tx: &mpsc::UnboundedSender<RdpInputEvent>,
+    input_tx: &HelperInputSender,
 ) -> anyhow::Result<()> {
-    let releases = database.release_all();
-    let release_failed = send_fast_path(input_tx, releases).is_err();
-    let close_failed = input_tx.send(RdpInputEvent::Close).is_err();
-    anyhow::ensure!(
-        !release_failed && !close_failed,
-        "RDP input channel closed during shutdown"
-    );
-    Ok(())
+    // Shutdown must not wait behind a full ordinary-input queue. IronRDP's graceful-close
+    // signal deliberately bypasses that queue, while held inputs will also be released when
+    // the RDP session closes.
+    let release_result = match input_tx.try_send_with(|| fast_path_event(database.release_all())) {
+        Ok(InputQueueStatus::Sent) => Ok(()),
+        Ok(InputQueueStatus::Full) => {
+            tracing::debug!("skipping RDP input releases because the queue is full at shutdown");
+            Ok(())
+        }
+        Err(error) => Err(error),
+    };
+    let close_result = input_tx.request_graceful_close();
+    release_result.and(close_result)
 }
 
 fn send_resize(
-    input_tx: &mpsc::UnboundedSender<RdpInputEvent>,
+    input_tx: &HelperInputSender,
     (width, height, scale_factor): (u16, u16, u32),
 ) -> anyhow::Result<()> {
-    input_tx
-        .send(RdpInputEvent::Resize {
+    send_reliably(|| {
+        input_tx.try_send(RdpInputEvent::Resize {
             width,
             height,
             scale_factor,
             physical_size: None,
         })
-        .map_err(|_| anyhow::anyhow!("RDP input channel closed"))
+    })
+}
+
+fn send_mouse_move(
+    context: &mut RdpInputContext<'_>,
+    position: MousePosition,
+) -> anyhow::Result<()> {
+    *context.pending_mouse_position = Some(position);
+    let status = try_send_operations(context, [Operation::MouseMove(position)])?;
+    match status {
+        InputQueueStatus::Sent => *context.pending_mouse_position = None,
+        InputQueueStatus::Full => {
+            tracing::trace!(
+                x = position.x,
+                y = position.y,
+                "coalescing RDP mouse move while input queue is full"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn send_pointer_operation(
+    context: &mut RdpInputContext<'_>,
+    operation: Operation,
+) -> anyhow::Result<()> {
+    if let Some(position) = *context.pending_mouse_position {
+        send_reliably(|| {
+            try_send_operations(context, [Operation::MouseMove(position), operation.clone()])
+        })?;
+        *context.pending_mouse_position = None;
+        return Ok(());
+    }
+    send_operations(context, [operation])
 }
 
 fn send_operations<const N: usize>(
     context: &mut RdpInputContext<'_>,
     operations: [Operation; N],
 ) -> anyhow::Result<()> {
-    let events = context.database.apply(operations);
-    send_fast_path(context.input_tx, events)
+    send_reliably(|| try_send_operations(context, operations.clone()))
 }
 
 fn send_text(context: &mut RdpInputContext<'_>, text: &str) -> anyhow::Result<()> {
@@ -128,16 +176,31 @@ fn send_text(context: &mut RdpInputContext<'_>, text: &str) -> anyhow::Result<()
     Ok(())
 }
 
-fn send_fast_path(
-    input_tx: &mpsc::UnboundedSender<RdpInputEvent>,
-    events: FastPathEvents,
-) -> anyhow::Result<()> {
+fn try_send_operations<const N: usize>(
+    context: &mut RdpInputContext<'_>,
+    operations: [Operation; N],
+) -> anyhow::Result<InputQueueStatus> {
+    let input_tx = context.input_tx;
+    let database = &mut *context.database;
+    input_tx.try_send_with(|| fast_path_event(database.apply(operations)))
+}
+
+fn fast_path_event(events: FastPathEvents) -> Option<RdpInputEvent> {
     if events.is_empty() {
-        return Ok(());
+        return None;
     }
-    input_tx
-        .send(RdpInputEvent::FastPath(events))
-        .map_err(|_| anyhow::anyhow!("RDP input channel closed"))
+    Some(RdpInputEvent::FastPath(events))
+}
+
+fn send_reliably(
+    mut try_send: impl FnMut() -> anyhow::Result<InputQueueStatus>,
+) -> anyhow::Result<()> {
+    loop {
+        match try_send()? {
+            InputQueueStatus::Sent => return Ok(()),
+            InputQueueStatus::Full => std::thread::sleep(INPUT_BACKPRESSURE_RETRY_INTERVAL),
+        }
+    }
 }
 
 fn set_local_files(clipboard: &TextClipboardController, transfer_id: u64, paths: Vec<String>) {

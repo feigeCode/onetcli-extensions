@@ -1,7 +1,7 @@
 use ironrdp_client::rdp::RdpOutputEvent;
 
 use crate::pixels::rdp_u32_pixels_to_bgra;
-use crate::protocol::{HelperEvent, HelperFrameRect};
+use crate::protocol::{HelperEvent, HelperFrameRect, HelperReconnectReason};
 
 const DIRTY_TILE_SIZE: usize = 64;
 const FULL_FRAME_THRESHOLD_PERCENT: usize = 60;
@@ -57,6 +57,20 @@ impl PendingCursor {
 impl RdpOutputMapper {
     pub(super) fn map(&mut self, event: RdpOutputEvent) -> Vec<HelperEvent> {
         match event {
+            RdpOutputEvent::Connected
+            | RdpOutputEvent::LoginComplete
+            | RdpOutputEvent::PostLogonDisplayRedraw
+            | RdpOutputEvent::MalformedBitmapDisplayRedraw => Vec::new(),
+            RdpOutputEvent::DisplayResizeFallback(reason) => {
+                tracing::warn!(?reason, "RDP dynamic display resize fell back to reconnect");
+                self.connected = false;
+                self.previous = None;
+                self.pending_cursor.clear();
+                vec![HelperEvent::Reconnecting {
+                    reason: HelperReconnectReason::DisplayUpdate,
+                    delay_secs: None,
+                }]
+            }
             RdpOutputEvent::Image {
                 buffer,
                 width,
@@ -287,6 +301,50 @@ mod tests {
         assert_eq!(
             second,
             vec![HelperEvent::frame(1, 1, vec![0xef, 0xcd, 0xab, 0xff])]
+        );
+    }
+
+    #[test]
+    fn ironrdp_connected_does_not_cross_host_connected_barrier() {
+        let mut mapper = RdpOutputMapper::default();
+
+        assert!(mapper.map(RdpOutputEvent::Connected).is_empty());
+        assert_eq!(
+            mapper.map(image(&[0], 1, 1)),
+            vec![
+                HelperEvent::Connected {
+                    width: 1,
+                    height: 1,
+                },
+                HelperEvent::frame(1, 1, vec![0, 0, 0, 0xff]),
+            ]
+        );
+    }
+
+    #[test]
+    fn resize_fallback_resets_first_frame_barrier_for_reconnected_session() {
+        let mut mapper = RdpOutputMapper::default();
+        mapper.map(image(&[0x00112233], 1, 1));
+
+        assert_eq!(
+            mapper.map(RdpOutputEvent::DisplayResizeFallback(
+                ironrdp_client::rdp::DisplayResizeFallbackReason::DisplayControlUnavailable,
+            )),
+            vec![HelperEvent::Reconnecting {
+                reason: HelperReconnectReason::DisplayUpdate,
+                delay_secs: None,
+            }]
+        );
+        assert!(mapper.map(RdpOutputEvent::Connected).is_empty());
+        assert_eq!(
+            mapper.map(image(&[0x00112233], 1, 1)),
+            vec![
+                HelperEvent::Connected {
+                    width: 1,
+                    height: 1,
+                },
+                HelperEvent::frame(1, 1, vec![0x33, 0x22, 0x11, 0xff]),
+            ]
         );
     }
 

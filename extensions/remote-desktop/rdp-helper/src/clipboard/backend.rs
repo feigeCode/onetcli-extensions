@@ -8,10 +8,10 @@ use ironrdp::cliprdr::pdu::{
     FileContentsRequest, FileContentsResponse, FormatDataRequest, FormatDataResponse, LockDataId,
 };
 use ironrdp::core::{AsAny, IntoOwned};
-use ironrdp_client::rdp::RdpInputEvent;
 
 use crate::output_mailbox::OutputSender;
 use crate::protocol::HelperEvent;
+use crate::rdp::HelperInputSender;
 
 use super::controller::{TextClipboardState, lock_state};
 use super::staging::cleanup_stale_transfers;
@@ -19,7 +19,7 @@ use super::staging::cleanup_stale_transfers;
 #[derive(Clone)]
 pub(super) struct TextClipboardBackendFactory {
     shared: Arc<Mutex<TextClipboardState>>,
-    input_tx: tokio::sync::mpsc::UnboundedSender<RdpInputEvent>,
+    input_tx: HelperInputSender,
     output_tx: OutputSender,
     staging_root: PathBuf,
 }
@@ -27,7 +27,7 @@ pub(super) struct TextClipboardBackendFactory {
 impl TextClipboardBackendFactory {
     pub(super) fn new(
         shared: Arc<Mutex<TextClipboardState>>,
-        input_tx: tokio::sync::mpsc::UnboundedSender<RdpInputEvent>,
+        input_tx: HelperInputSender,
         output_tx: OutputSender,
         staging_root: PathBuf,
     ) -> Self {
@@ -69,7 +69,7 @@ impl fmt::Debug for TextClipboardBackendFactory {
 
 pub(super) struct TextClipboardBackend {
     pub(super) shared: Arc<Mutex<TextClipboardState>>,
-    pub(super) input_tx: tokio::sync::mpsc::UnboundedSender<RdpInputEvent>,
+    pub(super) input_tx: HelperInputSender,
     pub(super) output_tx: OutputSender,
     pub(super) temporary_directory: String,
     pub(super) staging_root: PathBuf,
@@ -92,8 +92,14 @@ impl fmt::Debug for TextClipboardBackend {
 }
 
 impl TextClipboardBackend {
-    pub(super) fn send_clipboard(&self, message: ClipboardMessage) {
-        let _ = self.input_tx.send(RdpInputEvent::Clipboard(message));
+    pub(super) fn send_clipboard(&self, message: ClipboardMessage) -> anyhow::Result<()> {
+        self.input_tx.send_clipboard(message)
+    }
+
+    fn send_clipboard_or_warn(&self, message: ClipboardMessage, operation: &'static str) {
+        if let Err(error) = self.send_clipboard(message) {
+            tracing::warn!(?error, operation, "failed to send RDP clipboard message");
+        }
     }
 
     fn send_local_text_response(&self, request: FormatDataRequest) {
@@ -106,7 +112,10 @@ impl TextClipboardBackend {
         } else {
             FormatDataResponse::new_error()
         };
-        self.send_clipboard(ClipboardMessage::SendFormatData(response.into_owned()));
+        self.send_clipboard_or_warn(
+            ClipboardMessage::SendFormatData(response.into_owned()),
+            "format data response",
+        );
     }
 
     fn send_local_file_response(&self, request: FileContentsRequest) {
@@ -114,7 +123,10 @@ impl TextClipboardBackend {
         let response = entry
             .and_then(|entry| entry.read(&request).ok())
             .unwrap_or_else(|| FileContentsResponse::new_error(request.stream_id));
-        self.send_clipboard(ClipboardMessage::SendFileContentsResponse(response));
+        self.send_clipboard_or_warn(
+            ClipboardMessage::SendFileContentsResponse(response),
+            "file contents response",
+        );
     }
 
     fn begin_remote_copy(&self, available_formats: &[ClipboardFormat]) {
@@ -126,9 +138,27 @@ impl TextClipboardBackend {
         if let Some(format) = file_format {
             let mut state = lock_state(&self.shared);
             state.waiting_remote_text = false;
-            state.reserve_remote_transfer();
+            let transfer_id = state.reserve_remote_transfer();
             drop(state);
-            self.send_clipboard(ClipboardMessage::SendInitiatePaste(format.id()));
+            if let Err(error) =
+                self.send_clipboard(ClipboardMessage::SendInitiatePaste(format.id()))
+            {
+                let mut state = lock_state(&self.shared);
+                if state.pending_remote == Some(transfer_id) {
+                    state.pending_remote = None;
+                }
+                drop(state);
+                tracing::warn!(
+                    ?error,
+                    transfer_id,
+                    "failed to initiate remote RDP clipboard transfer"
+                );
+                let _ = self.output_tx.send(HelperEvent::ClipboardTransferFailed {
+                    transfer_id,
+                    message: "RDP clipboard channel closed before the file transfer started"
+                        .to_string(),
+                });
+            }
             return;
         }
         self.begin_remote_text(available_formats);
@@ -144,9 +174,10 @@ impl TextClipboardBackend {
         state.waiting_remote_text = unicode;
         drop(state);
         if unicode {
-            self.send_clipboard(ClipboardMessage::SendInitiatePaste(
-                ClipboardFormatId::CF_UNICODETEXT,
-            ));
+            self.send_clipboard_or_warn(
+                ClipboardMessage::SendInitiatePaste(ClipboardFormatId::CF_UNICODETEXT),
+                "remote text paste request",
+            );
         }
     }
 }
@@ -168,13 +199,20 @@ impl CliprdrBackend for TextClipboardBackend {
         if let Some(transfer) = &state.local_files {
             let descriptors = transfer.descriptors();
             drop(state);
-            let _ = self
-                .input_tx
-                .send(RdpInputEvent::ClipboardFileCopy(descriptors));
+            self.send_clipboard_or_warn(
+                ClipboardMessage::SendInitiateFileCopy(descriptors),
+                "local file copy advertisement",
+            );
         } else if state.local_text.is_some() {
-            self.send_clipboard(ClipboardMessage::SendInitiateCopy(super::text_formats()));
+            self.send_clipboard_or_warn(
+                ClipboardMessage::SendInitiateCopy(super::text_formats()),
+                "local text advertisement",
+            );
         } else {
-            self.send_clipboard(ClipboardMessage::SendInitiateCopy(Vec::new()));
+            self.send_clipboard_or_warn(
+                ClipboardMessage::SendInitiateCopy(Vec::new()),
+                "empty clipboard advertisement",
+            );
         }
     }
 

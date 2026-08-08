@@ -3,11 +3,10 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use ironrdp::cliprdr::backend::ClipboardMessage;
-use ironrdp_client::rdp::RdpInputEvent;
-use tokio::sync::mpsc;
 
 use crate::output_mailbox::OutputSender;
 use crate::protocol::HelperEvent;
+use crate::rdp::HelperInputSender;
 
 use super::local::{LocalClipboardEntry, LocalClipboardTransfer};
 use super::remote::RemoteClipboardTransfer;
@@ -16,7 +15,7 @@ use super::{FIRST_SEQUENCE_ID, LOCAL_CLIPBOARD_TRANSFER_MASK, REMOTE_CLIPBOARD_T
 #[derive(Clone)]
 pub struct TextClipboardController {
     pub(super) shared: Arc<Mutex<TextClipboardState>>,
-    pub(super) input_tx: mpsc::UnboundedSender<RdpInputEvent>,
+    pub(super) input_tx: HelperInputSender,
     pub(super) output_tx: OutputSender,
 }
 
@@ -40,9 +39,7 @@ impl TextClipboardController {
         state.local_text = None;
         state.local_files = Some(transfer);
         drop(state);
-        self.input_tx
-            .send(RdpInputEvent::ClipboardFileCopy(descriptors))
-            .map_err(|_| anyhow::anyhow!("RDP input channel closed"))
+        self.send_clipboard(ClipboardMessage::SendInitiateFileCopy(descriptors))
     }
 
     pub fn cancel_transfer(&self, transfer_id: u64) -> bool {
@@ -81,9 +78,7 @@ impl TextClipboardController {
     }
 
     fn send_clipboard(&self, message: ClipboardMessage) -> anyhow::Result<()> {
-        self.input_tx
-            .send(RdpInputEvent::Clipboard(message))
-            .map_err(|_| anyhow::anyhow!("RDP input channel closed"))
+        self.input_tx.send_clipboard(message)
     }
 }
 
