@@ -549,6 +549,17 @@ func (c *Conn) buildHandshakeResponse(hs *handshake, authResp []byte) []byte {
 	}
 	caps |= c.cfg.CapabilityAdd
 	caps &^= c.cfg.CapabilityDrop
+	// OceanBase Oracle tenants are selected by the login identity, not by a
+	// MySQL initial database. Keep this invariant after capability overrides so
+	// a legacy DSN or cap.add=0x8 cannot re-enable CLIENT_CONNECT_WITH_DB. The
+	// oboracle preset is also an explicit client-side Oracle-tenant signal for
+	// proxies that omit OceanBase's Oracle-mode status bit.
+	if hs.capabilities&protocol.ClientConnectWithDB == 0 ||
+		c.tenantMode == "oracle" ||
+		strings.EqualFold(strings.TrimSpace(c.cfg.Preset), "oboracle") ||
+		c.cfg.Database == "" {
+		caps &^= protocol.ClientConnectWithDB
+	}
 
 	envOverride := os.Getenv("OB_USE_COMPRESSION")
 	negotiatedCompress := NegotiateCompression(c.cfg.UseCompression, hs.capabilities, envOverride)

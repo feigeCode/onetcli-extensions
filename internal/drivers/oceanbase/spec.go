@@ -5,8 +5,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -112,8 +115,81 @@ func buildMySQLDSN(cfg dbipc.Config) (string, error) {
 	mysqlCfg.Addr = net.JoinHostPort(cfg.Host, fmt.Sprint(cfg.Port))
 	mysqlCfg.DBName = cfg.Database
 	mysqlCfg.ParseTime = true
-	mysqlCfg.Params = dbipc.CopyDriverExtra(cfg.Extra)
+	params, err := mysqlDriverExtra(cfg.Extra)
+	if err != nil {
+		return "", err
+	}
+	mysqlCfg.Params = params
 	return mysqlCfg.FormatDSN(), nil
+}
+
+func mysqlDriverExtra(extra map[string]string) (map[string]string, error) {
+	params := dbipc.CopyDriverExtra(extra)
+	keys := make([]string, 0, len(params))
+	for key := range params {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	var timeoutValue string
+	var timeoutFound bool
+	var timeoutIsCanonical bool
+	for _, key := range keys {
+		normalizedKey := strings.ToLower(strings.TrimSpace(key))
+		switch normalizedKey {
+		case "timeout":
+			if !timeoutIsCanonical || key == "timeout" {
+				timeoutValue = params[key]
+				timeoutFound = true
+				timeoutIsCanonical = true
+			}
+			delete(params, key)
+		case "connect_timeout", "connecttimeout", "connect timeout":
+			if !timeoutIsCanonical && !timeoutFound {
+				timeoutValue = params[key]
+				timeoutFound = true
+			}
+			delete(params, key)
+		}
+	}
+	if !timeoutFound {
+		return params, nil
+	}
+
+	timeout, err := normalizeMySQLTimeout(timeoutValue)
+	if err != nil {
+		return nil, err
+	}
+	params["timeout"] = timeout
+	return params, nil
+}
+
+func normalizeMySQLTimeout(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", fmt.Errorf("invalid connect timeout %q", raw)
+	}
+	if duration, err := time.ParseDuration(value); err == nil {
+		if duration < 0 {
+			return "", fmt.Errorf("invalid connect timeout %q: must not be negative", raw)
+		}
+		if duration == 0 && strings.ContainsAny(value, "123456789") {
+			return "", fmt.Errorf("invalid connect timeout %q: below minimum duration", raw)
+		}
+		return duration.String(), nil
+	}
+	seconds, err := strconv.ParseFloat(value, 64)
+	if err != nil || math.IsNaN(seconds) || math.IsInf(seconds, 0) || seconds < 0 {
+		return "", fmt.Errorf("invalid connect timeout %q", raw)
+	}
+	if seconds >= float64(math.MaxInt64)/float64(time.Second) {
+		return "", fmt.Errorf("invalid connect timeout %q: exceeds maximum duration", raw)
+	}
+	duration := time.Duration(seconds * float64(time.Second))
+	if seconds > 0 && duration == 0 {
+		return "", fmt.Errorf("invalid connect timeout %q: below minimum duration", raw)
+	}
+	return duration.String(), nil
 }
 
 func buildMySQLWireOracleTenantDSN(cfg dbipc.Config) (string, error) {
@@ -211,6 +287,19 @@ func parseConnectionAttributes(raw string) map[string]string {
 func oracleMySQLWireDriverName(cfg dbipc.Config) string {
 	if driverName := strings.TrimSpace(cfg.Extra["oracle_mysql_wire_driver"]); driverName != "" {
 		return driverName
+	}
+	keys := make([]string, 0, len(cfg.Extra))
+	for key := range cfg.Extra {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if !strings.EqualFold(strings.TrimSpace(key), "oracle_mysql_wire_driver") {
+			continue
+		}
+		if driverName := strings.TrimSpace(cfg.Extra[key]); driverName != "" {
+			return driverName
+		}
 	}
 	return "oboracle"
 }
