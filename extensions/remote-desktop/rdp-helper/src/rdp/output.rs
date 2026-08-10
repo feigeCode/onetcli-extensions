@@ -5,11 +5,15 @@ use crate::protocol::{HelperEvent, HelperFrameRect, HelperReconnectReason};
 
 const DIRTY_TILE_SIZE: usize = 64;
 const FULL_FRAME_THRESHOLD_PERCENT: usize = 60;
+const MAX_ACCUMULATED_DIRTY_AREA_PERCENT: usize = 50;
+const MAX_ACCUMULATED_DIRTY_RECTS: usize = 256;
+const BGRA_BYTES_PER_PIXEL: usize = 4;
 
 #[derive(Default)]
 pub(super) struct RdpOutputMapper {
     connected: bool,
     previous: Option<PreviousFrame>,
+    delta_budget: DeltaBudget,
     // IronRDP may publish pointer state before its first image. The main
     // process treats `Connected` as the session barrier, so retain only the
     // latest pre-connect appearance and position and flush them after it.
@@ -20,6 +24,36 @@ struct PreviousFrame {
     width: u16,
     height: u16,
     pixels: Vec<u32>,
+}
+
+#[derive(Default)]
+struct DeltaBudget {
+    rect_count: usize,
+    dirty_area: usize,
+}
+
+impl DeltaBudget {
+    fn record(&mut self, rect_count: usize, dirty_area: usize) {
+        self.rect_count = self.rect_count.saturating_add(rect_count);
+        self.dirty_area = self.dirty_area.saturating_add(dirty_area);
+    }
+
+    fn requires_full_frame(&self, total_area: usize) -> bool {
+        self.rect_count >= MAX_ACCUMULATED_DIRTY_RECTS
+            || percentage_reached(
+                self.dirty_area,
+                total_area,
+                MAX_ACCUMULATED_DIRTY_AREA_PERCENT,
+            )
+    }
+
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+fn percentage_reached(value: usize, total: usize, percent: usize) -> bool {
+    (value as u128) * 100 >= (total as u128) * (percent as u128)
 }
 
 #[derive(Default)]
@@ -63,9 +97,7 @@ impl RdpOutputMapper {
             | RdpOutputEvent::MalformedBitmapDisplayRedraw => Vec::new(),
             RdpOutputEvent::DisplayResizeFallback(reason) => {
                 tracing::warn!(?reason, "RDP dynamic display resize fell back to reconnect");
-                self.connected = false;
-                self.previous = None;
-                self.pending_cursor.clear();
+                self.reset_session();
                 vec![HelperEvent::Reconnecting {
                     reason: HelperReconnectReason::DisplayUpdate,
                     delay_secs: None,
@@ -96,13 +128,13 @@ impl RdpOutputMapper {
                 events
             }
             RdpOutputEvent::ConnectionFailure(error) => {
-                self.pending_cursor.clear();
+                self.reset_session();
                 vec![HelperEvent::ConnectionFailure {
                     message: format!("{error:#}"),
                 }]
             }
             RdpOutputEvent::Terminated(result) => {
-                self.pending_cursor.clear();
+                self.reset_session();
                 vec![HelperEvent::Terminated {
                     message: match result {
                         Ok(reason) => reason.to_string(),
@@ -131,6 +163,13 @@ impl RdpOutputMapper {
         }
     }
 
+    fn reset_session(&mut self) {
+        self.connected = false;
+        self.previous = None;
+        self.delta_budget.reset();
+        self.pending_cursor.clear();
+    }
+
     fn map_cursor(&mut self, event: HelperEvent) -> Vec<HelperEvent> {
         if self.connected {
             vec![event]
@@ -140,8 +179,9 @@ impl RdpOutputMapper {
         }
     }
 
-    fn map_frame(&self, width: u16, height: u16, pixels: &[u32]) -> Option<HelperEvent> {
+    fn map_frame(&mut self, width: u16, height: u16, pixels: &[u32]) -> Option<HelperEvent> {
         let Some(previous) = self.previous.as_ref() else {
+            self.delta_budget.reset();
             return Some(HelperEvent::frame(
                 width,
                 height,
@@ -149,6 +189,7 @@ impl RdpOutputMapper {
             ));
         };
         if previous.width != width || previous.height != height {
+            self.delta_budget.reset();
             return Some(HelperEvent::frame(
                 width,
                 height,
@@ -165,7 +206,12 @@ impl RdpOutputMapper {
             .map(|rect| usize::from(rect.width) * usize::from(rect.height))
             .sum();
         let total_area = usize::from(width) * usize::from(height);
-        if changed_area * 100 >= total_area * FULL_FRAME_THRESHOLD_PERCENT {
+        let payload_bytes = changed_area.saturating_mul(BGRA_BYTES_PER_PIXEL);
+        self.delta_budget.record(rects.len(), changed_area);
+        if percentage_reached(changed_area, total_area, FULL_FRAME_THRESHOLD_PERCENT)
+            || self.delta_budget.requires_full_frame(total_area)
+        {
+            self.delta_budget.reset();
             return Some(HelperEvent::frame(
                 width,
                 height,
@@ -173,7 +219,7 @@ impl RdpOutputMapper {
             ));
         }
 
-        let mut bgra = Vec::with_capacity(changed_area * 4);
+        let mut bgra = Vec::with_capacity(payload_bytes);
         for rect in &rects {
             append_rect_bgra(&mut bgra, pixels, width as usize, rect);
         }
@@ -369,6 +415,64 @@ mod tests {
                 ..
             }]
         ));
+    }
+
+    #[test]
+    fn accumulated_dirty_area_promotes_to_a_full_frame_and_resets() {
+        let mut mapper = RdpOutputMapper::default();
+        let mut pixels = vec![0; 128 * 128];
+        mapper.map(image(&pixels, 128, 128));
+
+        pixels[1] = 0x00112233;
+        assert!(matches!(
+            mapper.map(image(&pixels, 128, 128)).as_slice(),
+            [HelperEvent::FrameBgraRects { .. }]
+        ));
+
+        pixels[65] = 0x00445566;
+        assert!(matches!(
+            mapper.map(image(&pixels, 128, 128)).as_slice(),
+            [HelperEvent::FrameBgraBytes { .. }]
+        ));
+
+        pixels[128 * 65] = 0x00778899;
+        assert!(matches!(
+            mapper.map(image(&pixels, 128, 128)).as_slice(),
+            [HelperEvent::FrameBgraRects { .. }]
+        ));
+    }
+
+    #[test]
+    fn accumulated_delta_budget_enforces_the_rectangle_limit() {
+        let mut budget = DeltaBudget::default();
+        budget.rect_count = MAX_ACCUMULATED_DIRTY_RECTS - 1;
+
+        budget.record(1, 1);
+
+        assert!(budget.requires_full_frame(usize::MAX / 100));
+    }
+
+    #[test]
+    fn session_reset_discards_previous_frame_and_delta_budget() {
+        let mut mapper = RdpOutputMapper::default();
+        mapper.connected = true;
+        mapper.previous = Some(PreviousFrame {
+            width: 1,
+            height: 1,
+            pixels: vec![0x00112233],
+        });
+        mapper.delta_budget.record(12, 34);
+        mapper
+            .pending_cursor
+            .record(HelperEvent::CursorPosition { x: 1, y: 2 });
+
+        mapper.reset_session();
+
+        assert!(!mapper.connected);
+        assert!(mapper.previous.is_none());
+        assert_eq!(mapper.delta_budget.rect_count, 0);
+        assert_eq!(mapper.delta_budget.dirty_area, 0);
+        assert!(mapper.pending_cursor.position.is_none());
     }
 
     #[test]
