@@ -1,0 +1,26 @@
+# Build outputs
+dist/
+bin/
+coverage.out
+coverage.html
+*.test
+obping
+obping-*
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.csr
+credentials.json
+secrets.json
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/

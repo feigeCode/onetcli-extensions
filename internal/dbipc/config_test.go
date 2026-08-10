@@ -41,3 +41,45 @@ func TestCopyDriverExtraHandlesNilAndEmptyMaps(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigFromWirePromotesProtocolFromExtraParams(t *testing.T) {
+	cfg, err := ConfigFromWire(map[string]any{
+		"host": "127.0.0.1",
+		"extra_params": map[string]any{
+			"protocol": "oracle",
+			"trace":    true,
+		},
+	}, 2881)
+	if err != nil {
+		t.Fatalf("ConfigFromWire returned error: %v", err)
+	}
+
+	if cfg.Protocol != "oracle" {
+		t.Fatalf("Protocol = %q, want oracle", cfg.Protocol)
+	}
+	if _, exists := cfg.Extra["protocol"]; exists {
+		t.Fatalf("protocol leaked into Extra: %#v", cfg.Extra)
+	}
+	if cfg.Extra["trace"] != "true" {
+		t.Fatalf("Extra[trace] = %q, want true", cfg.Extra["trace"])
+	}
+}
+
+func TestConfigFromWireTopLevelProtocolTakesPrecedence(t *testing.T) {
+	cfg, err := ConfigFromWire(map[string]any{
+		"protocol": "oracle",
+		"extra_params": map[string]any{
+			" Protocol ": "mysql",
+		},
+	}, 2881)
+	if err != nil {
+		t.Fatalf("ConfigFromWire returned error: %v", err)
+	}
+
+	if cfg.Protocol != "oracle" {
+		t.Fatalf("Protocol = %q, want top-level oracle", cfg.Protocol)
+	}
+	if len(cfg.Extra) != 0 {
+		t.Fatalf("protocol control field leaked into Extra: %#v", cfg.Extra)
+	}
+}

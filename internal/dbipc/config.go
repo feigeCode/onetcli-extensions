@@ -70,7 +70,6 @@ func ConfigFromWire(raw map[string]any, defaultPort int) (Config, error) {
 	cfg.Database = stringValue(raw, "database")
 	cfg.Service = stringValue(raw, "service_name")
 	cfg.SID = stringValue(raw, "sid")
-	cfg.Protocol = stringValue(raw, "protocol")
 
 	if extra, ok := raw["extra_params"].(map[string]any); ok {
 		for k, v := range extra {
@@ -80,7 +79,31 @@ func ConfigFromWire(raw map[string]any, defaultPort int) (Config, error) {
 			cfg.Extra[k] = fmt.Sprint(v)
 		}
 	}
+
+	// External connection form fields that are not part of the host's basic
+	// connection model are serialized under extra_params. Protocol is a
+	// first-class driver control field, so promote it while retaining
+	// compatibility with callers that already send a top-level value.
+	cfg.Protocol = stringValue(raw, "protocol")
+	extraProtocol := takeExtraParam(cfg.Extra, "protocol")
+	if strings.TrimSpace(cfg.Protocol) == "" {
+		cfg.Protocol = extraProtocol
+	}
 	return cfg, nil
+}
+
+func takeExtraParam(extra map[string]string, name string) string {
+	var value string
+	for key, candidate := range extra {
+		if !strings.EqualFold(strings.TrimSpace(key), name) {
+			continue
+		}
+		if value == "" {
+			value = candidate
+		}
+		delete(extra, key)
+	}
+	return value
 }
 
 func RequireConfig(cfg Config, fields ...string) error {

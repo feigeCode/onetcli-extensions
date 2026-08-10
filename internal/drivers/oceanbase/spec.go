@@ -1,10 +1,12 @@
 package oceanbase
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"strings"
 	"time"
 
@@ -115,26 +117,93 @@ func buildMySQLDSN(cfg dbipc.Config) (string, error) {
 }
 
 func buildMySQLWireOracleTenantDSN(cfg dbipc.Config) (string, error) {
-	service := strings.TrimSpace(cfg.Service)
-	if service == "" {
-		service = strings.TrimSpace(cfg.SID)
+	if err := dbipc.RequireConfig(cfg, "host", "port", "username"); err != nil {
+		return "", err
 	}
-	if service == "" {
-		service = strings.TrimSpace(cfg.Database)
+
+	dsnURL := url.URL{
+		Scheme: "oboracle",
+		Host:   net.JoinHostPort(cfg.Host, fmt.Sprint(cfg.Port)),
+		User:   url.UserPassword(cfg.Username, cfg.Password),
 	}
-	if service == "" {
-		return "", fmt.Errorf("missing required config field service_name, sid, or database")
+	if database := strings.TrimSpace(cfg.Database); database != "" {
+		dsnURL.Path = "/" + database
 	}
-	mysqlCfg := mysql.NewConfig()
-	mysqlCfg.User = cfg.Username
-	mysqlCfg.Passwd = cfg.Password
-	mysqlCfg.Net = "tcp"
-	mysqlCfg.Addr = net.JoinHostPort(cfg.Host, fmt.Sprint(cfg.Port))
-	mysqlCfg.DBName = service
-	mysqlCfg.ParseTime = true
-	mysqlCfg.Params = dbipc.CopyDriverExtra(cfg.Extra)
-	delete(mysqlCfg.Params, "oracle_mysql_wire_driver")
-	return mysqlCfg.FormatDSN(), nil
+
+	params := url.Values{}
+	params.Set("preset", "oboracle")
+	mergeOracleOBClientParams(params, dbipc.CopyDriverExtra(cfg.Extra))
+	if strings.TrimSpace(params.Get("preset")) == "" {
+		params.Set("preset", "oboracle")
+	}
+	dsnURL.RawQuery = params.Encode()
+	return dsnURL.String(), nil
+}
+
+func mergeOracleOBClientParams(params url.Values, extra map[string]string) {
+	for rawName, value := range extra {
+		name := strings.TrimSpace(rawName)
+		lowerName := strings.ToLower(name)
+		switch {
+		case lowerName == "protocol", lowerName == "oracle_mysql_wire_driver":
+			continue
+		case lowerName == "connectionattributes":
+			for attributeName, attributeValue := range parseConnectionAttributes(value) {
+				params.Set("attr."+attributeName, attributeValue)
+			}
+		case strings.HasPrefix(lowerName, "attr."):
+			attributeName := strings.TrimSpace(name[len("attr."):])
+			if attributeName != "" {
+				params.Set("attr."+attributeName, value)
+			}
+		default:
+			switch lowerName {
+			case "timeout", "connecttimeout", "connect timeout", "connect_timeout":
+				params.Set("timeout", value)
+			case "trace":
+				params.Set("trace", value)
+			case "preset":
+				params.Set("preset", value)
+			case "cap.add":
+				params.Set("cap.add", value)
+			case "cap.drop":
+				params.Set("cap.drop", value)
+			case "collation":
+				params.Set("collation", value)
+			case "ob20", "protocol.v2":
+				params.Set(lowerName, value)
+			case "ob20.magic":
+				params.Set("ob20.magic", value)
+			case "ob20.disablechecksum":
+				params.Set("ob20.disableChecksum", value)
+			case "compress", "usecompression", "use_compression":
+				params.Set("useCompression", value)
+			case "tls":
+				params.Set("tls", value)
+			case "tls.ca", "tls_ca":
+				params.Set("tls.ca", value)
+			case "tls.cert", "tls_cert":
+				params.Set("tls.cert", value)
+			case "tls.key", "tls_key":
+				params.Set("tls.key", value)
+			case "init":
+				params.Add("init", value)
+			}
+		}
+	}
+}
+
+func parseConnectionAttributes(raw string) map[string]string {
+	attributes := map[string]string{}
+	for _, item := range strings.Split(raw, ",") {
+		name, value, ok := strings.Cut(strings.TrimSpace(item), ":")
+		name = strings.TrimSpace(name)
+		if !ok || name == "" {
+			continue
+		}
+		attributes[name] = strings.TrimSpace(value)
+	}
+	return attributes
 }
 
 func oracleMySQLWireDriverName(cfg dbipc.Config) string {
@@ -166,20 +235,37 @@ func probeOceanBaseMySQLWireHandshake(ctx context.Context, host string, port int
 
 	header := make([]byte, 4)
 	if _, err := io.ReadFull(conn, header); err != nil {
-		return false, err
+		// Oracle TNS listeners do not send a MySQL initial handshake. Once TCP
+		// is reachable, a read timeout/EOF means this is not a MySQL-wire
+		// candidate and the caller should fall back to go-ora.
+		return false, nil
+	}
+	if header[3] != 0 {
+		return false, nil
 	}
 	length := int(header[0]) | int(header[1])<<8 | int(header[2])<<16
-	if length <= 0 || length > 4096 {
+	if length < 34 || length > 65536 {
 		return false, nil
 	}
 	payload := make([]byte, length)
 	if _, err := io.ReadFull(conn, payload); err != nil {
-		return false, err
-	}
-	if len(payload) == 0 || payload[0] != 0x0a {
 		return false, nil
 	}
-	return strings.Contains(strings.ToLower(string(payload)), "oceanbase"), nil
+	// obconnector-go currently accepts the MySQL protocol 10 initial
+	// handshake and requires at least 34 payload bytes. Keep the probe aligned
+	// with what the selected driver can actually parse, while allowing a
+	// generic server_version string that does not mention OceanBase.
+	if payload[0] != 0x0a {
+		return false, nil
+	}
+	versionEnd := bytes.IndexByte(payload[1:], 0)
+	if versionEnd < 0 {
+		return false, nil
+	}
+	// OceanBase may expose a generic server_version string. A structurally
+	// valid MySQL initial handshake is sufficient to select the
+	// OBClient-compatible driver; a TNS listener does not emit this packet.
+	return strings.TrimSpace(string(payload[1:1+versionEnd])) != "", nil
 }
 
 func oceanbaseMySQLDatabasesSQL(cfg dbipc.Config) string {

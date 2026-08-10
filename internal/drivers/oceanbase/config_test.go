@@ -2,9 +2,12 @@ package oceanbase
 
 import (
 	"context"
+	"net"
+	"strconv"
 	"strings"
 	"testing"
 
+	obconnector "github.com/helingjun/obconnector-go"
 	"navop-db-ipc-drivers/internal/dbipc"
 )
 
@@ -73,28 +76,41 @@ func TestSpecResolvesOracleProtocolOverOceanBaseMySQLWireToDedicatedDriver(t *te
 	}
 	defer func() { probeOceanBaseMySQLWire = oldProbe }()
 
-	cfg := ConfigFromWireNoError(t, map[string]any{
+	cfg, err := dbipc.ConfigFromWire(map[string]any{
 		"host":         "ob.example.test",
 		"port":         float64(60014),
 		"username":     "sys@test",
 		"password":     "oracle",
 		"service_name": "ORCL",
-		"protocol":     "oracle",
+		"database":     "APP",
 		"extra_params": map[string]any{
-			"oracle_mysql_wire_driver": "oboracle-test",
+			"protocol": "oracle",
 		},
-	})
+	}, 2881)
+	if err != nil {
+		t.Fatalf("dbipc.ConfigFromWire returned error: %v", err)
+	}
 
 	connSpec, err := Spec().ResolveConnection(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("ResolveConnection returned error: %v", err)
 	}
 
-	if connSpec.DriverName != "oboracle-test" {
-		t.Fatalf("driver = %q, want oboracle-test", connSpec.DriverName)
+	if connSpec.DriverName != "oboracle" {
+		t.Fatalf("driver = %q, want oboracle", connSpec.DriverName)
 	}
-	if !strings.Contains(connSpec.DSN, "sys@test:oracle@tcp(ob.example.test:60014)/ORCL") {
-		t.Fatalf("dsn = %q", connSpec.DSN)
+	parsed, err := obconnector.ParseDSN(connSpec.DSN)
+	if err != nil {
+		t.Fatalf("obconnector.ParseDSN(%q) returned error: %v", connSpec.DSN, err)
+	}
+	if parsed.User != "sys@test" || parsed.Password != "oracle" {
+		t.Fatalf("credentials = %q/%q", parsed.User, parsed.Password)
+	}
+	if parsed.Addr != "ob.example.test:60014" || parsed.Database != "APP" {
+		t.Fatalf("target = %q/%q", parsed.Addr, parsed.Database)
+	}
+	if parsed.Preset != "oboracle" {
+		t.Fatalf("preset = %q, want oboracle", parsed.Preset)
 	}
 	if connSpec.SchemaSQL.Databases == nil || !strings.Contains(connSpec.SchemaSQL.Databases(cfg), "SYS_CONTEXT('USERENV', 'CON_NAME')") {
 		t.Fatalf("oracle mysql-wire protocol did not select Oracle metadata SQL")
@@ -114,6 +130,8 @@ func TestSpecBuildsOracleTenantMySQLWireDSNWithoutHostManagedSSHOptions(t *testi
 		"protocol":     "oracle",
 		"extra_params": map[string]any{
 			"charset":                  "utf8mb4",
+			"cap.add":                  "0x80",
+			"connectionAttributes":     "program_name:navop,tenant:oracle",
 			"oracle_mysql_wire_driver": "oboracle-test",
 			"ssh_target_host":          "db.internal",
 			" SSH_PORT ":               22,
@@ -125,13 +143,69 @@ func TestSpecBuildsOracleTenantMySQLWireDSNWithoutHostManagedSSHOptions(t *testi
 		t.Fatalf("buildMySQLWireOracleTenantDSN returned error: %v", err)
 	}
 
-	if !strings.Contains(dsn, "charset=utf8mb4") {
-		t.Fatalf("dsn %q does not contain charset=utf8mb4", dsn)
+	parsed, err := obconnector.ParseDSN(dsn)
+	if err != nil {
+		t.Fatalf("obconnector.ParseDSN(%q) returned error: %v", dsn, err)
 	}
-	for _, unwanted := range []string{"oracle_mysql_wire_driver", "ssh_"} {
+	if parsed.Database != "" {
+		t.Fatalf("database = %q, want empty; service_name is only for the TNS path", parsed.Database)
+	}
+	if parsed.Preset != "oboracle" || parsed.CapabilityAdd != 0x80 {
+		t.Fatalf("preset/capability = %q/%#x", parsed.Preset, parsed.CapabilityAdd)
+	}
+	for name, want := range map[string]string{
+		"program_name": "navop",
+		"tenant":       "oracle",
+	} {
+		if parsed.Attributes[name] != want {
+			t.Fatalf("attribute %q = %q, want %q", name, parsed.Attributes[name], want)
+		}
+	}
+	for _, unwanted := range []string{"charset", "oracle_mysql_wire_driver", "ssh_", "protocol="} {
 		if strings.Contains(strings.ToLower(dsn), unwanted) {
 			t.Fatalf("dsn %q contains host-only option %q", dsn, unwanted)
 		}
+	}
+}
+
+func TestProbeTreatsGenericMySQLHandshakeAsMySQLWireCandidate(t *testing.T) {
+	address := serveProbePayload(t, mysqlHandshakePacket("8.0.36"))
+	host, port := splitProbeAddress(t, address)
+
+	isMySQLWire, err := probeOceanBaseMySQLWireHandshake(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("probe returned error: %v", err)
+	}
+	if !isMySQLWire {
+		t.Fatal("generic MySQL handshake was not recognized as a MySQL-wire candidate")
+	}
+}
+
+func TestProbeTreatsReachableListenerWithoutMySQLHandshakeAsNonMySQLWire(t *testing.T) {
+	address := serveProbePayload(t, nil)
+	host, port := splitProbeAddress(t, address)
+
+	isMySQLWire, err := probeOceanBaseMySQLWireHandshake(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("probe returned error: %v", err)
+	}
+	if isMySQLWire {
+		t.Fatal("listener without a MySQL handshake was classified as MySQL wire")
+	}
+}
+
+func TestProbeRejectsNonMySQLPayloadWithVersionLikeString(t *testing.T) {
+	payload := mysqlHandshakePayload("8.0.36")
+	payload[0] = 0x7f
+	address := serveProbePayload(t, mysqlPacket(payload))
+	host, port := splitProbeAddress(t, address)
+
+	isMySQLWire, err := probeOceanBaseMySQLWireHandshake(context.Background(), host, port)
+	if err != nil {
+		t.Fatalf("probe returned error: %v", err)
+	}
+	if isMySQLWire {
+		t.Fatal("non-MySQL payload was classified as MySQL wire")
 	}
 }
 
@@ -199,4 +273,59 @@ func ConfigFromWireNoError(t *testing.T, raw map[string]any) dbipc.Config {
 		t.Fatalf("ConfigFromWire returned error: %v", err)
 	}
 	return cfg
+}
+
+func mysqlHandshakePacket(serverVersion string) []byte {
+	return mysqlPacket(mysqlHandshakePayload(serverVersion))
+}
+
+func mysqlHandshakePayload(serverVersion string) []byte {
+	payload := make([]byte, 34)
+	payload[0] = 0x0a
+	copy(payload[1:], serverVersion)
+	payload[1+len(serverVersion)] = 0
+	return payload
+}
+
+func mysqlPacket(payload []byte) []byte {
+	packet := make([]byte, 4+len(payload))
+	packet[0] = byte(len(payload))
+	packet[1] = byte(len(payload) >> 8)
+	packet[2] = byte(len(payload) >> 16)
+	copy(packet[4:], payload)
+	return packet
+}
+
+func serveProbePayload(t *testing.T, payload []byte) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen returned error: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if len(payload) > 0 {
+			_, _ = conn.Write(payload)
+		}
+	}()
+	return listener.Addr().String()
+}
+
+func splitProbeAddress(t *testing.T, address string) (string, int) {
+	t.Helper()
+	host, rawPort, err := net.SplitHostPort(address)
+	if err != nil {
+		t.Fatalf("net.SplitHostPort(%q) returned error: %v", address, err)
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil {
+		t.Fatalf("parse port %q: %v", rawPort, err)
+	}
+	return host, port
 }

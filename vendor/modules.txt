@@ -31,6 +31,10 @@ github.com/go-sql-driver/mysql
 # github.com/golang/snappy v1.0.0
 ## explicit
 github.com/golang/snappy
+# github.com/helingjun/obconnector-go v0.4.2
+## explicit; go 1.22
+github.com/helingjun/obconnector-go
+github.com/helingjun/obconnector-go/internal/protocol
 # github.com/sijms/go-ora/v2 v2.9.0
 ## explicit; go 1.18
 github.com/sijms/go-ora/v2
