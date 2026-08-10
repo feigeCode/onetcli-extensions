@@ -126,9 +126,11 @@ func buildMySQLWireOracleTenantDSN(cfg dbipc.Config) (string, error) {
 		Host:   net.JoinHostPort(cfg.Host, fmt.Sprint(cfg.Port)),
 		User:   url.UserPassword(cfg.Username, cfg.Password),
 	}
-	if database := strings.TrimSpace(cfg.Database); database != "" {
-		dsnURL.Path = "/" + database
-	}
+	// OceanBase Oracle tenants are selected by the login identity. Sending the
+	// generic Database field in the MySQL-wire handshake enables
+	// CLIENT_CONNECT_WITH_DB and makes OceanBase reject schema-like values with
+	// error 1049 (Unknown database). Keep Database available to metadata code,
+	// but do not use it as the initial handshake database.
 
 	params := url.Values{}
 	params.Set("preset", "oboracle")

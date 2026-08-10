@@ -106,8 +106,11 @@ func TestSpecResolvesOracleProtocolOverOceanBaseMySQLWireToDedicatedDriver(t *te
 	if parsed.User != "sys@test" || parsed.Password != "oracle" {
 		t.Fatalf("credentials = %q/%q", parsed.User, parsed.Password)
 	}
-	if parsed.Addr != "ob.example.test:60014" || parsed.Database != "APP" {
-		t.Fatalf("target = %q/%q", parsed.Addr, parsed.Database)
+	if parsed.Addr != "ob.example.test:60014" {
+		t.Fatalf("address = %q, want ob.example.test:60014", parsed.Addr)
+	}
+	if parsed.Database != "" {
+		t.Fatalf("database = %q, want empty; generic Database must not be sent in the Oracle-tenant handshake", parsed.Database)
 	}
 	if parsed.Preset != "oboracle" {
 		t.Fatalf("preset = %q, want oboracle", parsed.Preset)
