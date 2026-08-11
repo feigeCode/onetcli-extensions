@@ -444,8 +444,10 @@ mod tests {
 
     #[test]
     fn accumulated_delta_budget_enforces_the_rectangle_limit() {
-        let mut budget = DeltaBudget::default();
-        budget.rect_count = MAX_ACCUMULATED_DIRTY_RECTS - 1;
+        let mut budget = DeltaBudget {
+            rect_count: MAX_ACCUMULATED_DIRTY_RECTS - 1,
+            ..Default::default()
+        };
 
         budget.record(1, 1);
 
@@ -454,13 +456,15 @@ mod tests {
 
     #[test]
     fn session_reset_discards_previous_frame_and_delta_budget() {
-        let mut mapper = RdpOutputMapper::default();
-        mapper.connected = true;
-        mapper.previous = Some(PreviousFrame {
-            width: 1,
-            height: 1,
-            pixels: vec![0x00112233],
-        });
+        let mut mapper = RdpOutputMapper {
+            connected: true,
+            previous: Some(PreviousFrame {
+                width: 1,
+                height: 1,
+                pixels: vec![0x00112233],
+            }),
+            ..Default::default()
+        };
         mapper.delta_budget.record(12, 34);
         mapper
             .pending_cursor
