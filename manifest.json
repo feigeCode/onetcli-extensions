@@ -336,8 +336,8 @@
       "id": "rdp",
       "kind": "remote_desktop_provider",
       "name": "RDP",
-      "version": "0.3.5",
-      "release_tag": "rdp-v0.3.5",
+      "version": "0.3.6",
+      "release_tag": "rdp-v0.3.6",
       "description": "使用 Rust 开发的 RDP 远程桌面 Provider，为 Navop 提供交互式远程会话、动态分辨率、文本/文件剪贴板、远端音频和光标同步能力。 Rust-based RDP provider for Navop with interactive remote sessions, dynamic resizing, text/file clipboard, remote audio, and cursor synchronization.",
       "file_extensions": [],
       "manifest": "rdp/manifest.json"
