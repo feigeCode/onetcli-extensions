@@ -2,7 +2,7 @@ use std::future;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use ironrdp_client::rdp::{RdpClient, RdpOutputEvent};
+use ironrdp_client::rdp::{GraphicsOutputMode, RdpClient, RdpOutputEvent};
 use tokio::sync::mpsc;
 
 use crate::clipboard::{TextClipboardController, text_clipboard};
@@ -19,10 +19,10 @@ pub(crate) use input::{RdpInputAction, RdpInputContext, apply_input_request, shu
 pub(crate) use input_sender::{HelperInputSender, InputQueueStatus};
 use output::RdpOutputMapper;
 
-// IronRDP can emit several complete framebuffer snapshots for one logical
-// desktop update. Keep a short quiet window so those snapshots collapse to the
-// newest one, but cap a continuous animation at roughly one 60 Hz frame rather
-// than the previous 33 ms / ~30 FPS cadence.
+// IronRDP may emit several complete base or recovery snapshots close together.
+// Keep a short quiet window so those snapshots collapse to the newest one, but
+// cap a continuous burst at roughly one 60 Hz frame rather than the previous
+// 33 ms / ~30 FPS cadence. Dirty regions bypass this full-frame-only slot.
 const FRAME_SETTLE_INTERVAL: Duration = Duration::from_millis(4);
 const MAX_FRAME_PRESENTATION_LATENCY: Duration = Duration::from_millis(16);
 const FRAME_PACING_LOG_INTERVAL: Duration = Duration::from_secs(1);
@@ -38,7 +38,8 @@ pub fn start(connect: ConnectRequest) -> anyhow::Result<RdpRuntime> {
     let config = config::build_config(connect)?;
     let (output_tx, output_rx) = mpsc::channel::<RdpOutputEvent>(64);
     let (helper_output_tx, helper_output_rx) = output_mailbox();
-    let client = RdpClient::new(config, output_tx);
+    let client = RdpClient::new(config, output_tx)
+        .with_graphics_output_mode(GraphicsOutputMode::DirtyRegions);
     let input_tx = HelperInputSender::production(client.input_sender());
     let (clipboard, cliprdr_factory) = text_clipboard(input_tx.clone(), helper_output_tx.clone());
     let client = client.with_cliprdr_backend_factory(cliprdr_factory);
@@ -134,6 +135,23 @@ async fn map_output_events(
                     Some(image @ RdpOutputEvent::Image { .. }) => {
                         pacing_stats.record_received(pending_image.replace(image).is_some());
                         presentation_schedule.record_image(tokio::time::Instant::now());
+                    }
+                    Some(region @ RdpOutputEvent::ImageRegion { .. }) => {
+                        flush_pending_image(
+                            &mut pending_image,
+                            &mut presentation_schedule,
+                            &mut output_mapper,
+                            &helper_output_tx,
+                            &mut pacing_stats,
+                        )?;
+                        pacing_stats.record_received(false);
+                        pacing_stats.images_presented = pacing_stats.images_presented.saturating_add(1);
+                        publish_output_event(
+                            &mut output_mapper,
+                            region,
+                            &helper_output_tx,
+                            &mut pacing_stats,
+                        )?;
                     }
                     Some(event @ (RdpOutputEvent::PointerDefault
                     | RdpOutputEvent::PointerHidden
@@ -541,6 +559,63 @@ mod tests {
                 width: 1,
                 height: 1,
                 bgra: vec![0, 0, 2, 255],
+            })
+        );
+        assert_eq!(helper_output_rx.recv(), None);
+    }
+
+    #[tokio::test]
+    async fn dirty_region_flushes_the_pending_base_frame_first() {
+        let (output_tx, output_rx) = mpsc::channel(8);
+        let (helper_output_tx, helper_output_rx) = output_mailbox();
+        let mapper = tokio::spawn(map_output_events(output_rx, helper_output_tx));
+
+        output_tx.send(image(1)).await.unwrap();
+        output_tx
+            .send(RdpOutputEvent::ImageRegion {
+                bgra: vec![3, 2, 1, 0xff],
+                width: NonZeroU16::new(1).unwrap(),
+                height: NonZeroU16::new(1).unwrap(),
+                region: ironrdp_client::rdp::RdpImageRegion {
+                    x: 0,
+                    y: 0,
+                    width: 1,
+                    height: 1,
+                },
+            })
+            .await
+            .unwrap();
+        drop(output_tx);
+
+        mapper.await.unwrap().unwrap();
+        assert_eq!(
+            helper_output_rx.recv(),
+            Some(HelperEvent::Connected {
+                width: 1,
+                height: 1
+            })
+        );
+        assert_eq!(
+            helper_output_rx.recv(),
+            Some(HelperEvent::FrameBgraBytes {
+                width: 1,
+                height: 1,
+                bgra: vec![0, 0, 1, 0xff],
+            })
+        );
+        assert_eq!(
+            helper_output_rx.recv(),
+            Some(HelperEvent::FrameBgraRects {
+                width: 1,
+                height: 1,
+                rects: vec![crate::protocol::HelperFrameRect {
+                    x: 0,
+                    y: 0,
+                    width: 1,
+                    height: 1,
+                    byte_len: 4,
+                }],
+                bgra: vec![3, 2, 1, 0xff],
             })
         );
         assert_eq!(helper_output_rx.recv(), None);
