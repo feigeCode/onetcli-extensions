@@ -24,8 +24,8 @@ use extension_protocol::redis::{
 };
 use futures::StreamExt;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
-use redis_client::aio::ConnectionManager;
-use redis_client::{Client, Cmd, RedisError, Value};
+use redis_client::aio::{ConnectionManager, ConnectionManagerConfig};
+use redis_client::{Client, Cmd, Pipeline, RedisError, Value};
 use serde_json::{Value as JsonValue, json};
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
@@ -137,10 +137,9 @@ impl AsyncDriverConnection for RedisConnection {
                 params
                     .validate()
                     .map_err(|message| ProtocolError::new(error_codes::INVALID_PARAMS, message))?;
-                let mut values = Vec::with_capacity(params.commands.len());
-                for args in params.commands {
-                    values.push(self.execute(params.database, args).await?);
-                }
+                let values = self
+                    .execute_pipeline(params.database, params.commands)
+                    .await?;
                 serde_json::to_value(RedisPipelineResult { values }).map_err(internal_error)
             }
             method::EVENT_OPEN => self.open_event(params).await,
@@ -184,21 +183,25 @@ impl RedisConnection {
         database: Option<u8>,
         args: Vec<WireBytes>,
     ) -> Result<RedisRespValue, ProtocolError> {
-        let mut args = args.into_iter();
-        let command = args.next().ok_or_else(|| {
-            ProtocolError::new(error_codes::INVALID_PARAMS, "Redis command cannot be empty")
-        })?;
-        let command = decode_wire_bytes(command)?;
-        let mut cmd = Cmd::new();
-        cmd.arg(command);
-        for arg in args {
-            cmd.arg(decode_wire_bytes(arg)?);
-        }
+        let cmd = build_command(args)?;
         let value: Value = cmd
             .query_async(self.manager(database).await?)
             .await
             .map_err(command_error)?;
         Ok(redis_value(value))
+    }
+
+    async fn execute_pipeline(
+        &mut self,
+        database: Option<u8>,
+        commands: Vec<Vec<WireBytes>>,
+    ) -> Result<Vec<RedisRespValue>, ProtocolError> {
+        let pipeline = build_pipeline(commands)?;
+        let values: Vec<Value> = pipeline
+            .query_async(self.manager(database).await?)
+            .await
+            .map_err(command_error)?;
+        Ok(values.into_iter().map(redis_value).collect())
     }
 
     async fn open_event(&mut self, params: &JsonValue) -> Result<JsonValue, ProtocolError> {
@@ -440,10 +443,41 @@ async fn open_connection_manager(
     config: &RedisConnectionConfig,
 ) -> Result<ConnectionManager, ProtocolError> {
     let client = Client::open(connection_url(config).as_str()).map_err(connection_error)?;
+    let manager_config = connection_manager_config(config);
     client
-        .get_connection_manager()
+        .get_connection_manager_with_config(manager_config)
         .await
         .map_err(connection_error)
+}
+
+fn connection_manager_config(config: &RedisConnectionConfig) -> ConnectionManagerConfig {
+    match connection_timeout(config) {
+        Some(duration) => ConnectionManagerConfig::new()
+            .set_connection_timeout(duration)
+            .set_response_timeout(duration),
+        None => ConnectionManagerConfig::new(),
+    }
+}
+
+fn build_pipeline(commands: Vec<Vec<WireBytes>>) -> Result<Pipeline, ProtocolError> {
+    let mut pipeline = Pipeline::with_capacity(commands.len());
+    for args in commands {
+        pipeline.add_command(build_command(args)?);
+    }
+    Ok(pipeline)
+}
+
+fn build_command(args: Vec<WireBytes>) -> Result<Cmd, ProtocolError> {
+    let mut args = args.into_iter();
+    let command = args.next().ok_or_else(|| {
+        ProtocolError::new(error_codes::INVALID_PARAMS, "Redis command cannot be empty")
+    })?;
+    let mut cmd = Cmd::new();
+    cmd.arg(decode_wire_bytes(command)?);
+    for arg in args {
+        cmd.arg(decode_wire_bytes(arg)?);
+    }
+    Ok(cmd)
 }
 
 fn invalid_params(error: impl std::fmt::Display) -> ProtocolError {
@@ -599,6 +633,64 @@ mod tests {
             Some(Duration::from_millis(2500)),
             connection_timeout(&config)
         );
+    }
+
+    #[test]
+    fn connection_manager_config_applies_connection_and_response_timeouts() {
+        let config = RedisConnectionConfig {
+            host: "127.0.0.1".into(),
+            port: 6379,
+            username: None,
+            password: None,
+            database: 0,
+            use_tls: false,
+            connect_timeout_ms: Some(2500),
+        };
+
+        let debug = format!("{:?}", connection_manager_config(&config));
+
+        assert!(debug.contains("response_timeout: Some(2.5s)"));
+        assert!(debug.contains("connection_timeout: Some(2.5s)"));
+    }
+
+    #[test]
+    fn native_pipeline_packs_all_commands_into_one_redis_request() {
+        let mut commands = (0..200)
+            .map(|index| {
+                vec![
+                    WireBytes::Utf8("TYPE".into()),
+                    WireBytes::Utf8(format!("key-{index}")),
+                ]
+            })
+            .collect::<Vec<_>>();
+        commands.push(vec![
+            WireBytes::Utf8("TYPE".into()),
+            WireBytes::Base64("AP8=".into()),
+        ]);
+
+        let packed = build_pipeline(commands)
+            .expect("pipeline should build")
+            .get_packed_pipeline();
+
+        assert_eq!(
+            201,
+            packed
+                .windows(b"$4\r\nTYPE\r\n".len())
+                .filter(|window| *window == b"$4\r\nTYPE\r\n")
+                .count()
+        );
+        assert!(packed.ends_with(b"*2\r\n$4\r\nTYPE\r\n$2\r\n\0\xff\r\n"));
+    }
+
+    #[test]
+    fn pipeline_rejects_an_empty_command_before_sending_anything() {
+        let error = match build_pipeline(vec![vec![WireBytes::Utf8("PING".into())], Vec::new()]) {
+            Ok(_) => panic!("empty pipeline command should fail"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error_codes::INVALID_PARAMS, error.code);
+        assert!(error.message.contains("cannot be empty"));
     }
 
     #[test]
