@@ -326,8 +326,8 @@
       "id": "redis",
       "kind": "database_driver",
       "name": "Redis",
-      "version": "0.1.3",
-      "release_tag": "redis-v0.1.3",
+      "version": "0.1.4",
+      "release_tag": "redis-v0.1.4",
       "description": "使用 Rust 开发的 Redis 原生 IPC sidecar 驱动，为 Navop 提供二进制安全命令、流水线和有界 Pub/Sub 事件流，并可独立于主应用发布升级。 Rust native IPC sidecar driver for Navop with binary-safe commands, pipelines, bounded Pub/Sub event delivery, and an independent release lifecycle.",
       "file_extensions": [],
       "manifest": "redis/manifest.json"

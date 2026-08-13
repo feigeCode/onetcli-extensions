@@ -162,11 +162,11 @@ impl AsyncDriverConnection for RedisConnection {
 }
 
 impl RedisConnection {
-    async fn manager(
-        &mut self,
-        database: Option<u8>,
-    ) -> Result<&mut ConnectionManager, ProtocolError> {
-        let database = database.unwrap_or(self.config.database);
+    fn database(&self, database: Option<u8>) -> u8 {
+        database.unwrap_or(self.config.database)
+    }
+
+    async fn manager(&mut self, database: u8) -> Result<&mut ConnectionManager, ProtocolError> {
         if !self.connections.contains_key(&database) {
             let mut config = self.config.clone();
             config.database = database;
@@ -178,16 +178,41 @@ impl RedisConnection {
         })
     }
 
+    async fn reconnect_manager(&mut self, database: u8) -> Result<(), ProtocolError> {
+        self.connections.remove(&database);
+        let mut config = self.config.clone();
+        config.database = database;
+        let manager = open_connection_manager(&config).await?;
+        self.connections.insert(database, manager);
+        Ok(())
+    }
+
     async fn execute(
         &mut self,
         database: Option<u8>,
         args: Vec<WireBytes>,
     ) -> Result<RedisRespValue, ProtocolError> {
+        let database = self.database(database);
+        let replay_safe = can_retry_command(&args);
         let cmd = build_command(args)?;
-        let value: Value = cmd
-            .query_async(self.manager(database).await?)
-            .await
-            .map_err(command_error)?;
+        let result: Result<Value, RedisError> = {
+            let manager = self.manager(database).await?;
+            cmd.query_async(manager).await
+        };
+        let value = match result {
+            Ok(value) => value,
+            Err(error) if error.is_connection_dropped() => {
+                let reconnect = self.reconnect_manager(database).await;
+                if !replay_safe {
+                    return Err(command_error(error, false));
+                }
+                reconnect?;
+                cmd.query_async(self.manager(database).await?)
+                    .await
+                    .map_err(|error| command_error(error, true))?
+            }
+            Err(error) => return Err(command_error(error, replay_safe)),
+        };
         Ok(redis_value(value))
     }
 
@@ -196,11 +221,28 @@ impl RedisConnection {
         database: Option<u8>,
         commands: Vec<Vec<WireBytes>>,
     ) -> Result<Vec<RedisRespValue>, ProtocolError> {
+        let database = self.database(database);
+        let replay_safe = can_retry_pipeline(&commands);
         let pipeline = build_pipeline(commands)?;
-        let values: Vec<Value> = pipeline
-            .query_async(self.manager(database).await?)
-            .await
-            .map_err(command_error)?;
+        let result: Result<Vec<Value>, RedisError> = {
+            let manager = self.manager(database).await?;
+            pipeline.query_async(manager).await
+        };
+        let values = match result {
+            Ok(values) => values,
+            Err(error) if error.is_connection_dropped() => {
+                let reconnect = self.reconnect_manager(database).await;
+                if !replay_safe {
+                    return Err(command_error(error, false));
+                }
+                reconnect?;
+                pipeline
+                    .query_async(self.manager(database).await?)
+                    .await
+                    .map_err(|error| command_error(error, true))?
+            }
+            Err(error) => return Err(command_error(error, replay_safe)),
+        };
         Ok(values.into_iter().map(redis_value).collect())
     }
 
@@ -480,6 +522,62 @@ fn build_command(args: Vec<WireBytes>) -> Result<Cmd, ProtocolError> {
     Ok(cmd)
 }
 
+fn can_retry_pipeline(commands: &[Vec<WireBytes>]) -> bool {
+    !commands.is_empty() && commands.iter().all(|args| can_retry_command(args))
+}
+
+fn can_retry_command(args: &[WireBytes]) -> bool {
+    let Some(command) = args.first().and_then(wire_bytes_for_retry_check) else {
+        return false;
+    };
+    if command.eq_ignore_ascii_case(b"MEMORY") {
+        return args
+            .get(1)
+            .and_then(wire_bytes_for_retry_check)
+            .is_some_and(|subcommand| subcommand.eq_ignore_ascii_case(b"USAGE"));
+    }
+    [
+        b"PING".as_slice(),
+        b"GET",
+        b"MGET",
+        b"EXISTS",
+        b"TYPE",
+        b"TTL",
+        b"PTTL",
+        b"SCAN",
+        b"SSCAN",
+        b"HSCAN",
+        b"ZSCAN",
+        b"KEYS",
+        b"STRLEN",
+        b"HLEN",
+        b"HGET",
+        b"HMGET",
+        b"HGETALL",
+        b"HKEYS",
+        b"HVALS",
+        b"LLEN",
+        b"LRANGE",
+        b"SCARD",
+        b"SMEMBERS",
+        b"ZCARD",
+        b"ZRANGE",
+        b"XRANGE",
+        b"XLEN",
+        b"INFO",
+        b"DBSIZE",
+    ]
+    .iter()
+    .any(|read_only| command.eq_ignore_ascii_case(read_only))
+}
+
+fn wire_bytes_for_retry_check(value: &WireBytes) -> Option<Vec<u8>> {
+    match value {
+        WireBytes::Utf8(value) => Some(value.as_bytes().to_vec()),
+        WireBytes::Base64(value) => base64::engine::general_purpose::STANDARD.decode(value).ok(),
+    }
+}
+
 fn invalid_params(error: impl std::fmt::Display) -> ProtocolError {
     ProtocolError::new(error_codes::INVALID_PARAMS, error.to_string())
 }
@@ -493,8 +591,8 @@ fn connection_error(error: RedisError) -> ProtocolError {
     redis_protocol_error(code, error)
 }
 
-fn command_error(error: RedisError) -> ProtocolError {
-    redis_protocol_error(error_codes::EXTENSION_CUSTOM_START, error)
+fn command_error(error: RedisError, replay_safe: bool) -> ProtocolError {
+    redis_protocol_error_with_retryability(error_codes::EXTENSION_CUSTOM_START, error, replay_safe)
 }
 
 fn connection_timeout_error(message: impl Into<String>) -> ProtocolError {
@@ -508,11 +606,20 @@ fn connection_timeout_error(message: impl Into<String>) -> ProtocolError {
 }
 
 fn redis_protocol_error(code: i32, error: RedisError) -> ProtocolError {
+    redis_protocol_error_with_retryability(code, error, true)
+}
+
+fn redis_protocol_error_with_retryability(
+    code: i32,
+    error: RedisError,
+    replay_safe: bool,
+) -> ProtocolError {
     let message = error.to_string();
-    let retryable = error.is_timeout()
-        || error.is_connection_refusal()
-        || error.is_connection_dropped()
-        || error.is_cluster_error();
+    let retryable = replay_safe
+        && (error.is_timeout()
+            || error.is_connection_refusal()
+            || error.is_connection_dropped()
+            || error.is_cluster_error());
     ProtocolError::new(code, message.clone()).with_data(
         ErrorData::new().retryable(retryable).with_extra(json!({
             "kind": format!("{:?}", error.kind()),
@@ -701,7 +808,7 @@ mod tests {
             "NOAUTH Authentication required".to_string(),
         ));
 
-        let protocol_error = command_error(error);
+        let protocol_error = command_error(error, true);
         let data = protocol_error.data.expect("Redis error data");
         let extra = data.extra.expect("Redis native details");
 
@@ -735,6 +842,89 @@ mod tests {
         assert_eq!(
             Some(true),
             protocol_error.data.and_then(|data| data.retryable)
+        );
+    }
+
+    #[test]
+    fn only_known_read_only_commands_are_safe_to_replay() {
+        for command in [
+            "PING", "get", "MGET", "EXISTS", "TYPE", "TTL", "PTTL", "SCAN", "SSCAN", "HSCAN",
+            "ZSCAN", "KEYS", "STRLEN", "HLEN", "HGET", "HMGET", "HGETALL", "HKEYS", "HVALS",
+            "LLEN", "LRANGE", "SCARD", "SMEMBERS", "ZCARD", "ZRANGE", "XRANGE", "XLEN", "INFO",
+            "DBSIZE",
+        ] {
+            assert!(
+                can_retry_command(&[WireBytes::Utf8(command.into())]),
+                "{command} should be safe to replay"
+            );
+        }
+
+        for command in ["SET", "DEL", "INCR", "EVAL", "MULTI", "SELECT", "UNKNOWN"] {
+            assert!(
+                !can_retry_command(&[WireBytes::Utf8(command.into())]),
+                "{command} must not be replayed"
+            );
+        }
+        assert!(!can_retry_command(&[]));
+        assert!(!can_retry_command(&[WireBytes::Base64("AP8=".into())]));
+    }
+
+    #[test]
+    fn memory_retry_requires_the_read_only_usage_subcommand() {
+        assert!(can_retry_command(&[
+            WireBytes::Utf8("MEMORY".into()),
+            WireBytes::Utf8("usage".into()),
+            WireBytes::Utf8("key".into()),
+        ]));
+        assert!(!can_retry_command(&[
+            WireBytes::Utf8("MEMORY".into()),
+            WireBytes::Utf8("PURGE".into()),
+        ]));
+        assert!(!can_retry_command(&[WireBytes::Utf8("MEMORY".into())]));
+    }
+
+    #[test]
+    fn pipeline_retry_requires_every_command_to_be_read_only() {
+        let read_only = vec![
+            vec![
+                WireBytes::Utf8("TYPE".into()),
+                WireBytes::Utf8("key".into()),
+            ],
+            vec![WireBytes::Utf8("TTL".into()), WireBytes::Utf8("key".into())],
+        ];
+        assert!(can_retry_pipeline(&read_only));
+
+        let mut mixed = read_only;
+        mixed.push(vec![
+            WireBytes::Utf8("SET".into()),
+            WireBytes::Utf8("key".into()),
+            WireBytes::Utf8("value".into()),
+        ]);
+        assert!(!can_retry_pipeline(&mixed));
+        assert!(!can_retry_pipeline(&[]));
+    }
+
+    #[test]
+    fn broken_pipe_is_reconnectable_but_ambiguous_writes_are_not_retryable() {
+        let broken_pipe = || {
+            RedisError::from(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "broken pipe",
+            ))
+        };
+
+        assert!(broken_pipe().is_connection_dropped());
+        assert_eq!(
+            Some(true),
+            command_error(broken_pipe(), true)
+                .data
+                .and_then(|data| data.retryable)
+        );
+        assert_eq!(
+            Some(false),
+            command_error(broken_pipe(), false)
+                .data
+                .and_then(|data| data.retryable)
         );
     }
 }
