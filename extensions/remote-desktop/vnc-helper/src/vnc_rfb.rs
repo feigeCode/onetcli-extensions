@@ -1,7 +1,8 @@
 use anyhow::Context as _;
 use tokio::net::TcpStream;
 use vnc_client::{
-    PixelFormat, SecurityPolicy, VncClient, VncConnector, VncCredentials, VncEncoding, X11Event,
+    PixelFormat, SecurityPolicy, VncClient, VncConnector, VncCredentials, VncEncoding, VncError,
+    X11Event,
 };
 
 use crate::output_mailbox::OutputSender;
@@ -86,14 +87,7 @@ async fn run_vnc_session(
     );
     let client = match connect_vnc(options).await {
         Ok(client) => client,
-        Err(error) => {
-            return Ok(reconnect_result(
-                RemoteDesktopReconnectReason::SessionError,
-                error.to_string(),
-                false,
-                false,
-            ));
-        }
+        Err(error) => return Ok(connect_error_result(error, output_tx)),
     };
     output_tx.begin_generation();
     let mut session = ConnectedVncSession::new(client);
@@ -140,14 +134,95 @@ async fn connect_vnc(options: &RemoteDesktopConnectionOptions) -> anyhow::Result
         .allow_shared(true)
         .set_pixel_format(PixelFormat::rgba())
         .build()
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        .map_err(anyhow::Error::new)?;
     let client = state
         .try_start()
         .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?
+        .map_err(anyhow::Error::new)?
         .finish()
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        .map_err(anyhow::Error::new)?;
     Ok(client)
+}
+
+fn connect_error_result(error: anyhow::Error, output_tx: &OutputSender) -> VncSessionResult {
+    if is_terminal_connect_error(&error) {
+        send_failure(output_tx, &connect_failure_message(&error));
+        return VncSessionResult::Closed;
+    }
+    reconnect_result(
+        RemoteDesktopReconnectReason::SessionError,
+        error.to_string(),
+        false,
+        false,
+    )
+}
+
+fn is_terminal_connect_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        let Some(error) = cause.downcast_ref::<VncError>() else {
+            return false;
+        };
+        match error {
+            VncError::NoPassword
+            | VncError::NoEncoding
+            | VncError::InvalidSecurityTyep(_)
+            | VncError::InvalidAuthResult(_)
+            | VncError::SecurityNegotiation { .. }
+            | VncError::WrongPassword
+            | VncError::ConnectError
+            | VncError::WrongPixelFormat => true,
+            VncError::General(message) => is_authentication_failure_message(message),
+            _ => false,
+        }
+    })
+}
+
+fn connect_failure_message(error: &anyhow::Error) -> String {
+    if error.chain().any(|cause| {
+        cause
+            .downcast_ref::<VncError>()
+            .is_some_and(is_authentication_error)
+    }) {
+        format!("VNC authentication failed: {error}")
+    } else {
+        error.to_string()
+    }
+}
+
+fn is_authentication_error(error: &VncError) -> bool {
+    match error {
+        VncError::NoPassword | VncError::WrongPassword | VncError::InvalidAuthResult(_) => true,
+        VncError::General(message) => is_authentication_failure_message(message),
+        _ => false,
+    }
+}
+
+fn is_authentication_failure_message(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    let known_failure = [
+        "authentication failed",
+        "authentication failure",
+        "auth failed",
+        "access denied",
+        "invalid credentials",
+        "wrong password",
+        "invalid password",
+        "password incorrect",
+    ]
+    .iter()
+    .any(|marker| message.contains(marker));
+    known_failure
+        || (message.contains("password")
+            && [
+                "failed",
+                "failure",
+                "incorrect",
+                "invalid",
+                "wrong",
+                "denied",
+            ]
+            .iter()
+            .any(|marker| message.contains(marker)))
 }
 
 async fn run_connected_vnc_session(
@@ -219,3 +294,7 @@ fn send_status(output_tx: &OutputSender, message: &str) {
 fn send_failure(output_tx: &OutputSender, message: &str) {
     let _ = output_tx.send(RemoteDesktopOutput::ConnectionFailure(message.to_string()));
 }
+
+#[cfg(test)]
+#[path = "vnc_rfb_tests.rs"]
+mod tests;
