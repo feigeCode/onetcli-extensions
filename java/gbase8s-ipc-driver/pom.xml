@@ -6,7 +6,7 @@
 
     <groupId>com.navop</groupId>
     <artifactId>gbase8s-ipc-driver</artifactId>
-    <version>0.1.15</version>
+    <version>0.1.16</version>
     <packaging>jar</packaging>
 
     <name>Navop GBase 8s IPC Driver</name>

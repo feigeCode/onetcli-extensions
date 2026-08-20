@@ -55,6 +55,7 @@ set DRIVER_ARGS=%DRIVER_ARGS% "%~1"
 shift
 goto collect_args
 
+:run_driver
 if not exist "%JAR%" (
   echo Missing driver jar: %JAR% 1>&2
   echo Run 'bash scripts/build-java-driver.sh gbase8s ^<target^>' before launching the driver. 1>&2
@@ -62,7 +63,17 @@ if not exist "%JAR%" (
 )
 
 if not "%JDK_HOME%"=="" (
-  set "JAVA_BIN=%JDK_HOME%\bin\java.exe"
+  if exist "%JDK_HOME%\bin\java.exe" (
+    set "JAVA_BIN=%JDK_HOME%\bin\java.exe"
+  ) else if exist "%JDK_HOME%\*" (
+    echo Java executable not found: %JDK_HOME%\bin\java.exe 1>&2
+    exit /b 1
+  ) else if exist "%JDK_HOME%" (
+    set "JAVA_BIN=%JDK_HOME%"
+  ) else (
+    echo Java executable not found: %JDK_HOME% 1>&2
+    exit /b 1
+  )
 ) else (
   set "JAVA_BIN=java"
 )

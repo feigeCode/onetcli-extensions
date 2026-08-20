@@ -7,6 +7,8 @@ import org.junit.rules.TemporaryFolder;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -69,6 +71,31 @@ public class LauncherScriptTest {
 
         assertEquals(1, result.exitCode);
         assertTrue(result.output.contains("Java executable not found"));
+    }
+
+    @Test
+    public void gbaseJdkHomeAcceptsJavaExecutable() throws Exception {
+        File java = fakeJdk("env-java").toPath().resolve("bin/java").toFile();
+
+        ProcessResult result = runLauncher(env("GBASE8S_JDK_HOME", java.getAbsolutePath()), "socket-name");
+
+        assertEquals(0, result.exitCode);
+        assertTrue(result.output.contains("ARG=-jar"));
+        assertTrue(result.output.contains("ARG=socket-name"));
+    }
+
+    @Test
+    public void windowsLauncherHasReachableRunDriverLabelAndAcceptsJavaExecutable() throws Exception {
+        String script = new String(
+            Files.readAllBytes(new File("bin/gbase8s-ipc-driver.cmd").toPath()),
+            StandardCharsets.UTF_8
+        ).replace("\r\n", "\n");
+
+        assertTrue(script.contains("\n:run_driver\n"));
+        assertTrue(script.contains("if exist \"%JDK_HOME%\\bin\\java.exe\""));
+        assertTrue(script.contains("else if exist \"%JDK_HOME%\\*\""));
+        assertTrue(script.contains("else if exist \"%JDK_HOME%\""));
+        assertTrue(script.contains("\"%JAVA_BIN%\" -jar \"%JAR%\""));
     }
 
     private File fakeJdk(String name) throws IOException {

@@ -55,6 +55,13 @@ public class HostSocketConnectorTest {
     }
 
     @Test
+    public void windowsAndLinuxDoNotNeedUnixUidLookup() {
+        assertEquals(0, HostSocketConnector.currentUidFor("Windows 11"));
+        assertEquals(0, HostSocketConnector.currentUidFor("Linux"));
+        assertEquals(0, HostSocketConnector.currentUidFor("Plan 9"));
+    }
+
+    @Test
     public void unsupportedOperatingSystemFailsClearly() {
         try {
             HostSocketConnector.resolveTargets("onet.sock", "Plan 9", 501);

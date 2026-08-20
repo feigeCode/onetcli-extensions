@@ -36,9 +36,12 @@ if [ ! -f "$JAR" ]; then
 fi
 
 if [ -n "$JDK_HOME" ]; then
-  JAVA_BIN="$JDK_HOME/bin/java"
-  if [ ! -x "$JAVA_BIN" ]; then
-    echo "Java executable not found or not executable: $JAVA_BIN" >&2
+  if [ -x "$JDK_HOME/bin/java" ]; then
+    JAVA_BIN="$JDK_HOME/bin/java"
+  elif [ -f "$JDK_HOME" ] && [ -x "$JDK_HOME" ]; then
+    JAVA_BIN="$JDK_HOME"
+  else
+    echo "Java executable not found or not executable: $JDK_HOME" >&2
     exit 1
   fi
 else

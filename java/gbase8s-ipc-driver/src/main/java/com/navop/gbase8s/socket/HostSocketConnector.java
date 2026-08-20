@@ -10,7 +10,8 @@ public final class HostSocketConnector {
     public static final String SOCKET_ENV_VAR = "ONETCLI_EXT_SOCKET";
 
     public HostSocket connect(String socketName) throws IOException {
-        List<SocketTarget> targets = resolveTargets(socketName, System.getProperty("os.name"), JnaUnixSocket.currentUid());
+        String osName = System.getProperty("os.name");
+        List<SocketTarget> targets = resolveTargets(socketName, osName, currentUidFor(osName));
         IOException lastError = null;
         for (SocketTarget target : targets) {
             try {
@@ -26,6 +27,18 @@ public final class HostSocketConnector {
             throw lastError;
         }
         throw new IOException("no host socket target was resolved");
+    }
+
+    static int currentUidFor(String osName) {
+        String os = trimToEmpty(osName).toLowerCase(Locale.ENGLISH);
+        if (os.indexOf("mac") >= 0
+            || os.indexOf("darwin") >= 0
+            || os.indexOf("freebsd") >= 0
+            || os.indexOf("openbsd") >= 0
+            || os.indexOf("netbsd") >= 0) {
+            return JnaUnixSocket.currentUid();
+        }
+        return 0;
     }
 
     public static String socketNameFromEnvOrArg(String[] args) {
