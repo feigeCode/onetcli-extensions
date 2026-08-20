@@ -3,7 +3,7 @@
   "id": "com.onetcli.editor.notepad-minus-minus",
   "name": "Notepad-- External Editor",
   "description": "静态复合扩展，通过 Notepad-- 编辑 Navop SFTP 远程文件，支持远程文件拉取、保存回传和外部编辑器协作。 Static composite extension for editing Navop SFTP remote files with Notepad--, including remote fetch, save-back, and external editor workflows.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "Navop",
   "engines": {
     "onetcli": ">=0.8.6"
@@ -28,6 +28,25 @@
           "launchMode": "macos_open",
           "programCandidates": [
             "/Applications/Notepad--.app/Contents/MacOS/Notepad--"
+          ],
+          "args": [
+            "{file}"
+          ]
+        }
+      },
+      {
+        "id": "notepad-minus-minus-windows",
+        "displayName": "Notepad--",
+        "platforms": [
+          "windows"
+        ],
+        "fileMasks": [
+          "*"
+        ],
+        "priority": 100,
+        "command": {
+          "programCandidates": [
+            "${env:ProgramFiles}\\Notepad--\\Notepad--.exe"
           ],
           "args": [
             "{file}"

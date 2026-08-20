@@ -146,8 +146,8 @@
       "id": "com.onetcli.editor.notepad-minus-minus",
       "kind": "composite",
       "name": "Notepad-- External Editor",
-      "version": "0.1.1",
-      "release_tag": "notepad-minus-minus-editor-v0.1.1",
+      "version": "0.1.2",
+      "release_tag": "notepad-minus-minus-editor-v0.1.2",
       "description": "静态复合扩展，通过 Notepad-- 编辑 Navop SFTP 远程文件，支持远程文件拉取、保存回传和外部编辑器协作。 Static composite extension for editing Navop SFTP remote files with Notepad--, including remote fetch, save-back, and external editor workflows.",
       "file_extensions": [],
       "manifest": "notepad-minus-minus-editor/manifest.json"
@@ -156,8 +156,8 @@
       "id": "com.onetcli.editor.zed",
       "kind": "composite",
       "name": "Zed External Editor",
-      "version": "0.1.1",
-      "release_tag": "zed-editor-v0.1.1",
+      "version": "0.1.2",
+      "release_tag": "zed-editor-v0.1.2",
       "description": "静态复合扩展，通过 Zed 编辑 Navop SFTP 远程文件，支持远程文件拉取、保存回传和外部编辑器协作。 Static composite extension for editing Navop SFTP remote files with Zed, including remote fetch, save-back, and external editor workflows.",
       "file_extensions": [],
       "manifest": "zed-editor/manifest.json"

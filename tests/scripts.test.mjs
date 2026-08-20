@@ -808,13 +808,15 @@ test("Notepad-- and Zed editors are registered as static composite extensions", 
     {
       id: "com.onetcli.editor.notepad-minus-minus",
       name: "Notepad-- External Editor",
-      releaseTag: "notepad-minus-minus-editor-v0.1.1",
+      version: "0.1.2",
+      releaseTag: "notepad-minus-minus-editor-v0.1.2",
       manifest: "notepad-minus-minus-editor/manifest.json",
     },
     {
       id: "com.onetcli.editor.zed",
       name: "Zed External Editor",
-      releaseTag: "zed-editor-v0.1.1",
+      version: "0.1.2",
+      releaseTag: "zed-editor-v0.1.2",
       manifest: "zed-editor/manifest.json",
     },
   ];
@@ -825,7 +827,7 @@ test("Notepad-- and Zed editors are registered as static composite extensions", 
     );
     assert.equal(entry?.kind, "composite");
     assert.equal(entry?.name, item.name);
-    assert.equal(entry?.version, "0.1.1");
+    assert.equal(entry?.version, item.version);
     assert.equal(entry?.release_tag, item.releaseTag);
     assert.equal(entry?.manifest, item.manifest);
   }
@@ -840,18 +842,28 @@ test("Notepad-- and Zed editor manifests declare platform-specific commands", ()
   );
   const notepadManifest = readManifest("notepad-minus-minus-editor");
   const zedManifest = readManifest("zed-editor");
-  const notepadEditor = notepadManifest.contributes.remoteFileEditors[0];
-  const [zedMacos, zedLinux] = zedManifest.contributes.remoteFileEditors;
+  const [notepadMacos, notepadWindows] = notepadManifest.contributes.remoteFileEditors;
+  const [zedMacos, zedLinux, zedWindows] = zedManifest.contributes.remoteFileEditors;
 
-  assert.equal(notepadEditor.id, "notepad-minus-minus");
-  assert.deepEqual(notepadEditor.platforms, ["macos"]);
-  assert.deepEqual(notepadEditor.fileMasks, ["*"]);
-  assert.equal(notepadEditor.priority, 100);
-  assert.equal(notepadEditor.command.launchMode, "macos_open");
-  assert.deepEqual(notepadEditor.command.programCandidates, [
+  assert.equal(notepadMacos.id, "notepad-minus-minus");
+  assert.deepEqual(notepadMacos.platforms, ["macos"]);
+  assert.deepEqual(notepadMacos.fileMasks, ["*"]);
+  assert.equal(notepadMacos.priority, 100);
+  assert.equal(notepadMacos.command.launchMode, "macos_open");
+  assert.deepEqual(notepadMacos.command.programCandidates, [
     "/Applications/Notepad--.app/Contents/MacOS/Notepad--",
   ]);
-  assert.deepEqual(notepadEditor.command.args, ["{file}"]);
+  assert.deepEqual(notepadMacos.command.args, ["{file}"]);
+
+  assert.equal(notepadWindows.id, "notepad-minus-minus-windows");
+  assert.deepEqual(notepadWindows.platforms, ["windows"]);
+  assert.equal(notepadWindows.command.launchMode, undefined);
+  assert.deepEqual(notepadWindows.command.programCandidates, [
+    "${env:ProgramFiles}\\Notepad--\\Notepad--.exe",
+  ]);
+  assert.deepEqual(notepadWindows.fileMasks, ["*"]);
+  assert.equal(notepadWindows.priority, 100);
+  assert.deepEqual(notepadWindows.command.args, ["{file}"]);
 
   assert.equal(zedMacos.id, "zed-macos");
   assert.deepEqual(zedMacos.platforms, ["macos"]);
@@ -869,6 +881,16 @@ test("Notepad-- and Zed editor manifests declare platform-specific commands", ()
   assert.equal(zedLinux.priority, 90);
   assert.deepEqual(zedMacos.command.args, ["{file}"]);
   assert.deepEqual(zedLinux.command.args, ["{file}"]);
+
+  assert.equal(zedWindows.id, "zed-windows");
+  assert.deepEqual(zedWindows.platforms, ["windows"]);
+  assert.equal(zedWindows.command.launchMode, undefined);
+  assert.deepEqual(zedWindows.command.programCandidates, [
+    "${env:ProgramFiles}\\Zed\\Zed.exe",
+  ]);
+  assert.deepEqual(zedWindows.fileMasks, ["*"]);
+  assert.equal(zedWindows.priority, 90);
+  assert.deepEqual(zedWindows.command.args, ["{file}"]);
 });
 
 test("R2 upload workflow handles composite extension assets", () => {

@@ -3,7 +3,7 @@
   "id": "com.onetcli.editor.zed",
   "name": "Zed External Editor",
   "description": "静态复合扩展，通过 Zed 编辑 Navop SFTP 远程文件，支持远程文件拉取、保存回传和外部编辑器协作。 Static composite extension for editing Navop SFTP remote files with Zed, including remote fetch, save-back, and external editor workflows.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "Navop",
   "engines": {
     "onetcli": ">=0.8.6"
@@ -47,6 +47,25 @@
         "command": {
           "programCandidates": [
             "zed"
+          ],
+          "args": [
+            "{file}"
+          ]
+        }
+      },
+      {
+        "id": "zed-windows",
+        "displayName": "Zed",
+        "platforms": [
+          "windows"
+        ],
+        "fileMasks": [
+          "*"
+        ],
+        "priority": 90,
+        "command": {
+          "programCandidates": [
+            "${env:ProgramFiles}\\Zed\\Zed.exe"
           ],
           "args": [
             "{file}"

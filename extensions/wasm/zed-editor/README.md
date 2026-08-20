@@ -6,7 +6,8 @@ temporary file, change watcher, conflict prompt, and upload workflow.
 
 The extension contains no executable code and receives no credentials. On
 macOS, the standard Zed executable is used for availability checks and files are
-delivered through LaunchServices. Linux continues to use the `zed` PATH command.
+delivered through LaunchServices. Linux uses the `zed` PATH command, while
+Windows uses the standard `%ProgramFiles%\Zed\Zed.exe` installation path.
 
 After installation, right-click a remote file and choose **Edit With Zed**. For
 a non-standard installation, configure the executable path in Navop Settings
