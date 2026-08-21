@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "id": "com.onetcli.importer.securecrt",
+  "name": "SecureCRT Importer",
+  "description": "通过 Rust WASM 从 SecureCRT XML 导出、Sessions .ini 配置和 ButtonBar 配置中导入 SSH 会话；ButtonBar 的 SEND 动作会转换为 Navop 快捷命令。不会解密或导入 SecureCRT 加密密码，非 SEND 动作和非 SSH 会话会跳过。 Imports SSH sessions from SecureCRT XML exports, Sessions .ini files, and ButtonBar configuration through Rust WASM; ButtonBar SEND actions become Navop quick commands. Encrypted SecureCRT passwords are not decrypted or imported, and non-SEND actions and non-SSH sessions are skipped.",
+  "version": "0.1.0",
+  "publisher": "Navop",
+  "engines": {
+    "onetcli": ">=0.7.0"
+  },
+  "api": {
+    "extension": "1.0"
+  },
+  "runtime": {
+    "wasm": [
+      {
+        "id": "securecrt-importer",
+        "module": "wasm/securecrt_importer_wasm.wasm",
+        "kind": "component",
+        "timeout_ms": 5000,
+        "max_memory_mb": 64
+      }
+    ]
+  },
+  "permissions": [
+    "fs:read:~/Library/Application Support/VanDyke/SecureCRT/Config",
+    "fs:read:~/Library/Application Support/VanDyke/Config",
+    "fs:read:~/Library/Preferences/VanDyke/Config",
+    "fs:read:%APPDATA%/VanDyke/Config",
+    "fs:read:~/.vandyke/Config",
+    "fs:read:~/.config/VanDyke/Config",
+    "fs:read:~/.config/vandyke/Config"
+  ],
+  "contributes": {
+    "connectionImporters": [
+      {
+        "id": "securecrt",
+        "runtimeId": "securecrt-importer",
+        "displayName": "SecureCRT",
+        "description": "发现 SecureCRT XML 导出和 Sessions .ini 中的 SSH 会话，并将 ButtonBar 中的 SEND 动作导入为 Navop 快捷命令；加密密码不解密，非 SSH 会话和非 SEND 动作会跳过。 Discover SSH sessions in SecureCRT XML exports and Sessions .ini files, and import ButtonBar SEND actions as Navop quick commands; encrypted passwords are not decrypted, and non-SSH sessions and non-SEND actions are skipped.",
+        "icon": "terminal",
+        "outputKinds": [
+          "ssh",
+          "quick-command"
+        ],
+        "platforms": [
+          "macos",
+          "windows",
+          "linux"
+        ],
+        "manualFilePick": {
+          "prompt": "选择 SecureCRT XML 导出文件、会话 .ini 或 ButtonBar .ini 文件"
+        },
+        "candidateFiles": [
+          {
+            "id": "securecrt-macos-config",
+            "platform": "macos",
+            "path": "~/Library/Application Support/VanDyke/SecureCRT/Config"
+          },
+          {
+            "id": "securecrt-macos-legacy-config",
+            "platform": "macos",
+            "path": "~/Library/Application Support/VanDyke/Config"
+          },
+          {
+            "id": "securecrt-macos-preferences-config",
+            "platform": "macos",
+            "path": "~/Library/Preferences/VanDyke/Config"
+          },
+          {
+            "id": "securecrt-windows-config",
+            "platform": "windows",
+            "path": "%APPDATA%/VanDyke/Config"
+          },
+          {
+            "id": "securecrt-linux-config",
+            "platform": "linux",
+            "path": "~/.vandyke/Config"
+          },
+          {
+            "id": "securecrt-linux-xdg-config",
+            "platform": "linux",
+            "path": "~/.config/VanDyke/Config"
+          },
+          {
+            "id": "securecrt-linux-xdg-lower-config",
+            "platform": "linux",
+            "path": "~/.config/vandyke/Config"
+          }
+        ]
+      }
+    ]
+  }
+}

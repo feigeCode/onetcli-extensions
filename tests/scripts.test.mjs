@@ -780,6 +780,55 @@ test("WindTerm importer is registered as a composite WASM importer", () => {
   assert.ok(sourceManifest.permissions.includes("fs:read:%USERPROFILE%/.wind/profiles"));
 });
 
+test("SecureCRT importer is registered as a composite WASM importer", () => {
+  const globalManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifest.json"), "utf8"));
+  const entry = globalManifest.extensions.find((extension) => extension.id === "com.onetcli.importer.securecrt");
+
+  assert.equal(entry?.kind, "composite");
+  assert.equal(entry?.manifest, "securecrt-importer/manifest.json");
+
+  const buildMetadata = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, "extensions/wasm/securecrt-importer/extension.build.json"), "utf8"),
+  );
+  const sourceManifest = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, "extensions/wasm/securecrt-importer/extension.json"), "utf8"),
+  );
+  const importer = sourceManifest.contributes.connectionImporters[0];
+  const candidatePaths = importer.candidateFiles.map((candidate) => candidate.path);
+
+  assert.equal(buildMetadata.kind, "composite");
+  assert.equal(buildMetadata.language, "rust-wasm");
+  assert.equal(buildMetadata.package, "securecrt_importer_wasm");
+  assert.equal(buildMetadata.binary, "securecrt_importer_wasm.wasm");
+  assert.deepEqual(buildMetadata.targets, ["universal"]);
+  assert.equal(importer.id, "securecrt");
+  assert.deepEqual(importer.outputKinds, ["ssh", "quick-command"]);
+  assert.deepEqual(importer.platforms, ["macos", "windows", "linux"]);
+  assert.equal(
+    importer.manualFilePick?.prompt,
+    "选择 SecureCRT XML 导出文件、会话 .ini 或 ButtonBar .ini 文件",
+    "SecureCRT importer should expose manual XML/session/ButtonBar selection",
+  );
+  assert.ok(
+    candidatePaths.some((candidatePath) =>
+      candidatePath.includes("~/Library/Application Support/VanDyke/SecureCRT/Config"),
+    ),
+    "SecureCRT importer should discover the current macOS config directory",
+  );
+  assert.ok(
+    candidatePaths.includes("%APPDATA%/VanDyke/Config"),
+    "SecureCRT importer should discover the Windows config directory",
+  );
+  assert.ok(
+    candidatePaths.includes("~/.vandyke/Config"),
+    "SecureCRT importer should discover the Linux config directory",
+  );
+  assert.ok(
+    sourceManifest.permissions.includes("fs:read:%APPDATA%/VanDyke/Config"),
+    "SecureCRT importer should permit Windows config reads",
+  );
+});
+
 test("Redis desktop importer is registered as a composite WASM importer", () => {
   const globalManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifest.json"), "utf8"));
   const entry = globalManifest.extensions.find((extension) => extension.id === "com.onetcli.importer.redis-desktop");

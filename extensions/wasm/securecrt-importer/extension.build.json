@@ -1,0 +1,11 @@
+{
+  "id": "securecrt-importer",
+  "kind": "composite",
+  "language": "rust-wasm",
+  "package": "securecrt_importer_wasm",
+  "binary": "securecrt_importer_wasm.wasm",
+  "path": "extensions/wasm/securecrt-importer",
+  "targets": ["universal"],
+  "releaseTagPrefix": "securecrt-importer-v",
+  "r2Prefix": "extensions/securecrt-importer"
+}
