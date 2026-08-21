@@ -4,6 +4,25 @@ use crate::securecrt::{
 };
 
 #[test]
+fn preview_protocol_serializes_records_as_a_sequence() {
+    let source = br#"S:"Hostname"=prod.example.test
+S:"Protocol Name"=SSH2
+S:"Username"=deploy
+"#;
+    let result = preview_records_from_sources(
+        vec![("Sessions/Production/API.ini".into(), source.as_slice())],
+        false,
+    );
+
+    let json = crate::component::serialize_preview_records(&result);
+    let records: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["kind"], "ssh");
+    assert_eq!(records[0]["ssh"]["host"], "prod.example.test");
+}
+
+#[test]
 fn parses_ini_and_omits_encrypted_password() {
     let source = br#"S:"Hostname"=prod.example.test
 S:"Protocol Name"=SSH2

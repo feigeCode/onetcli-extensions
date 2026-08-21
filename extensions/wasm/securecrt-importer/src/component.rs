@@ -68,12 +68,13 @@ impl Guest for SecureCrtImporter {
     fn preview(options: ImportOptions) -> String {
         let candidates = connection_import_host::list_candidate_files("securecrt");
         let collected = read_sources(&candidates);
-        let mut preview = parse_sources(&collected, options.include_passwords);
-        preview.warnings.extend(collected.warnings);
-        serde_json::to_string(&preview).unwrap_or_else(|_| {
-            r#"{"records":[],"warnings":[{"code":"securecrt_preview_serialize_failed","message":"SecureCRT preview could not be serialized."}]}"#.to_string()
-        })
+        let preview = parse_sources(&collected, options.include_passwords);
+        serialize_preview_records(&preview)
     }
+}
+
+pub(crate) fn serialize_preview_records(preview: &PreviewResult) -> String {
+    serde_json::to_string(&preview.records).unwrap_or_else(|_| "[]".to_string())
 }
 
 fn read_sources(candidates: &[CandidateFile]) -> CollectedSources {
