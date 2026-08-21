@@ -143,7 +143,7 @@ impl RdpOutputMapper {
             RdpOutputEvent::ConnectionFailure(error) => {
                 self.reset_session();
                 vec![HelperEvent::ConnectionFailure {
-                    message: format!("{error:#}"),
+                    message: error.report().with_locations().to_string(),
                 }]
             }
             RdpOutputEvent::Terminated(result) => {
@@ -194,9 +194,11 @@ impl RdpOutputMapper {
 
 #[cfg(test)]
 mod tests {
+    use std::io;
     use std::num::NonZeroU16;
     use std::sync::Arc;
 
+    use ironrdp::connector::ConnectorErrorExt as _;
     use ironrdp::graphics::pointer::DecodedPointer;
     use ironrdp_client::rdp::RdpImageRegion;
 
@@ -219,6 +221,27 @@ mod tests {
         assert_eq!(
             mapper.map(image(&[0x00abcdef], 1, 1)),
             vec![HelperEvent::frame(1, 1, vec![0xef, 0xcd, 0xab, 0xff])]
+        );
+    }
+
+    #[test]
+    fn connection_failure_includes_the_underlying_error() {
+        let mut mapper = RdpOutputMapper::default();
+        let error = ironrdp::connector::ConnectorError::custom(
+            "TLS upgrade",
+            io::Error::other("the server only offered TLS 1.0"),
+        );
+
+        let events = mapper.map(RdpOutputEvent::ConnectionFailure(error));
+
+        let [HelperEvent::ConnectionFailure { message }] = events.as_slice() else {
+            panic!("expected one connection failure event");
+        };
+        assert!(message.contains("[TLS upgrade @"), "{message}");
+        assert!(message.contains("custom error"), "{message}");
+        assert!(
+            message.contains("caused by: the server only offered TLS 1.0"),
+            "{message}"
         );
     }
 

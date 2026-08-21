@@ -8,6 +8,11 @@ publish = false
 
 [dependencies]
 anyhow = "1"
+# Keep the RDP client compatible with legacy servers such as Windows Server 2008 R2.
+# native-tls 0.2.15+ defaults to a TLS 1.2 minimum, while these servers may only
+# offer TLS 1.0. This direct dependency constrains IronRDP's transitive native-tls
+# dependency without changing its backend.
+native-tls = "=0.2.14"
 ironrdp = { git = "https://github.com/feigeCode/IronRDP", rev = "6546687f1e991918a6f3da48c0922c72cb25f31a", features = [
     "connector",
     "cliprdr",

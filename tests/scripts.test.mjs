@@ -1144,6 +1144,7 @@ test("RDP helper keeps native TLS backend for RDP compatibility", () => {
 
   assert.match(cargoToml, /ironrdp-client\s*=\s*\{[^}]*default-features\s*=\s*false/s);
   assert.match(cargoToml, /ironrdp-client\s*=\s*\{[^}]*"native-tls"/s);
+  assert.match(cargoToml, /native-tls\s*=\s*"=0\.2\.14"/);
   assert.doesNotMatch(cargoToml, /"rustls"/);
 });
 
