@@ -17,6 +17,9 @@ pub(crate) fn parse_button_bar(
             group_name = name;
             continue;
         }
+        if is_ini_metadata_line(line) {
+            continue;
+        }
         parse_button_line(path, line, &group_name, &mut records, warnings);
     }
 
@@ -37,7 +40,7 @@ fn parse_button_line(
     if !action.eq_ignore_ascii_case(SEND_ACTION) {
         warnings.push(warning(
             "securecrt_button_action_not_imported",
-            format!("A non-SEND action in SecureCRT button bar {group_name} was skipped."),
+            format!("A non-SEND action in SecureCRT quick commands {group_name} was skipped."),
         ));
         return;
     }
@@ -91,6 +94,14 @@ fn parse_group_name(line: &str) -> Option<String> {
     let (name, _) = rest.split_once("\"=")?;
     let name = name.trim();
     (!name.is_empty()).then(|| name.to_string())
+}
+
+fn is_ini_metadata_line(line: &str) -> bool {
+    let mut chars = line.chars();
+    matches!(chars.next(), Some(prefix) if prefix.is_ascii_alphabetic())
+        && chars.next() == Some(':')
+        && chars.next() == Some('"')
+        && line.contains("\"=")
 }
 
 fn fallback_group_name(path: &str) -> String {

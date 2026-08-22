@@ -437,6 +437,27 @@ fn button_bar_send_actions_become_global_quick_commands() {
 }
 
 #[test]
+fn command_manager_send_actions_become_global_quick_commands() {
+    let source = b"\xef\xbb\xbfZ:\"Default\"=00000001\n SEND,df -h,disk usage,,,0,1,,\nD:\"Is Command List\"=00000001\n";
+    let result = preview_records_from_sources(
+        vec![("Commands/__Commands__.ini".into(), source.as_slice())],
+        false,
+    );
+
+    assert_eq!(result.records.len(), 1);
+    assert!(result.warnings.is_empty());
+    let command = result.records[0].quick_command.as_ref().unwrap();
+    assert_eq!(command.name, "disk usage");
+    assert_eq!(command.command, "df -h");
+    assert_eq!(command.group_name.as_deref(), Some("Default"));
+    assert_eq!(
+        command.description.as_deref(),
+        Some("Imported from SecureCRT quick commands")
+    );
+    assert_eq!(command.sort_order, 0);
+}
+
+#[test]
 fn button_pause_is_preserved_without_dropping_following_text() {
     let source = br#"Z:"Ops"=00000001
  SEND,ena\\r\\pFOLLOWING_TEXT\\r,enable,,,0,5,
@@ -605,6 +626,18 @@ fn classifies_xml_sessions_buttons_and_templates() {
     assert_eq!(
         classify_source("ButtonBarV5.ini"),
         Some(SourceKind::ButtonBar)
+    );
+    assert_eq!(
+        classify_source("Commands/__Commands__.ini"),
+        Some(SourceKind::ButtonBar)
+    );
+    assert_eq!(
+        classify_source(r"Commands\Linux\__Commands__.ini"),
+        Some(SourceKind::ButtonBar)
+    );
+    assert_eq!(
+        classify_source("Sessions/__Commands__.ini"),
+        Some(SourceKind::SessionIni)
     );
     assert_eq!(classify_source("Sessions/Default.ini"), None);
     assert_eq!(classify_source("notes.txt"), None);

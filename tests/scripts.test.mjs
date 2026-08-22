@@ -806,8 +806,8 @@ test("SecureCRT importer is registered as a composite WASM importer", () => {
   assert.deepEqual(importer.platforms, ["macos", "windows", "linux"]);
   assert.equal(
     importer.manualFilePick?.prompt,
-    "选择 SecureCRT XML 导出文件、会话 .ini 或 ButtonBar .ini 文件",
-    "SecureCRT importer should expose manual XML/session/ButtonBar selection",
+    "选择 SecureCRT XML 导出文件、会话 .ini、ButtonBar .ini 或 Command Manager __Commands__.ini 文件",
+    "SecureCRT importer should expose manual XML/session/ButtonBar/Command Manager selection",
   );
   assert.ok(
     candidatePaths.some((candidatePath) =>

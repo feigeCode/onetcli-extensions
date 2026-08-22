@@ -169,7 +169,7 @@ pub(crate) fn quick_command_record(
             command,
             group_name: Some(group_name),
             shortcut: None,
-            description: Some("Imported from a SecureCRT button bar".to_string()),
+            description: Some("Imported from SecureCRT quick commands".to_string()),
             sort_order,
             connection_source_id: None,
         }),

@@ -198,7 +198,7 @@
       "name": "SecureCRT Importer",
       "version": "0.1.0",
       "release_tag": "securecrt-importer-v0.1.0",
-      "description": "通过 Rust WASM 从 SecureCRT XML 导出、Sessions .ini 配置和 ButtonBar 配置中导入 SSH 会话；ButtonBar 的 SEND 动作会转换为 Navop 快捷命令。不会解密或导入 SecureCRT 加密密码，非 SEND 动作和非 SSH 会话会跳过。 Imports SSH sessions from SecureCRT XML exports, Sessions .ini files, and ButtonBar configuration through Rust WASM; ButtonBar SEND actions become Navop quick commands. Encrypted SecureCRT passwords are not decrypted or imported, and non-SEND actions and non-SSH sessions are skipped.",
+      "description": "通过 Rust WASM 从 SecureCRT XML 导出和 Sessions .ini 配置中导入 SSH 会话，并将 ButtonBar 与 Command Manager 中的 SEND 动作转换为 Navop 快捷命令。不会解密或导入 SecureCRT 加密密码，非 SEND 动作和非 SSH 会话会跳过。 Imports SSH sessions from SecureCRT XML exports and Sessions .ini files through Rust WASM, and converts SEND actions from Button Bar and Command Manager into Navop quick commands. Encrypted SecureCRT passwords are not decrypted or imported, and non-SEND actions and non-SSH sessions are skipped.",
       "file_extensions": [],
       "manifest": "securecrt-importer/manifest.json"
     },
