@@ -193,6 +193,25 @@ S:"Protocol Name"=SSH2
 }
 
 #[test]
+fn windows_ini_session_paths_preserve_nested_group_directories() {
+    let source = br#"S:"Hostname"=api.example.test
+S:"Protocol Name"=SSH2
+"#;
+    let result = preview_records_from_sources(
+        vec![(
+            r"C:\Users\tester\AppData\Roaming\VanDyke\Config\Sessions\Production\Staging\API.ini"
+                .to_string(),
+            source.as_slice(),
+        )],
+        false,
+    );
+
+    let ssh = result.records[0].ssh.as_ref().unwrap();
+    assert_eq!(ssh.name, "API");
+    assert_eq!(ssh.group_path.as_deref(), Some("Production/Staging"));
+}
+
+#[test]
 fn xml_button_bar_send_actions_become_quick_commands() {
     let xml = br#"<VanDyke>
   <key name="Sessions">
@@ -455,6 +474,57 @@ fn command_manager_send_actions_become_global_quick_commands() {
         Some("Imported from SecureCRT quick commands")
     );
     assert_eq!(command.sort_order, 0);
+}
+
+#[test]
+fn nested_command_manager_folders_become_quick_command_groups() {
+    let source = br#"Z:"Default"=00000001
+ SEND,uptime,system uptime,,,0,1,,
+"#;
+    let result = preview_records_from_sources(
+        vec![(
+            r"Commands\Linux\Production\__Commands__.ini".into(),
+            source.as_slice(),
+        )],
+        false,
+    );
+
+    assert_eq!(result.records.len(), 1);
+    let command = result.records[0].quick_command.as_ref().unwrap();
+    assert_eq!(command.group_name.as_deref(), Some("Linux/Production"));
+}
+
+#[test]
+fn named_command_lists_preserve_folder_and_list_grouping() {
+    let source = br#"Z:"Diagnostics"=00000001
+ SEND,uptime,system uptime,,,0,1,,
+"#;
+    let result = preview_records_from_sources(
+        vec![("Commands/Linux/__Commands__.ini".into(), source.as_slice())],
+        false,
+    );
+
+    assert_eq!(result.records.len(), 1);
+    let command = result.records[0].quick_command.as_ref().unwrap();
+    assert_eq!(command.group_name.as_deref(), Some("Linux/Diagnostics"));
+}
+
+#[test]
+fn button_bar_groups_are_not_replaced_by_parent_folder_names() {
+    let source = br#"Z:"Ops"=00000001
+ SEND,uptime,system uptime,,,0,1,,
+"#;
+    let result = preview_records_from_sources(
+        vec![(
+            "Commands/Linux/ButtonBarCustom.ini".into(),
+            source.as_slice(),
+        )],
+        false,
+    );
+
+    assert_eq!(result.records.len(), 1);
+    let command = result.records[0].quick_command.as_ref().unwrap();
+    assert_eq!(command.group_name.as_deref(), Some("Ops"));
 }
 
 #[test]

@@ -21,6 +21,35 @@ pub fn classify_source(path: &str) -> Option<SourceKind> {
     }
 }
 
+pub(crate) fn quick_command_group_name(path: &str, declared_group: &str) -> String {
+    let Some(folder) = command_manager_folder(path) else {
+        return declared_group.to_string();
+    };
+    if declared_group.eq_ignore_ascii_case("default") {
+        folder
+    } else {
+        format!("{folder}/{declared_group}")
+    }
+}
+
+pub(crate) fn command_manager_folder(path: &str) -> Option<String> {
+    let parts = path
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if !parts
+        .last()
+        .is_some_and(|name| name.eq_ignore_ascii_case("__Commands__.ini"))
+    {
+        return None;
+    }
+    let commands_index = parts
+        .iter()
+        .rposition(|part| part.eq_ignore_ascii_case("Commands"))?;
+    let folders = parts.get(commands_index + 1..parts.len().saturating_sub(1))?;
+    (!folders.is_empty()).then(|| folders.join("/"))
+}
+
 fn is_command_manager_list(path: &str, lower_name: &str) -> bool {
     lower_name == "__commands__.ini"
         && path

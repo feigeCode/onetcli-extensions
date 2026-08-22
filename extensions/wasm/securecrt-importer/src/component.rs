@@ -28,7 +28,7 @@ impl Guest for SecureCrtImporter {
         serde_json::json!({
             "id": "securecrt",
             "display_name": "SecureCRT",
-            "description": "Import SecureCRT SSH sessions, Button Bar commands, and Command Manager commands.",
+            "description": "Import SecureCRT SSH sessions into grouped workspaces, plus Button Bar and Command Manager commands.",
             "icon": "terminal",
             "vendor": "VanDyke",
             "supported_platforms": ["macos", "windows", "linux"],

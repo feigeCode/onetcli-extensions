@@ -1,4 +1,7 @@
-use super::model::{ImportRecord, ImportWarning, quick_command_record, warning};
+use super::{
+    model::{ImportRecord, ImportWarning, quick_command_record, warning},
+    source,
+};
 
 const GROUP_PREFIX: &str = "Z:\"";
 const SEND_ACTION: &str = "SEND";
@@ -14,7 +17,7 @@ pub(crate) fn parse_button_bar(
 
     for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
         if let Some(name) = parse_group_name(line) {
-            group_name = name;
+            group_name = source::quick_command_group_name(path, &name);
             continue;
         }
         if is_ini_metadata_line(line) {
@@ -105,6 +108,9 @@ fn is_ini_metadata_line(line: &str) -> bool {
 }
 
 fn fallback_group_name(path: &str) -> String {
+    if let Some(folder) = source::command_manager_folder(path) {
+        return folder;
+    }
     let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
     name.strip_suffix(".ini")
         .or_else(|| name.strip_suffix(".INI"))

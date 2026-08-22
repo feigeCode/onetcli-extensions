@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "com.onetcli.importer.securecrt",
   "name": "SecureCRT Importer",
-  "description": "通过 Rust WASM 从 SecureCRT XML 导出和 Sessions .ini 配置中导入 SSH 会话，并将 ButtonBar 与 Command Manager 中的 SEND 动作转换为 Navop 快捷命令。不会解密或导入 SecureCRT 加密密码，非 SEND 动作和非 SSH 会话会跳过。 Imports SSH sessions from SecureCRT XML exports and Sessions .ini files through Rust WASM, and converts SEND actions from Button Bar and Command Manager into Navop quick commands. Encrypted SecureCRT passwords are not decrypted or imported, and non-SEND actions and non-SSH sessions are skipped.",
+  "description": "通过 Rust WASM 自动扫描 SecureCRT 配置，导入 SSH 会话并将连接分组转换为 Navop 工作区，同时将 ButtonBar 与 Command Manager 中的 SEND 动作按分组转换为 Navop 快捷命令。不会解密或导入 SecureCRT 加密密码，非 SEND 动作和非 SSH 会话会跳过。 Automatically scans SecureCRT configurations through Rust WASM, imports SSH sessions, converts connection groups into Navop workspaces, and converts grouped SEND actions from Button Bar and Command Manager into Navop quick commands. Encrypted SecureCRT passwords are not decrypted or imported, and non-SEND actions and non-SSH sessions are skipped.",
   "version": "0.1.0",
   "publisher": "Navop",
   "engines": {
@@ -37,7 +37,7 @@
         "id": "securecrt",
         "runtimeId": "securecrt-importer",
         "displayName": "SecureCRT",
-        "description": "发现 SecureCRT XML 导出和 Sessions .ini 中的 SSH 会话，并将 ButtonBar 与 Command Manager 中的 SEND 动作导入为 Navop 快捷命令；加密密码不解密，非 SSH 会话和非 SEND 动作会跳过。 Discover SSH sessions in SecureCRT XML exports and Sessions .ini files, and import SEND actions from Button Bar and Command Manager as Navop quick commands; encrypted passwords are not decrypted, and non-SSH sessions and non-SEND actions are skipped.",
+        "description": "支持自动扫描 SecureCRT 配置，导入 SSH 会话并将连接分组转换为 Navop 工作区，同时导入快捷命令分组；如果扫描结果不正确，请选择相关 XML 或 INI 配置文件。 Automatically scans SecureCRT configurations, imports SSH sessions, converts connection groups into Navop workspaces, and imports grouped quick commands; if the scan result is incorrect, select the relevant XML or INI configuration files.",
         "icon": "terminal",
         "outputKinds": [
           "ssh",
@@ -49,7 +49,7 @@
           "linux"
         ],
         "manualFilePick": {
-          "prompt": "选择 SecureCRT XML 导出文件、会话 .ini、ButtonBar .ini 或 Command Manager __Commands__.ini 文件"
+          "prompt": "如果自动扫描结果不正确，请选择相关 SecureCRT XML 或 INI 配置文件"
         },
         "candidateFiles": [
           {
