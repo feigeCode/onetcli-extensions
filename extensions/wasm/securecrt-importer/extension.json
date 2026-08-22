@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "com.onetcli.importer.securecrt",
   "name": "SecureCRT Importer",
-  "description": "通过 Rust WASM 自动扫描 SecureCRT 配置，导入 SSH 会话并将连接分组转换为 Navop 工作区，同时将 ButtonBar 与 Command Manager 中的 SEND 动作按分组转换为 Navop 快捷命令。不会解密或导入 SecureCRT 加密密码，非 SEND 动作和非 SSH 会话会跳过。 Automatically scans SecureCRT configurations through Rust WASM, imports SSH sessions, converts connection groups into Navop workspaces, and converts grouped SEND actions from Button Bar and Command Manager into Navop quick commands. Encrypted SecureCRT passwords are not decrypted or imported, and non-SEND actions and non-SSH sessions are skipped.",
+  "description": "通过 Rust WASM 自动扫描 SecureCRT 默认配置目录，导入 SSH 会话并将 Sessions 连接分组转换为 Navop 工作区，同时导入 Button Bar / Command Manager 快捷命令及其分组；如果扫描不到或结果不正确，请优先选择 SecureCRT 的 Config 配置根目录，也支持选择单个 XML/INI 配置文件。 Automatically scans SecureCRT's default configuration directories through Rust WASM, imports SSH sessions, converts Sessions connection groups into Navop workspaces, and imports Button Bar / Command Manager quick commands with their groups; if nothing is found or the result is incorrect, choose the SecureCRT Config root directory first, or select individual XML/INI configuration files.",
   "version": "0.1.0",
   "publisher": "Navop",
   "engines": {
@@ -37,7 +37,7 @@
         "id": "securecrt",
         "runtimeId": "securecrt-importer",
         "displayName": "SecureCRT",
-        "description": "支持自动扫描 SecureCRT 配置，导入 SSH 会话并将连接分组转换为 Navop 工作区，同时导入快捷命令分组；如果扫描结果不正确，请选择相关 XML 或 INI 配置文件。 Automatically scans SecureCRT configurations, imports SSH sessions, converts connection groups into Navop workspaces, and imports grouped quick commands; if the scan result is incorrect, select the relevant XML or INI configuration files.",
+        "description": "通过 Rust WASM 自动扫描 SecureCRT 默认配置目录，导入 SSH 会话并将 Sessions 连接分组转换为 Navop 工作区，同时导入 Button Bar / Command Manager 快捷命令及其分组；如果扫描不到或结果不正确，请优先选择 SecureCRT 的 Config 配置根目录，也支持选择单个 XML/INI 配置文件。 Automatically scans SecureCRT's default configuration directories through Rust WASM, imports SSH sessions, converts Sessions connection groups into Navop workspaces, and imports Button Bar / Command Manager quick commands with their groups; if nothing is found or the result is incorrect, choose the SecureCRT Config root directory first, or select individual XML/INI configuration files.",
         "icon": "terminal",
         "outputKinds": [
           "ssh",
@@ -49,7 +49,9 @@
           "linux"
         ],
         "manualFilePick": {
-          "prompt": "如果自动扫描结果不正确，请选择相关 SecureCRT XML 或 INI 配置文件"
+          "prompt": "选择 SecureCRT XML 导出文件、会话 .ini、Button Bar .ini 或 Command Manager __Commands__.ini 文件",
+          "supportsDirectories": true,
+          "directoryPrompt": "选择 SecureCRT 的 Config 配置根目录，以保留 Sessions 连接分组和 Commands 快捷命令分组"
         },
         "candidateFiles": [
           {

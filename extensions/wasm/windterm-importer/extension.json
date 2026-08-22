@@ -32,7 +32,7 @@
         "id": "windterm",
         "runtimeId": "windterm-importer",
         "displayName": "WindTerm",
-        "description": "从 WindTerm user.sessions 文件发现并导入 SSH 连接。 Discover and import SSH connections from WindTerm user.sessions files.",
+        "description": "从 WindTerm profiles 配置目录或 user.sessions 文件发现并导入 SSH 连接。 Discover and import SSH connections from WindTerm profiles directories or user.sessions files.",
         "icon": "terminal",
         "outputKinds": [
           "ssh"
@@ -43,7 +43,9 @@
           "linux"
         ],
         "manualFilePick": {
-          "prompt": "选择 WindTerm user.sessions 文件"
+          "prompt": "选择 WindTerm user.sessions 文件",
+          "supportsDirectories": true,
+          "directoryPrompt": "选择 WindTerm profiles 配置目录"
         },
         "candidateFiles": [
           {

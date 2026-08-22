@@ -34,7 +34,7 @@
         "id": "xshell",
         "runtimeId": "xshell-importer",
         "displayName": "Xshell",
-        "description": "从 Xshell .xsh 会话文件或 .xts 备份包发现并导入 SSH 连接。 Discover and import SSH connections from Xshell .xsh session files or .xts backups.",
+        "description": "从 Xshell Sessions 配置目录、.xsh 会话文件或 .xts 备份包发现并导入 SSH 连接。 Discover and import SSH connections from Xshell Sessions directories, .xsh session files, or .xts backups.",
         "icon": "terminal",
         "outputKinds": [
           "ssh"
@@ -45,7 +45,9 @@
           "linux"
         ],
         "manualFilePick": {
-          "prompt": "选择 Xshell .xsh/.xts 文件"
+          "prompt": "选择 Xshell .xsh/.xts 文件",
+          "supportsDirectories": true,
+          "directoryPrompt": "选择 Xshell Sessions 配置目录"
         },
         "candidateFiles": [
           {

@@ -552,6 +552,8 @@ test("Xshell importer is registered as a composite WASM importer", () => {
     "选择 Xshell .xsh/.xts 文件",
     "Xshell importer should expose manual .xsh/.xts file selection",
   );
+  assert.equal(importer.manualFilePick?.supportsDirectories, true);
+  assert.equal(importer.manualFilePick?.directoryPrompt, "选择 Xshell Sessions 配置目录");
   assert.ok(
     importer.candidateFiles.some((candidate) => candidate.path.includes("NetSarang Computer/8/Xshell/Sessions")),
     "Xshell importer should declare the current NetSarang sessions directory",
@@ -768,6 +770,8 @@ test("WindTerm importer is registered as a composite WASM importer", () => {
   assert.deepEqual(importer.outputKinds, ["ssh"]);
   assert.deepEqual(importer.platforms, ["macos", "windows", "linux"]);
   assert.equal(importer.manualFilePick?.prompt, "选择 WindTerm user.sessions 文件");
+  assert.equal(importer.manualFilePick?.supportsDirectories, true);
+  assert.equal(importer.manualFilePick?.directoryPrompt, "选择 WindTerm profiles 配置目录");
   assert.ok(
     importer.candidateFiles.some((candidate) => candidate.path === "~/.wind/profiles"),
     "WindTerm importer should discover Unix profile directories",
@@ -806,8 +810,13 @@ test("SecureCRT importer is registered as a composite WASM importer", () => {
   assert.deepEqual(importer.platforms, ["macos", "windows", "linux"]);
   assert.equal(
     importer.manualFilePick?.prompt,
-    "选择 SecureCRT XML 导出文件、会话 .ini、ButtonBar .ini 或 Command Manager __Commands__.ini 文件",
-    "SecureCRT importer should expose manual XML/session/ButtonBar/Command Manager selection",
+    "选择 SecureCRT XML 导出文件、会话 .ini、Button Bar .ini 或 Command Manager __Commands__.ini 文件",
+    "SecureCRT importer should expose manual XML/session/Button Bar/Command Manager selection",
+  );
+  assert.equal(importer.manualFilePick?.supportsDirectories, true);
+  assert.equal(
+    importer.manualFilePick?.directoryPrompt,
+    "选择 SecureCRT 的 Config 配置根目录，以保留 Sessions 连接分组和 Commands 快捷命令分组",
   );
   assert.ok(
     candidatePaths.some((candidatePath) =>
