@@ -806,7 +806,11 @@ test("SecureCRT importer is registered as a composite WASM importer", () => {
   assert.equal(buildMetadata.binary, "securecrt_importer_wasm.wasm");
   assert.deepEqual(buildMetadata.targets, ["universal"]);
   assert.equal(importer.id, "securecrt");
-  assert.deepEqual(importer.outputKinds, ["ssh", "quick-command"]);
+  assert.deepEqual(importer.outputKinds, [
+    "ssh",
+    "quick-command",
+    "workspace",
+  ]);
   assert.deepEqual(importer.platforms, ["macos", "windows", "linux"]);
   assert.equal(
     importer.manualFilePick?.prompt,

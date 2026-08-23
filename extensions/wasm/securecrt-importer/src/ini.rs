@@ -1,9 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::model::{
     CredentialMetadata, ImportRecord, ImportWarning, enrich_from_credential, field, ssh_record,
     warning,
 };
+use super::source::{normalize_workspace_path, session_file_group_path};
 
 pub(crate) fn parse_session(
     path: &str,
@@ -18,12 +19,48 @@ pub(crate) fn parse_session(
     let port = protocol_port(&fields, &protocol, &source_id, warnings);
     ssh_record(
         source_id,
-        session_group_path(path),
+        session_file_group_path(path),
         session_name(path),
         &fields,
         port,
         warnings,
     )
+}
+
+pub(crate) fn parse_folder_names(text: &str) -> Vec<String> {
+    let mut lines = text.lines();
+    while let Some(line) = lines.next() {
+        let line = line.trim_start_matches('\u{feff}').trim();
+        let Some((key, count)) = line.split_once('=') else {
+            continue;
+        };
+        let Some(key_name) = list_key_name(key) else {
+            continue;
+        };
+        if !key_name.eq_ignore_ascii_case("Folder List V2") {
+            continue;
+        }
+        let Some(count) = u32::from_str_radix(count.trim(), 16)
+            .ok()
+            .and_then(|count| usize::try_from(count).ok())
+        else {
+            return Vec::new();
+        };
+        return lines
+            .by_ref()
+            .take(count.min(4096))
+            .filter_map(normalize_workspace_path)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+    }
+    Vec::new()
+}
+
+fn list_key_name(key: &str) -> Option<&str> {
+    let key = key.trim();
+    let (_, quoted) = key.split_once(":\"")?;
+    quoted.strip_suffix('"')
 }
 
 pub(crate) fn parse_fields(text: &str) -> BTreeMap<String, String> {
@@ -121,21 +158,4 @@ fn session_name(path: &str) -> String {
         .or_else(|| name.strip_suffix(".INI"))
         .unwrap_or(name)
         .to_string()
-}
-
-fn session_group_path(path: &str) -> Option<String> {
-    let normalized = path.replace('\\', "/");
-    let components: Vec<_> = normalized.split('/').collect();
-    let sessions_index = components
-        .iter()
-        .position(|part| part.eq_ignore_ascii_case("Sessions"))?;
-    let file_index = components.len().checked_sub(1)?;
-    let group = components
-        .get(sessions_index + 1..file_index)?
-        .iter()
-        .map(|part| part.trim())
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("/");
-    (!group.is_empty()).then_some(group)
 }

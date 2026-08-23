@@ -41,7 +41,8 @@
         "icon": "terminal",
         "outputKinds": [
           "ssh",
-          "quick-command"
+          "quick-command",
+          "workspace"
         ],
         "platforms": [
           "macos",

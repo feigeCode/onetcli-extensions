@@ -1,6 +1,7 @@
+use crate::component::candidate_directory_prefix;
 use crate::securecrt::{
-    QuickCommandImportRecord, SourceKind, SshImportAuthMethod, classify_source,
-    preview_records_from_sources,
+    QuickCommandImportRecord, SourceKind, SshImportAuthMethod, append_workspace_records,
+    classify_source, preview_records_from_sources,
 };
 
 #[test]
@@ -711,6 +712,143 @@ fn classifies_xml_sessions_buttons_and_templates() {
     );
     assert_eq!(classify_source("Sessions/Default.ini"), None);
     assert_eq!(classify_source("notes.txt"), None);
+}
+
+#[test]
+fn parses_securecrt_folder_data_into_workspace_records() {
+    let source = "\u{feff}D:\"Is Expanded\"=00000001\r\n\
+Z:\"Session List V2\"=00000005\r\n\
+ Default\r\n\
+ Default_LocalShell\r\n\
+ Default_RDP\r\n\
+ Default_Serial\r\n\
+ 172.31.15.186\r\n\
+Z:\"Folder List V2\"=00000002\r\n\
+ test\r\n\
+ test3\r\n";
+
+    let result = preview_records_from_sources(
+        vec![("Sessions/__FolderData__.ini".into(), source.as_bytes())],
+        false,
+    );
+
+    assert_eq!(
+        result
+            .records
+            .iter()
+            .filter(|record| record.kind == "workspace")
+            .map(|record| record.workspace.as_ref().unwrap().path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["test", "test3"]
+    );
+}
+
+#[test]
+fn parses_nested_folder_data_and_lowercase_list_key() {
+    let source = "z:\"Folder List V2\"=00000001\n Staging\n";
+    let result = preview_records_from_sources(
+        vec![(
+            r"Sessions\Production\__FolderData.ini".into(),
+            source.as_bytes(),
+        )],
+        false,
+    );
+
+    assert_eq!(
+        result
+            .records
+            .iter()
+            .map(|record| record.workspace.as_ref().unwrap().path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Production", "Production/Staging"]
+    );
+}
+
+#[test]
+fn folder_data_nested_paths_include_all_ancestor_workspaces_without_duplicates() {
+    let source = "Z:\"Folder List V2\"=00000002\n Production/Staging\n Production\n";
+    let result = preview_records_from_sources(
+        vec![("Sessions/__FolderData__.ini".into(), source.as_bytes())],
+        false,
+    );
+
+    assert_eq!(
+        result
+            .records
+            .iter()
+            .map(|record| record.workspace.as_ref().unwrap().path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Production", "Production/Staging"]
+    );
+}
+
+#[test]
+fn empty_folder_data_does_not_create_workspace_records() {
+    let result = preview_records_from_sources(
+        vec![(
+            "Sessions/__FolderData__.ini".into(),
+            b"Z:\"Folder List V2\"=00000000\n".as_slice(),
+        )],
+        false,
+    );
+
+    assert!(result.records.is_empty());
+}
+
+#[test]
+fn workspace_records_include_empty_session_directories_and_are_deduplicated() {
+    let mut result = preview_records_from_sources(Vec::<(String, &[u8])>::new(), false);
+    append_workspace_records(
+        &mut result,
+        vec![
+            "Production".to_string(),
+            "Production".to_string(),
+            r"Production\Staging".to_string(),
+        ],
+    );
+
+    assert_eq!(
+        result
+            .records
+            .iter()
+            .map(|record| record.workspace.as_ref().unwrap().path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Production", "Production/Staging"]
+    );
+}
+
+#[test]
+fn selected_securecrt_directories_preserve_logical_root_prefixes() {
+    assert_eq!(
+        candidate_directory_prefix(
+            "/Users/test/Library/Application Support/VanDyke/SecureCRT/Config"
+        ),
+        ""
+    );
+    assert_eq!(
+        candidate_directory_prefix(
+            "/Users/test/Library/Application Support/VanDyke/SecureCRT/Config/Sessions"
+        ),
+        "Sessions"
+    );
+    assert_eq!(
+        candidate_directory_prefix(
+            "/Users/test/Library/Application Support/VanDyke/SecureCRT/Config/Sessions/Production"
+        ),
+        "Sessions/Production"
+    );
+    assert_eq!(
+        candidate_directory_prefix(
+            r"C:\Users\test\AppData\Roaming\VanDyke\SecureCRT\Config\Commands\Linux"
+        ),
+        "Commands/Linux"
+    );
+    assert_eq!(
+        candidate_directory_prefix(
+            r"C:\Users\test\AppData\Roaming\VanDyke\SecureCRT\Config\Sessions\Production\Commands"
+        ),
+        "Sessions/Production/Commands"
+    );
 }
 
 fn assert_quick_command(

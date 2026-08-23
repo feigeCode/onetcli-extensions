@@ -19,6 +19,7 @@ pub struct ImportRecord {
     pub ssh: Option<SshImportRecord>,
     pub port_forwarding: Option<serde_json::Value>,
     pub quick_command: Option<QuickCommandImportRecord>,
+    pub workspace: Option<WorkspaceImportRecord>,
     pub password_status: String,
     pub warnings: Vec<ImportWarning>,
 }
@@ -59,6 +60,11 @@ pub struct QuickCommandImportRecord {
     pub description: Option<String>,
     pub sort_order: i32,
     pub connection_source_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct WorkspaceImportRecord {
+    pub path: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -137,6 +143,7 @@ pub(crate) fn ssh_record(
         }),
         port_forwarding: None,
         quick_command: None,
+        workspace: None,
         password_status: if encrypted_password {
             "unsupported"
         } else {
@@ -173,6 +180,31 @@ pub(crate) fn quick_command_record(
             sort_order,
             connection_source_id: None,
         }),
+        workspace: None,
+        password_status: "missing".to_string(),
+        warnings: Vec::new(),
+    }
+}
+
+pub(crate) fn workspace_record(source_id: String, path: String) -> ImportRecord {
+    let display_name = path
+        .rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(&path)
+        .to_string();
+    ImportRecord {
+        id: record_id("workspace", &path),
+        importer_id: "securecrt".to_string(),
+        source_label: "SecureCRT".to_string(),
+        source_id: Some(source_id),
+        kind: "workspace".to_string(),
+        display_name,
+        database: None,
+        ssh: None,
+        port_forwarding: None,
+        quick_command: None,
+        workspace: Some(WorkspaceImportRecord { path }),
         password_status: "missing".to_string(),
         warnings: Vec::new(),
     }

@@ -17,6 +17,7 @@ use model::CredentialMetadata;
 pub use model::{
     ImportRecord, ImportWarning, PreviewResult, QuickCommandImportRecord, SshImportAuthMethod,
 };
+pub(crate) use source::session_directory_group_path;
 pub use source::{SourceKind, classify_source};
 
 pub fn preview_records_from_sources<'a, I>(sources: I, include_passwords: bool) -> PreviewResult
@@ -64,6 +65,7 @@ where
                     .into_iter()
                     .collect()
             }
+            SourceKind::FolderData => folder_data_records(&path, &text),
             SourceKind::Xml => xml::parse_export(&path, &text, &credentials, &mut result.warnings),
             SourceKind::ButtonBar => {
                 button_bar::parse_button_bar(&path, &text, &mut result.warnings)
@@ -84,6 +86,66 @@ where
         }
     }
     result
+}
+
+pub(crate) fn append_workspace_records<I>(result: &mut PreviewResult, groups: I)
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut seen = result
+        .records
+        .iter()
+        .map(|record| record.id.clone())
+        .collect::<BTreeSet<_>>();
+    for path in groups {
+        let Some(path) = source::normalize_workspace_path(&path) else {
+            continue;
+        };
+        let record = model::workspace_record(format!("Sessions/{path}"), path);
+        if seen.insert(record.id.clone()) {
+            result.records.push(record);
+        }
+    }
+}
+
+fn folder_data_records(path: &str, text: &str) -> Vec<ImportRecord> {
+    let parent = source::session_file_group_path(path);
+    let mut records = Vec::new();
+    let mut seen = BTreeSet::new();
+    for folder in ini::parse_folder_names(text) {
+        let workspace_path = match parent.as_deref() {
+            Some(parent) => source::normalize_workspace_path(&format!("{parent}/{folder}")),
+            None => source::normalize_workspace_path(&folder),
+        };
+        let Some(workspace_path) = workspace_path else {
+            continue;
+        };
+        for workspace_path in workspace_path_ancestors(&workspace_path) {
+            if seen.insert(workspace_path.clone()) {
+                records.push(model::workspace_record(
+                    format!("{}#{workspace_path}", path.replace('\\', "/")),
+                    workspace_path,
+                ));
+            }
+        }
+    }
+    records
+}
+
+fn workspace_path_ancestors(path: &str) -> Vec<String> {
+    let Some(path) = source::normalize_workspace_path(path) else {
+        return Vec::new();
+    };
+    let mut current = String::new();
+    path.split('/')
+        .map(|part| {
+            if !current.is_empty() {
+                current.push('/');
+            }
+            current.push_str(part);
+            current.clone()
+        })
+        .collect()
 }
 
 fn is_credential_path(path: &str) -> bool {

@@ -1,6 +1,7 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SourceKind {
     SessionIni,
+    FolderData,
     Xml,
     ButtonBar,
 }
@@ -11,6 +12,12 @@ pub fn classify_source(path: &str) -> Option<SourceKind> {
     if lower_name.ends_with(".xml") {
         return Some(SourceKind::Xml);
     }
+    if matches!(
+        lower_name.as_str(),
+        "__folderdata__.ini" | "__folderdata.ini"
+    ) {
+        return Some(SourceKind::FolderData);
+    }
     if !lower_name.ends_with(".ini") || is_template(&lower_name) {
         return None;
     }
@@ -19,6 +26,42 @@ pub fn classify_source(path: &str) -> Option<SourceKind> {
     } else {
         Some(SourceKind::SessionIni)
     }
+}
+
+pub(crate) fn normalize_workspace_path(path: &str) -> Option<String> {
+    let parts = path
+        .split(['/', '\\'])
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if parts.is_empty() || parts.iter().any(|part| matches!(*part, "." | "..")) {
+        return None;
+    }
+    Some(parts.join("/"))
+}
+
+pub(crate) fn session_file_group_path(path: &str) -> Option<String> {
+    session_relative_path(path, true)
+}
+
+pub(crate) fn session_directory_group_path(path: &str) -> Option<String> {
+    session_relative_path(path, false)
+}
+
+fn session_relative_path(path: &str, exclude_leaf: bool) -> Option<String> {
+    let components = path
+        .split(['/', '\\'])
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    let sessions_index = components
+        .iter()
+        .position(|part| part.eq_ignore_ascii_case("Sessions"))?;
+    let end = components.len().saturating_sub(usize::from(exclude_leaf));
+    if sessions_index + 1 >= end {
+        return None;
+    }
+    normalize_workspace_path(&components[sessions_index + 1..end].join("/"))
 }
 
 pub(crate) fn quick_command_group_name(path: &str, declared_group: &str) -> String {
@@ -62,11 +105,6 @@ fn is_command_manager_list(path: &str, lower_name: &str) -> bool {
 fn is_template(name: &str) -> bool {
     matches!(
         name,
-        "default.ini"
-            | "default_rdp.ini"
-            | "default_serial.ini"
-            | "default_localshell.ini"
-            | "__folderdata__.ini"
-            | "__folderdata.ini"
+        "default.ini" | "default_rdp.ini" | "default_serial.ini" | "default_localshell.ini"
     )
 }
