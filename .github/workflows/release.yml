@@ -16,6 +16,7 @@ on:
         type: string
 
 permissions:
+  actions: write
   contents: write
 
 env:
@@ -251,3 +252,12 @@ jobs:
             artifacts/*.tar.gz
             artifacts/sha256sums.txt
             artifacts/extension-manifest.json
+      - name: Dispatch CNB release synchronization
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+        run: |
+          gh workflow run sync-cnb-release-assets.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f tag="$RELEASE_TAG"

@@ -8,6 +8,34 @@ import { execFileSync } from "node:child_process";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 
+test("CNB release synchronization pushes tags before syncing release assets", () => {
+  const workflow = fs.readFileSync(
+    path.join(repoRoot, ".github/workflows/sync-cnb-release-assets.yml"),
+    "utf8",
+  );
+
+  assert.match(workflow, /uses: actions\/checkout@v4/);
+  assert.match(workflow, /fetch-depth: 0/);
+  assert.match(workflow, /ref: \$\{\{ inputs\.tag \}\}/);
+  assert.match(workflow, /group: extension-cnb-release/);
+  assert.match(workflow, /cancel-in-progress: false/);
+  assert.match(
+    workflow,
+    /git remote add cnb "https:\/\/cnb\.cool\/\$\{CNB_REPOSITORY\}\.git"/,
+  );
+  assert.match(workflow, /git ls-remote --tags cnb/);
+  assert.match(workflow, /git for-each-ref --format='%\(refname\)' refs\/tags/);
+  assert.match(workflow, /git push cnb ":refs\/tags\/\$\{tag_name\}"/);
+  assert.match(workflow, /git push cnb --tags/);
+  assert.match(workflow, /\.\/mpgrm releases sync/);
+
+  const deleteMovedTag = workflow.indexOf('git push cnb ":refs/tags/${tag_name}"');
+  const pushTags = workflow.indexOf("git push cnb --tags");
+  const syncAssets = workflow.indexOf("./mpgrm releases sync");
+  assert.ok(deleteMovedTag >= 0 && deleteMovedTag < pushTags);
+  assert.ok(pushTags >= 0 && pushTags < syncAssets);
+});
+
 test("go ipc driver metadata excludes Java drivers", () => {
   const ids = fs
     .readdirSync(path.join(repoRoot, "extensions/ipc"))
