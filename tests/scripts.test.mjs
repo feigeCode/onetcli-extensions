@@ -51,6 +51,7 @@ test("latest CNB sync workflow reuses the per-tag sync workflow per matrix entry
   assert.match(workflow, /\n  workflow_dispatch:\n/);
   assert.match(workflow, /group: extension-cnb-latest-sync/);
   assert.match(workflow, /cancel-in-progress: false/);
+  assert.match(workflow, /permissions:\n  actions: read\n  contents: read/);
   assert.match(workflow, /scripts\/discover-latest-extension-releases\.mjs/);
   assert.match(workflow, /has_releases="\$\(node -e/);
   assert.match(workflow, /fail-fast: false/);
