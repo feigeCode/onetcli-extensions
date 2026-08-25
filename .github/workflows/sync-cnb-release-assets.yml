@@ -113,3 +113,46 @@ jobs:
             --repo "https://github.com/${GITHUB_REPOSITORY}.git" \
             --target-repo "https://cnb.cool/${CNB_REPOSITORY}.git" \
             --tags "${TAG_NAME}"
+
+      - name: Verify release and assets on CNB
+        env:
+          TAG_NAME: ${{ inputs.tag }}
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # mpgrm swallows per-tag failures (it logs a warning and exits 0),
+          # so verify through the CNB API that the release and every asset
+          # actually exist before declaring the job successful.
+          CNB_TOKEN="$(printf '%s' "$CNB_TOKEN" | tr -d '\r\n')"
+
+          # Expected asset names come from the source GitHub release.
+          expected="$(gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[].name' | sort)"
+          if [ -z "$expected" ]; then
+            echo "::error::GitHub release ${TAG_NAME} has no assets to verify"
+            exit 1
+          fi
+
+          # Fetch the CNB release for this tag. The API returns 200 with the
+          # release (and its assets) when the tag has a release, 404 otherwise.
+          if ! response="$(curl -fsS \
+            -H "Authorization: token ${CNB_TOKEN}" \
+            -H "Accept: application/vnd.cnb.api+json" \
+            "https://api.cnb.cool/${CNB_REPOSITORY}/-/releases/tags/${TAG_NAME}")"; then
+            echo "::error::CNB release for tag ${TAG_NAME} not found after sync. Check CNB_TOKEN scopes (needs repo-release:rw)."
+            exit 1
+          fi
+
+          echo "CNB release for tag ${TAG_NAME}:"
+          jq -c '{id, tag_name, name, assets: [.assets[]?.name]}' <<<"$response"
+
+          actual="$(jq -r '.assets[]?.name' <<<"$response" | sort)"
+          missing="$(comm -23 <(printf '%s\n' "$expected") <(printf '%s\n' "$actual"))"
+          if [ -n "$missing" ]; then
+            echo "::error::CNB release ${TAG_NAME} is missing assets:"
+            printf '%s\n' "$missing" >&2
+            exit 1
+          fi
+
+          count="$(printf '%s\n' "$expected" | wc -l | tr -d ' ')"
+          echo "Verified ${count} asset(s) on CNB release ${TAG_NAME}."
