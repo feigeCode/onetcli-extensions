@@ -117,6 +117,7 @@ jobs:
       - name: Verify release and assets on CNB
         env:
           TAG_NAME: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
           CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
         run: |
           set -euo pipefail
