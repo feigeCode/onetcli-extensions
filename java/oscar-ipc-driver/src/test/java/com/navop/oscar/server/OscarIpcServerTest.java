@@ -45,7 +45,7 @@ public class OscarIpcServerTest {
         OscarIpcServer server = newServer();
 
         JsonNode init = server.handle(request(1, "init", "{\"host_version\":\"1.0.0\",\"api_offered\":{\"database\":\"1.0\"},\"instance_id\":\"test\",\"config\":{}}"));
-        assertEquals("0.1.1", init.get("result").get("extension_version").asText());
+        assertEquals("0.1.2", init.get("result").get("extension_version").asText());
         assertEquals("oscar", init.get("result").get("drivers_ready").get(0).asText());
         assertTrue(init.get("result").get("methods").toString().contains("schema/object_view"));
         assertFalse(init.get("result").get("methods").toString().contains("oscar/table_data"));

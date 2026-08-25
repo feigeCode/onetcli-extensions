@@ -17,8 +17,6 @@ test("CNB release synchronization pushes tags before syncing release assets", ()
   assert.match(workflow, /uses: actions\/checkout@v4/);
   assert.match(workflow, /fetch-depth: 0/);
   assert.match(workflow, /ref: \$\{\{ inputs\.tag \}\}/);
-  assert.match(workflow, /group: extension-cnb-release/);
-  assert.match(workflow, /cancel-in-progress: false/);
   assert.match(
     workflow,
     /git remote add cnb "https:\/\/cnb\.cool\/\$\{CNB_REPOSITORY\}\.git"/,
@@ -47,9 +45,8 @@ test("latest CNB sync workflow reuses the per-tag sync workflow per matrix entry
   );
 
   assert.match(workflow, /^name: Sync Latest Extension Releases to CNB/m);
-  assert.match(workflow, /\n  schedule:\n/);
   assert.match(workflow, /\n  workflow_dispatch:\n/);
-  assert.match(workflow, /group: extension-cnb-latest-sync/);
+  assert.match(workflow, /group: extension-cnb-sync-\$\{\{ matrix\.tag \}\}/);
   assert.match(workflow, /cancel-in-progress: false/);
   assert.match(workflow, /permissions:\n  actions: read\n  contents: read/);
   assert.match(workflow, /scripts\/discover-latest-extension-releases\.mjs/);
@@ -3868,14 +3865,14 @@ test("install-local-drivers builds and replaces one selected local driver", () =
   );
 });
 
-test("install-local-drivers defaults to the one-hub driver directory", () => {
+test("install-local-drivers defaults to the navop driver directory", () => {
   const script = fs.readFileSync(path.join(repoRoot, "scripts/install-local-drivers.sh"), "utf8");
 
   assert.match(script, /NAVOP_DATABASE_DRIVER_DIR/);
   assert.match(script, /ONETCLI_DATABASE_DRIVER_DIR/);
-  assert.match(script, /\$XDG_CONFIG_HOME\/one-hub\/extensions\/database_drivers/);
-  assert.match(script, /\$HOME\/\.config\/one-hub\/extensions\/database_drivers/);
-  assert.match(script, /\$\{CONFIG_HOME\}\/one-hub\/extensions\/database_drivers/);
+  assert.match(script, /\$XDG_CONFIG_HOME\/navop\/extensions\/database_drivers/);
+  assert.match(script, /\$HOME\/\.config\/navop\/extensions\/database_drivers/);
+  assert.match(script, /\$\{CONFIG_HOME\}\/navop\/extensions\/database_drivers/);
 });
 
 test("install-local-drivers installs all local drivers when no id is passed", () => {
