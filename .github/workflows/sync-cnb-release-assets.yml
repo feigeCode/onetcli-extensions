@@ -46,9 +46,8 @@ jobs:
           CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
         run: |
           set -euo pipefail
-          # Trim any accidental line breaks from the secret. A trailing newline
-          # captured when the token was pasted into the GitHub secret would
-          # corrupt ~/.git-credentials and break git auth with cnb.cool.
+          # Trim any accidental line breaks from the secret so tools that read
+          # CNB_TOKEN directly receive a clean value.
           CNB_TOKEN="$(printf '%s' "$CNB_TOKEN" | tr -d '\r\n')"
           if [[ ! "$TAG_NAME" =~ ^[a-z0-9][a-z0-9._-]*-v[0-9]+(\.[0-9]+){2}([.-][0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::Invalid extension release tag: ${TAG_NAME}"
@@ -62,13 +61,18 @@ jobs:
 
           git remote remove cnb 2>/dev/null || true
           git remote add cnb "https://cnb.cool/${CNB_REPOSITORY}.git"
-          git config --global credential.helper store
-          printf 'https://cnb:%s@cnb.cool\n' "$CNB_TOKEN" >"${HOME}/.git-credentials"
-          chmod 600 "${HOME}/.git-credentials"
-          trap 'rm -f "${HOME}/.git-credentials"' EXIT
 
-          # Verify the credentials before doing any work so auth problems fail
-          # with a clear message instead of git's cryptic username prompt.
+          # Authenticate with HTTP Basic auth shipped as an Authorization
+          # header, the same mechanism actions/checkout uses for GitHub. This
+          # works with any token characters, unlike ~/.git-credentials whose
+          # URL format is corrupted by tokens containing @, /, ? or #.
+          export GIT_TERMINAL_PROMPT=0
+          CNB_AUTH="$(printf 'cnb:%s' "$CNB_TOKEN" | base64 -w0)"
+          git config --global "http.https://cnb.cool/.extraheader" "Authorization: Basic ${CNB_AUTH}"
+
+          # Verify the repository is reachable before doing any work, so
+          # connectivity problems fail with a clear message instead of a
+          # cryptic git error further down.
           if ! git ls-remote --tags cnb >/dev/null 2>&1; then
             echo "::error::git authentication against cnb.cool failed. Verify the CNB_TOKEN secret and that ${CNB_REPOSITORY} exists on CNB."
             exit 1
