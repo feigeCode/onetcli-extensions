@@ -9,10 +9,6 @@ permissions:
   actions: read
   contents: read
 
-concurrency:
-  group: extension-cnb-latest-sync
-  cancel-in-progress: false
-
 jobs:
   discover:
     name: Discover latest extension releases
@@ -39,6 +35,14 @@ jobs:
     name: Sync ${{ matrix.tag }} to CNB
     needs: discover
     if: ${{ needs.discover.outputs.has_releases == 'true' }}
+    concurrency:
+      # Scope the group per tag. A workflow-level group shared by every matrix
+      # job makes queued jobs cancel each other (only the newest pending job
+      # survives); keying on the tag lets all matrix jobs in a run proceed in
+      # parallel while still preventing concurrent runs from syncing the same
+      # tag at the same time.
+      group: extension-cnb-sync-${{ matrix.tag }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.discover.outputs.matrix) }}

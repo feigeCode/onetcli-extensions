@@ -21,10 +21,6 @@ permissions:
 env:
   CNB_REPOSITORY: "navop-dev/navop-extensions"
 
-concurrency:
-  group: extension-cnb-release
-  cancel-in-progress: false
-
 jobs:
   sync-release-to-cnb:
     name: Sync release to CNB
@@ -99,7 +95,15 @@ jobs:
             fi
           done < <(git for-each-ref --format='%(refname)' refs/tags)
 
-          git push cnb --tags
+          # Push tags, retrying transient lock errors that can occur when
+          # several matrix jobs push the same tag set concurrently.
+          for attempt in 1 2 3; do
+            if git push cnb --tags; then
+              break
+            fi
+            echo "git push cnb --tags failed (attempt ${attempt}); retrying in 5s..."
+            sleep 5
+          done
 
           wget -q https://cnb.cool/znb/mpgrm/-/releases/download/v0.1.0/mpgrm_linux_amd64.tar.gz
           tar -xf mpgrm_linux_amd64.tar.gz
