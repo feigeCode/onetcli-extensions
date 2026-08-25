@@ -80,12 +80,16 @@ pub fn build_create_table(params: BuildCreateTableParams) -> BuildCreateTableRes
     if params.options.with_indexes {
         statements.extend(params.spec.indexes.iter().map(|idx| index_sql(&table, idx)));
     }
+    if params.options.with_comments {
+        append_comment_statements(&mut statements, &table, &params.spec);
+    }
     BuildCreateTableResult { sql, statements }
 }
 
 pub fn build_alter_table(params: BuildAlterTableParams) -> BuildAlterTableResult {
     let table = table_reference(&params.to_spec);
     let mut statements = Vec::new();
+    let mut rollback = Vec::new();
     let renamed_old = params
         .column_renames
         .iter()
@@ -120,6 +124,14 @@ pub fn build_alter_table(params: BuildAlterTableParams) -> BuildAlterTableResult
                 "ALTER TABLE {table} ADD COLUMN {}",
                 column_definition(column)
             ));
+            // ADD COLUMN 不会携带注释,新增列带非空注释时需补 COMMENT ON COLUMN。
+            if !column.comment.trim().is_empty() {
+                statements.push(format!(
+                    "COMMENT ON COLUMN {table}.{} IS {}",
+                    quote_identifier(&column.name),
+                    quote_literal(&column.comment)
+                ));
+            }
         }
     }
     if params.options.allow_destructive {
@@ -140,8 +152,17 @@ pub fn build_alter_table(params: BuildAlterTableParams) -> BuildAlterTableResult
             }
         }
     }
+    diff_comments(
+        &mut statements,
+        &mut rollback,
+        &table,
+        &params.from_spec,
+        &params.to_spec,
+        params.options.with_rollback,
+    );
     BuildAlterTableResult {
         statements,
+        rollback_statements: rollback,
         ..Default::default()
     }
 }
@@ -306,6 +327,84 @@ fn column_definition(column: &ColumnSpec) -> String {
     sql
 }
 
+/// 为 create 语句追加 COMMENT ON TABLE / COMMENT ON COLUMN(仅非空注释)。
+fn append_comment_statements(statements: &mut Vec<String>, table: &str, spec: &TableSpec) {
+    if !spec.comment.trim().is_empty() {
+        statements.push(format!(
+            "COMMENT ON TABLE {table} IS {}",
+            quote_literal(&spec.comment)
+        ));
+    }
+    for column in &spec.columns {
+        if column.comment.trim().is_empty() {
+            continue;
+        }
+        statements.push(format!(
+            "COMMENT ON COLUMN {table}.{} IS {}",
+            quote_identifier(&column.name),
+            quote_literal(&column.comment)
+        ));
+    }
+}
+
+/// 对比 from/to 的表注释与列注释差异,追加 COMMENT ON 语句。
+/// with_rollback 时把「还原原注释」的语句插到回滚列表头部。
+fn diff_comments(
+    statements: &mut Vec<String>,
+    rollback: &mut Vec<String>,
+    table: &str,
+    from_spec: &TableSpec,
+    to_spec: &TableSpec,
+    with_rollback: bool,
+) {
+    if from_spec.comment != to_spec.comment {
+        statements.push(format!(
+            "COMMENT ON TABLE {table} IS {}",
+            quote_literal(&to_spec.comment)
+        ));
+        if with_rollback {
+            rollback.insert(
+                0,
+                format!(
+                    "COMMENT ON TABLE {table} IS {}",
+                    quote_literal(&from_spec.comment)
+                ),
+            );
+        }
+    }
+    let from_cols = from_spec
+        .columns
+        .iter()
+        .map(|column| (column.name.as_str(), column))
+        .collect::<std::collections::HashMap<_, _>>();
+    for column in &to_spec.columns {
+        if column.name.is_empty() {
+            continue;
+        }
+        let Some(from) = from_cols.get(column.name.as_str()) else {
+            continue;
+        };
+        if from.comment == column.comment {
+            continue;
+        }
+        statements.push(format!(
+            "COMMENT ON COLUMN {table}.{} IS {}",
+            quote_identifier(&column.name),
+            quote_literal(&column.comment)
+        ));
+        if with_rollback {
+            rollback.insert(
+                0,
+                format!(
+                    "COMMENT ON COLUMN {table}.{} IS {}",
+                    quote_identifier(&column.name),
+                    quote_literal(&from.comment)
+                ),
+            );
+        }
+    }
+}
+
 fn index_sql(table: &str, index: &IndexSpec) -> String {
     let unique = if index.is_unique { "UNIQUE " } else { "" };
     format!(
@@ -328,6 +427,10 @@ fn qualified_name(schema: &Option<String>, name: &str) -> String {
 
 fn quote_identifier(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
+}
+
+fn quote_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 fn join_quoted(values: &[String]) -> String {
@@ -390,6 +493,130 @@ mod tests {
         assert_eq!(
             result.statements,
             vec!["ALTER TABLE \"events\" RENAME COLUMN \"payload\" TO \"body\""]
+        );
+    }
+
+    #[test]
+    fn create_table_builds_comment_statements() {
+        let result = build_create_table(BuildCreateTableParams {
+            conn_id: None,
+            spec: TableSpec {
+                name: "users".into(),
+                schema: Some("public".into()),
+                columns: vec![ColumnSpec {
+                    name: "id".into(),
+                    type_str: "BIGINT".into(),
+                    comment: "primary key".into(),
+                    ..Default::default()
+                }],
+                comment: "users table".into(),
+                ..Default::default()
+            },
+            options: Default::default(),
+        });
+
+        assert!(
+            result
+                .statements
+                .contains(&"COMMENT ON TABLE \"public\".\"users\" IS 'users table'".to_string())
+        );
+        assert!(result.statements.contains(
+            &"COMMENT ON COLUMN \"public\".\"users\".\"id\" IS 'primary key'".to_string()
+        ));
+    }
+
+    #[test]
+    fn alter_table_diffs_comments_with_rollback() {
+        let result = build_alter_table(BuildAlterTableParams {
+            conn_id: None,
+            from_spec: TableSpec {
+                name: "events".into(),
+                comment: "old".into(),
+                columns: vec![ColumnSpec {
+                    name: "payload".into(),
+                    type_str: "VARCHAR".into(),
+                    comment: "old payload".into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            to_spec: TableSpec {
+                name: "events".into(),
+                comment: "new".into(),
+                columns: vec![ColumnSpec {
+                    name: "payload".into(),
+                    type_str: "VARCHAR".into(),
+                    comment: "new payload".into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            column_renames: Vec::new(),
+            options: AlterTableOptions {
+                allow_destructive: false,
+                with_rollback: true,
+            },
+        });
+
+        assert_eq!(
+            result.statements,
+            vec![
+                "COMMENT ON TABLE \"events\" IS 'new'".to_string(),
+                "COMMENT ON COLUMN \"events\".\"payload\" IS 'new payload'".to_string(),
+            ]
+        );
+        assert_eq!(
+            result.rollback_statements,
+            vec![
+                "COMMENT ON COLUMN \"events\".\"payload\" IS 'old payload'".to_string(),
+                "COMMENT ON TABLE \"events\" IS 'old'".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn alter_table_emits_comment_for_newly_added_column() {
+        let result = build_alter_table(BuildAlterTableParams {
+            conn_id: None,
+            from_spec: TableSpec {
+                name: "events".into(),
+                columns: vec![ColumnSpec {
+                    name: "payload".into(),
+                    type_str: "VARCHAR".into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            to_spec: TableSpec {
+                name: "events".into(),
+                columns: vec![
+                    ColumnSpec {
+                        name: "payload".into(),
+                        type_str: "VARCHAR".into(),
+                        ..Default::default()
+                    },
+                    ColumnSpec {
+                        name: "note".into(),
+                        type_str: "VARCHAR".into(),
+                        comment: "note text".into(),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+            column_renames: Vec::new(),
+            options: AlterTableOptions {
+                allow_destructive: false,
+                with_rollback: false,
+            },
+        });
+
+        assert_eq!(
+            result.statements,
+            vec![
+                "ALTER TABLE \"events\" ADD COLUMN \"note\" VARCHAR NOT NULL".to_string(),
+                "COMMENT ON COLUMN \"events\".\"note\" IS 'note text'".to_string(),
+            ]
         );
     }
 }

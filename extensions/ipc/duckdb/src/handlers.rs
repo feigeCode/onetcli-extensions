@@ -1058,10 +1058,10 @@ pub fn handle_schema_objects(
         let include_internal = should_include_internal_schema_objects(p.schema.as_deref());
         let mut sql = if include_internal {
             String::from(
-                "SELECT view_name AS table_name, schema_name FROM duckdb_views() WHERE 1=1",
+                "SELECT view_name AS table_name, schema_name, comment FROM duckdb_views() WHERE 1=1",
             )
         } else {
-            String::from("SELECT table_name, schema_name FROM duckdb_tables() WHERE 1=1")
+            String::from("SELECT table_name, schema_name, comment FROM duckdb_tables() WHERE 1=1")
         };
         if !include_internal {
             sql.push_str(" AND internal = FALSE AND temporary = FALSE");
@@ -1087,7 +1087,8 @@ pub fn handle_schema_objects(
                 Ok(ObjectInfo {
                     name,
                     kind: ObjectKind::Table,
-                    comment: String::new(),
+                    schema: row.get(1)?,
+                    comment: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
                     row_count_estimate: None,
                     size_bytes: None,
                     created_at: None,
@@ -1113,7 +1114,8 @@ pub fn handle_schema_objects(
         && !catalog_views_returned_as_tables
     {
         let include_internal = should_include_internal_schema_objects(p.schema.as_deref());
-        let mut sql = String::from("SELECT view_name FROM duckdb_views() WHERE 1=1");
+        let mut sql =
+            String::from("SELECT view_name, schema_name, comment FROM duckdb_views() WHERE 1=1");
         if !include_internal {
             sql.push_str(" AND internal = FALSE AND temporary = FALSE");
         }
@@ -1138,7 +1140,8 @@ pub fn handle_schema_objects(
                 Ok(ObjectInfo {
                     name,
                     kind: ObjectKind::View,
-                    comment: String::new(),
+                    schema: row.get(1)?,
+                    comment: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
                     row_count_estimate: None,
                     size_bytes: None,
                     created_at: None,
@@ -1177,7 +1180,7 @@ pub fn handle_schema_columns(
     let current_catalog = current_duckdb_catalog(session)?;
     let include_internal = should_include_internal_schema_objects(p.schema.as_deref());
     let mut sql = String::from(
-        "SELECT column_index, column_name, data_type, is_nullable, column_default \
+        "SELECT column_index, column_name, data_type, is_nullable, column_default, comment \
          FROM duckdb_columns() WHERE table_name = ?",
     );
     if !include_internal {
@@ -1205,6 +1208,7 @@ pub fn handle_schema_columns(
             let type_str: String = row.get(2)?;
             let nullable: bool = row.get(3)?;
             let default: Option<String> = row.get(4)?;
+            let comment: Option<String> = row.get(5)?;
             Ok(ColumnInfo {
                 ordinal: ordinal as u32,
                 name,
@@ -1212,6 +1216,7 @@ pub fn handle_schema_columns(
                 type_str,
                 nullable,
                 default,
+                comment: comment.unwrap_or_default(),
                 ..Default::default()
             })
         })

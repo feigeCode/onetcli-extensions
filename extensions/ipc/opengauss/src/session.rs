@@ -169,56 +169,97 @@ impl OpenGaussSession {
         let mut objects = Vec::new();
 
         if include_tables {
-            let mut sql = "SELECT table_name FROM information_schema.tables \
-                           WHERE table_type = 'BASE TABLE'"
+            let mut sql = "SELECT t.table_name, t.table_schema, \
+                                  pg_catalog.obj_description(c.oid, 'pg_class') \
+                           FROM information_schema.tables t \
+                           LEFT JOIN pg_catalog.pg_namespace ns ON ns.nspname = t.table_schema \
+                           LEFT JOIN pg_catalog.pg_class c \
+                             ON c.relname = t.table_name AND c.relnamespace = ns.oid \
+                           WHERE t.table_type = 'BASE TABLE'"
                 .to_string();
             if let Some(schema) = schema {
-                sql.push_str(" AND table_schema = ");
+                sql.push_str(" AND t.table_schema = ");
                 sql.push_str(&quote_literal(schema));
             }
-            sql.push_str(" ORDER BY table_schema, table_name");
+            sql.push_str(" ORDER BY t.table_schema, t.table_name");
             let rows = self
                 .runtime
                 .block_on(self.client.query(sql.as_str(), &[]))?;
-            objects.extend(rows.into_iter().map(|row| ObjectInfo {
-                name: row.get::<_, String>(0),
-                kind: ObjectKind::Table,
-                comment: String::new(),
-                row_count_estimate: None,
-                size_bytes: None,
-                created_at: None,
-                updated_at: None,
-                extra: serde_json::Value::Null,
+            objects.extend(rows.into_iter().map(|row| {
+                ObjectInfo {
+                    name: row.get::<_, String>(0),
+                    kind: ObjectKind::Table,
+                    schema: row
+                        .try_get::<_, Option<String>>(1)
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default(),
+                    comment: row
+                        .try_get::<_, Option<String>>(2)
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default(),
+                    row_count_estimate: None,
+                    size_bytes: None,
+                    created_at: None,
+                    updated_at: None,
+                    extra: serde_json::Value::Null,
+                }
             }));
         }
 
         if include_views {
-            let mut sql = "SELECT table_name FROM information_schema.views WHERE 1 = 1".to_string();
+            let mut sql = "SELECT t.table_name, t.table_schema, \
+                                  pg_catalog.obj_description(c.oid, 'pg_class') \
+                           FROM information_schema.views t \
+                           LEFT JOIN pg_catalog.pg_namespace ns ON ns.nspname = t.table_schema \
+                           LEFT JOIN pg_catalog.pg_class c \
+                             ON c.relname = t.table_name AND c.relnamespace = ns.oid \
+                           WHERE 1 = 1"
+                .to_string();
             if let Some(schema) = schema {
-                sql.push_str(" AND table_schema = ");
+                sql.push_str(" AND t.table_schema = ");
                 sql.push_str(&quote_literal(schema));
             }
-            sql.push_str(" ORDER BY table_schema, table_name");
+            sql.push_str(" ORDER BY t.table_schema, t.table_name");
             let rows = self
                 .runtime
                 .block_on(self.client.query(sql.as_str(), &[]))?;
-            objects.extend(rows.into_iter().map(|row| ObjectInfo {
-                name: row.get::<_, String>(0),
-                kind: ObjectKind::View,
-                comment: String::new(),
-                row_count_estimate: None,
-                size_bytes: None,
-                created_at: None,
-                updated_at: None,
-                extra: serde_json::Value::Null,
+            objects.extend(rows.into_iter().map(|row| {
+                ObjectInfo {
+                    name: row.get::<_, String>(0),
+                    kind: ObjectKind::View,
+                    schema: row
+                        .try_get::<_, Option<String>>(1)
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default(),
+                    comment: row
+                        .try_get::<_, Option<String>>(2)
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default(),
+                    row_count_estimate: None,
+                    size_bytes: None,
+                    created_at: None,
+                    updated_at: None,
+                    extra: serde_json::Value::Null,
+                }
             }));
         }
 
         if include_sequences {
             for seq in self.list_sequences(database, schema)? {
+                let seq_schema = seq
+                    .extra
+                    .get("schema")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default()
+                    .to_string();
                 objects.push(ObjectInfo {
                     name: seq.name,
                     kind: ObjectKind::Sequence,
+                    schema: seq_schema,
                     comment: String::new(),
                     row_count_estimate: None,
                     size_bytes: None,
@@ -230,9 +271,16 @@ impl OpenGaussSession {
         }
         if include_functions {
             for function in self.list_functions(database, schema)? {
+                let function_schema = function
+                    .extra
+                    .get("schema")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default()
+                    .to_string();
                 objects.push(ObjectInfo {
                     name: function.name,
                     kind: ObjectKind::Function,
+                    schema: function_schema,
                     comment: function.comment,
                     row_count_estimate: None,
                     size_bytes: None,
@@ -244,9 +292,16 @@ impl OpenGaussSession {
         }
         if include_types {
             for ty in self.list_types(database, schema)? {
+                let type_schema = ty
+                    .extra
+                    .get("schema")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default()
+                    .to_string();
                 objects.push(ObjectInfo {
                     name: ty.name,
                     kind: ObjectKind::Type,
+                    schema: type_schema,
                     comment: String::new(),
                     row_count_estimate: None,
                     size_bytes: None,
@@ -273,11 +328,15 @@ impl OpenGaussSession {
             .filter(|value| !value.trim().is_empty())
             .unwrap_or("public");
         let sql = format!(
-            "SELECT ordinal_position, column_name, data_type, udt_name, is_nullable, column_default, \
-                    character_maximum_length, numeric_precision, numeric_scale \
-             FROM information_schema.columns \
-             WHERE table_schema = {} AND table_name = {} \
-             ORDER BY ordinal_position",
+            "SELECT c.ordinal_position, c.column_name, c.data_type, c.udt_name, c.is_nullable, c.column_default, \
+                    c.character_maximum_length, c.numeric_precision, c.numeric_scale, \
+                    pg_catalog.col_description(pc.oid, c.ordinal_position) \
+             FROM information_schema.columns c \
+             LEFT JOIN pg_catalog.pg_class pc \
+               ON pc.relname = c.table_name \
+              AND pc.relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = c.table_schema) \
+             WHERE c.table_schema = {} AND c.table_name = {} \
+             ORDER BY c.ordinal_position",
             quote_literal(schema),
             quote_literal(table)
         );
@@ -314,6 +373,11 @@ impl OpenGaussSession {
                         .flatten()
                         .map(|v| v as u32),
                     scale: row.try_get::<_, Option<i32>>(8).ok().flatten(),
+                    comment: row
+                        .try_get::<_, Option<String>>(9)
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default(),
                     ..Default::default()
                 }
             })
@@ -411,7 +475,7 @@ impl OpenGaussSession {
         let sql = format!(
             "SELECT tc.constraint_name, tc.table_name, kcu.column_name, \
                     ccu.table_name AS foreign_table_name, ccu.column_name AS foreign_column_name, \
-                    rc.update_rule, rc.delete_rule \
+                    rc.update_rule, rc.delete_rule, ccu.table_schema AS foreign_table_schema \
              FROM information_schema.table_constraints tc \
              JOIN information_schema.key_column_usage kcu \
                ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema \
@@ -435,6 +499,7 @@ impl OpenGaussSession {
                 from_columns: vec![row.get(2)],
                 to_table: row.get(3),
                 to_columns: vec![row.get(4)],
+                to_schema: row.try_get::<_, Option<String>>(7).ok().flatten(),
                 on_update: row.try_get::<_, Option<String>>(5).ok().flatten(),
                 on_delete: row.try_get::<_, Option<String>>(6).ok().flatten(),
                 comment: String::new(),
