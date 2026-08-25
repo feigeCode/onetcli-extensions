@@ -549,6 +549,7 @@ func (s *Server) handleSchemaObjects(req ipc.Message) ipc.Message {
 		out = append(out, map[string]any{
 			"name":    relativePath(name, prefix),
 			"kind":    "table",
+			"schema":  prefix,
 			"comment": "IoTDB device",
 			"extra":   map[string]any{"kind": "device"},
 		})
@@ -582,6 +583,7 @@ func (s *Server) handleSchemaColumns(req ipc.Message) ipc.Message {
 		"raw_type":   "INT64",
 		"nullable":   false,
 		"is_primary": true,
+		"comment":    "",
 		"extra":      map[string]any{"kind": "timestamp"},
 	}}
 	for _, row := range rows {
@@ -606,6 +608,7 @@ func (s *Server) handleSchemaColumns(req ipc.Message) ipc.Message {
 			"type":     hostTypeName(rawType),
 			"raw_type": rawType,
 			"nullable": true,
+			"comment":  "",
 			"extra":    map[string]any{"timeseries": path},
 		})
 	}

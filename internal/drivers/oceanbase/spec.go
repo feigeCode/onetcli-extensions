@@ -369,12 +369,12 @@ func oceanbaseMySQLSchemasSQL(cfg dbipc.Config, database string) string {
 
 func oceanbaseMySQLObjectsSQL(cfg dbipc.Config, database, schema string, kinds []string) string {
 	db := mysqlCatalog(database, schema, cfg.Database)
-	return "SELECT TABLE_NAME, CASE TABLE_TYPE WHEN 'BASE TABLE' THEN 'table' WHEN 'VIEW' THEN 'view' ELSE LOWER(REPLACE(TABLE_TYPE, ' ', '_')) END, TABLE_COMMENT FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '" + escapeSQL(db) + "'" + mysqlKindFilter(kinds) + " ORDER BY TABLE_NAME"
+	return "SELECT TABLE_NAME, CASE TABLE_TYPE WHEN 'BASE TABLE' THEN 'table' WHEN 'VIEW' THEN 'view' ELSE LOWER(REPLACE(TABLE_TYPE, ' ', '_')) END, TABLE_COMMENT, TABLE_SCHEMA FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '" + escapeSQL(db) + "'" + mysqlKindFilter(kinds) + " ORDER BY TABLE_NAME"
 }
 
 func oceanbaseMySQLColumnsSQL(cfg dbipc.Config, database, schema, table string) string {
 	db := mysqlCatalog(database, schema, cfg.Database)
-	return fmt.Sprintf("SELECT ORDINAL_POSITION, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '%s' AND TABLE_NAME = '%s' ORDER BY ORDINAL_POSITION", escapeSQL(db), escapeSQL(table))
+	return fmt.Sprintf("SELECT ORDINAL_POSITION, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_COMMENT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '%s' AND TABLE_NAME = '%s' ORDER BY ORDINAL_POSITION", escapeSQL(db), escapeSQL(table))
 }
 
 func oceanbaseMySQLIndexesSQL(cfg dbipc.Config, database, schema, table string) string {

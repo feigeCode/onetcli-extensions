@@ -22,6 +22,7 @@ func Spec() dbipc.DriverSpec {
 		DefaultPort:          1521,
 		IdentifierQuoteLeft:  `"`,
 		IdentifierQuoteRight: `"`,
+		SupportsComments:     true,
 		BuildDSN:             buildDSN,
 		SchemaSQL: dbipc.SchemaSQL{
 			Databases:      oracleDatabasesSQL,
@@ -79,7 +80,7 @@ func oracleObjectsSQL(cfg dbipc.Config, database, schema string, kinds []string)
 	if owner := oracleOwner(database, schema); owner != "" {
 		ownerFilter = fmt.Sprintf(" AND o.OWNER = '%s'", upperEscapeSQL(owner))
 	}
-	return "SELECT o.OBJECT_NAME, CASE o.OBJECT_TYPE WHEN 'TABLE' THEN 'table' WHEN 'VIEW' THEN 'view' WHEN 'MATERIALIZED VIEW' THEN 'materialized_view' WHEN 'SEQUENCE' THEN 'sequence' ELSE LOWER(REPLACE(o.OBJECT_TYPE, ' ', '_')) END AS KIND, NVL(c.COMMENTS, '') AS COMMENTS FROM ALL_OBJECTS o LEFT JOIN ALL_TAB_COMMENTS c ON c.OWNER = o.OWNER AND c.TABLE_NAME = o.OBJECT_NAME WHERE o.OBJECT_TYPE IN (" + oracleObjectTypeList(kinds) + ")" + ownerFilter + " ORDER BY o.OWNER, o.OBJECT_NAME"
+	return "SELECT o.OBJECT_NAME, CASE o.OBJECT_TYPE WHEN 'TABLE' THEN 'table' WHEN 'VIEW' THEN 'view' WHEN 'MATERIALIZED VIEW' THEN 'materialized_view' WHEN 'SEQUENCE' THEN 'sequence' ELSE LOWER(REPLACE(o.OBJECT_TYPE, ' ', '_')) END AS KIND, NVL(c.COMMENTS, '') AS COMMENTS, o.OWNER AS SCHEMA FROM ALL_OBJECTS o LEFT JOIN ALL_TAB_COMMENTS c ON c.OWNER = o.OWNER AND c.TABLE_NAME = o.OBJECT_NAME WHERE o.OBJECT_TYPE IN (" + oracleObjectTypeList(kinds) + ")" + ownerFilter + " ORDER BY o.OWNER, o.OBJECT_NAME"
 }
 
 func oracleColumnsSQL(cfg dbipc.Config, database, schema, table string) string {
@@ -88,7 +89,7 @@ func oracleColumnsSQL(cfg dbipc.Config, database, schema, table string) string {
 	if owner != "" {
 		ownerFilter = fmt.Sprintf(" AND c.OWNER = '%s'", upperEscapeSQL(owner))
 	}
-	return fmt.Sprintf("SELECT c.COLUMN_ID, c.COLUMN_NAME, c.DATA_TYPE, c.NULLABLE, c.DATA_DEFAULT FROM ALL_TAB_COLUMNS c LEFT JOIN ALL_COL_COMMENTS cc ON cc.OWNER = c.OWNER AND cc.TABLE_NAME = c.TABLE_NAME AND cc.COLUMN_NAME = c.COLUMN_NAME WHERE c.TABLE_NAME = '%s'%s ORDER BY c.COLUMN_ID", upperEscapeSQL(table), ownerFilter)
+	return fmt.Sprintf("SELECT c.COLUMN_ID, c.COLUMN_NAME, c.DATA_TYPE, c.NULLABLE, c.DATA_DEFAULT, NVL(cc.COMMENTS, '') FROM ALL_TAB_COLUMNS c LEFT JOIN ALL_COL_COMMENTS cc ON cc.OWNER = c.OWNER AND cc.TABLE_NAME = c.TABLE_NAME AND cc.COLUMN_NAME = c.COLUMN_NAME WHERE c.TABLE_NAME = '%s'%s ORDER BY c.COLUMN_ID", upperEscapeSQL(table), ownerFilter)
 }
 
 func oracleIndexesSQL(cfg dbipc.Config, database, schema, table string) string {

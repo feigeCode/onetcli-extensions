@@ -2,6 +2,7 @@ package dbipc
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/url"
 	"sort"
@@ -28,9 +29,14 @@ type DriverSpec struct {
 	DefaultPort          int
 	IdentifierQuoteLeft  string
 	IdentifierQuoteRight string
-	BuildDSN             func(Config) (string, error)
-	ResolveConnection    func(context.Context, Config) (ConnectionSpec, error)
-	SchemaSQL            SchemaSQL
+	// SupportsComments enables COMMENT ON TABLE/COLUMN emission in the
+	// shared DDL builder for drivers whose dialect supports it (PostgreSQL-,
+	// Oracle-, DuckDB-compatible). MySQL-compatible drivers leave it off.
+	SupportsComments  bool
+	BuildDSN          func(Config) (string, error)
+	ResolveConnection func(context.Context, Config) (ConnectionSpec, error)
+	SchemaSQL         SchemaSQL
+	AdaptSchemaSQL    func(context.Context, *sql.DB, SchemaSQL) (SchemaSQL, error)
 }
 
 type ConnectionSpec struct {
@@ -39,6 +45,7 @@ type ConnectionSpec struct {
 	IdentifierQuoteLeft  string
 	IdentifierQuoteRight string
 	SchemaSQL            SchemaSQL
+	AdaptSchemaSQL       func(context.Context, *sql.DB, SchemaSQL) (SchemaSQL, error)
 }
 
 type SchemaSQL struct {

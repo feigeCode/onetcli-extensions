@@ -49,6 +49,7 @@ type createTableOptions struct {
 	IfNotExists     bool  `json:"if_not_exists,omitempty"`
 	WithIndexes     *bool `json:"with_indexes,omitempty"`
 	WithForeignKeys *bool `json:"with_foreign_keys,omitempty"`
+	WithComments    *bool `json:"with_comments,omitempty"`
 	Temporary       bool  `json:"temporary,omitempty"`
 }
 
@@ -105,6 +106,9 @@ func buildCreateTableSQL(spec DriverSpec, table tableSpec, options createTableOp
 	}
 	sqlText := strings.Join(parts, " ") + " " + qualifiedTableName(spec, table.Database, table.Schema, table.Name) + " (" + strings.Join(defs, ", ") + ")"
 	statements := []string{sqlText}
+	if spec.SupportsComments && optionDefaultTrue(options.WithComments) {
+		appendCommentStatements(spec, &statements, qualifiedTableName(spec, table.Database, table.Schema, table.Name), table.Comment, table.Columns)
+	}
 	if optionDefaultTrue(options.WithIndexes) {
 		for _, idx := range table.Indexes {
 			if len(idx.Columns) == 0 {
@@ -242,7 +246,72 @@ func buildAlterTableSQL(spec DriverSpec, fromSpec, toSpec tableSpec, renames []c
 			}
 		}
 	}
+	if spec.SupportsComments {
+		diffComments(spec, &statements, &rollback, tableName, fromSpec, toSpec, options.WithRollback)
+	}
 	return statements, rollback, warnings, nil
+}
+
+// diffComments emits COMMENT ON TABLE / COMMENT ON COLUMN statements for
+// comment changes between fromSpec and toSpec. When withRollback is set, a
+// matching rollback statement (restoring the original comment) is prepended
+// to the rollback list so it runs after the change, undoing it.
+func diffComments(spec DriverSpec, statements, rollback *[]string, tableName string, fromSpec, toSpec tableSpec, withRollback bool) {
+	fromTableComment := fromSpec.Comment
+	toTableComment := toSpec.Comment
+	if fromTableComment != toTableComment {
+		*statements = append(*statements, commentStatement(spec, tableName, "", toTableComment))
+		if withRollback {
+			*rollback = append([]string{commentStatement(spec, tableName, "", fromTableComment)}, *rollback...)
+		}
+	}
+	fromCols := map[string]columnDDL{}
+	for _, c := range fromSpec.Columns {
+		fromCols[c.Name] = c
+	}
+	for _, column := range toSpec.Columns {
+		from, ok := fromCols[column.Name]
+		if !ok || column.Name == "" {
+			continue
+		}
+		if from.Comment == column.Comment {
+			continue
+		}
+		*statements = append(*statements, commentStatement(spec, tableName, column.Name, column.Comment))
+		if withRollback {
+			*rollback = append([]string{commentStatement(spec, tableName, column.Name, from.Comment)}, *rollback...)
+		}
+	}
+}
+
+// appendCommentStatements appends COMMENT ON TABLE / COMMENT ON COLUMN
+// statements for non-empty comments to the statement list. The table name
+// must already be qualified/escaped.
+func appendCommentStatements(spec DriverSpec, statements *[]string, tableName, tableComment string, columns []columnDDL) {
+	if tableComment != "" {
+		*statements = append(*statements, commentStatement(spec, tableName, "", tableComment))
+	}
+	for _, column := range columns {
+		if column.Name != "" && column.Comment != "" {
+			*statements = append(*statements, commentStatement(spec, tableName, column.Name, column.Comment))
+		}
+	}
+}
+
+// commentStatement builds a COMMENT ON TABLE / COMMENT ON COLUMN statement.
+// An empty comment clears the comment via IS ”.
+func commentStatement(spec DriverSpec, tableName, column, comment string) string {
+	kind := "TABLE"
+	target := tableName
+	if column != "" {
+		kind = "COLUMN"
+		target = tableName + "." + quoteIdentifier(spec, column)
+	}
+	return "COMMENT ON " + kind + " " + target + " IS '" + escapeSQLLiteral(comment) + "'"
+}
+
+func escapeSQLLiteral(value string) string {
+	return strings.ReplaceAll(value, "'", "''")
 }
 
 func quoteIdentifier(spec DriverSpec, name string) string {
@@ -283,6 +352,16 @@ func qualifiedTableName(spec DriverSpec, database, schema, name string) string {
 
 func optionDefaultTrue(value *bool) bool {
 	return value == nil || *value
+}
+
+// stringList returns value as a non-nil slice. Host-side deserializers expect
+// JSON arrays for list fields; a nil slice would marshal to `null`, which Rust
+// serde rejects for Vec<String> even when the field is marked with #[serde(default)].
+func stringList(value []string) []string {
+	if value == nil {
+		return []string{}
+	}
+	return value
 }
 
 func decodePayload[T any](raw json.RawMessage, target *T) error {

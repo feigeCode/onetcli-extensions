@@ -21,6 +21,7 @@ func Spec() dbipc.DriverSpec {
 		DefaultPort:          5236,
 		IdentifierQuoteLeft:  `"`,
 		IdentifierQuoteRight: `"`,
+		SupportsComments:     true,
 		BuildDSN:             buildDSN,
 		SchemaSQL: dbipc.SchemaSQL{
 			Databases:      dmDatabasesSQL,
@@ -72,7 +73,7 @@ func dmObjectsSQL(cfg dbipc.Config, database, schema string, kinds []string) str
 	if owner := dmOwner(database, schema); owner != "" {
 		ownerFilter = fmt.Sprintf(" AND OWNER = '%s'", upperEscapeSQL(owner))
 	}
-	return "SELECT OBJECT_NAME, KIND, COMMENTS FROM (" +
+	return "SELECT OBJECT_NAME, KIND, COMMENTS, OWNER FROM (" +
 		"SELECT t.OWNER, t.TABLE_NAME AS OBJECT_NAME, 'table' AS KIND, NVL(c.COMMENTS, '') AS COMMENTS FROM ALL_TABLES t LEFT JOIN ALL_TAB_COMMENTS c ON c.OWNER = t.OWNER AND c.TABLE_NAME = t.TABLE_NAME " +
 		"UNION ALL " +
 		"SELECT v.OWNER, v.VIEW_NAME AS OBJECT_NAME, 'view' AS KIND, NVL(c.COMMENTS, '') AS COMMENTS FROM ALL_VIEWS v LEFT JOIN ALL_TAB_COMMENTS c ON c.OWNER = v.OWNER AND c.TABLE_NAME = v.VIEW_NAME" +
@@ -85,7 +86,7 @@ func dmColumnsSQL(cfg dbipc.Config, database, schema, table string) string {
 	if owner != "" {
 		ownerFilter = fmt.Sprintf(" AND c.OWNER = '%s'", upperEscapeSQL(owner))
 	}
-	return fmt.Sprintf("SELECT c.COLUMN_ID, c.COLUMN_NAME, c.DATA_TYPE, c.NULLABLE, c.DATA_DEFAULT FROM ALL_TAB_COLUMNS c LEFT JOIN ALL_COL_COMMENTS cc ON cc.OWNER = c.OWNER AND cc.TABLE_NAME = c.TABLE_NAME AND cc.COLUMN_NAME = c.COLUMN_NAME WHERE c.TABLE_NAME = '%s'%s ORDER BY c.COLUMN_ID", upperEscapeSQL(table), ownerFilter)
+	return fmt.Sprintf("SELECT c.COLUMN_ID, c.COLUMN_NAME, c.DATA_TYPE, c.NULLABLE, c.DATA_DEFAULT, NVL(cc.COMMENTS, '') FROM ALL_TAB_COLUMNS c LEFT JOIN ALL_COL_COMMENTS cc ON cc.OWNER = c.OWNER AND cc.TABLE_NAME = c.TABLE_NAME AND cc.COLUMN_NAME = c.COLUMN_NAME WHERE c.TABLE_NAME = '%s'%s ORDER BY c.COLUMN_ID", upperEscapeSQL(table), ownerFilter)
 }
 
 func dmIndexesSQL(cfg dbipc.Config, database, schema, table string) string {

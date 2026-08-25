@@ -293,9 +293,19 @@ func (s *Server) handleConnOpen(ctx context.Context, req ipc.Message) ipc.Messag
 		return s.errFromError(req.ID, ErrConnectionFailed, err)
 	}
 
+	// Let the driver adapt its metadata SQL to the server it actually reached
+	// (e.g. KingbaseES using pg_* catalog relations instead of sys_*). This is
+	// best-effort: a failed probe keeps the driver's default SQL.
+	schemaSQL := connSpec.SchemaSQL
+	if connSpec.AdaptSchemaSQL != nil {
+		if adapted, err := connSpec.AdaptSchemaSQL(ctx, db, schemaSQL); err == nil {
+			schemaSQL = adapted
+		}
+	}
+
 	connID := s.nextConnID
 	s.nextConnID++
-	s.conns[connID] = &connectionState{config: cfg, db: db, ddlSpec: s.ddlSpecForConnection(connSpec), schemaSQL: connSpec.SchemaSQL}
+	s.conns[connID] = &connectionState{config: cfg, db: db, ddlSpec: s.ddlSpecForConnection(connSpec), schemaSQL: schemaSQL}
 	return s.ok(req.ID, map[string]any{
 		"conn_id": connID,
 		"server_info": map[string]any{
@@ -767,7 +777,7 @@ func (s *Server) handleDdlBuild(req ipc.Message) ipc.Message {
 		if err != nil {
 			return s.errFromError(req.ID, ErrInvalidParams, err)
 		}
-		return s.ok(req.ID, map[string]any{"statements": statements, "warnings": []string{}})
+		return s.ok(req.ID, map[string]any{"statements": stringList(statements), "warnings": []string{}})
 	case "drop_table", "drop_view":
 		var payload struct {
 			Kind     string `json:"kind"`
@@ -814,7 +824,7 @@ func (s *Server) handleDdlBuildCreateTable(req ipc.Message) ipc.Message {
 	if err != nil {
 		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
-	return s.ok(req.ID, map[string]any{"sql": sqlText, "statements": statements})
+	return s.ok(req.ID, map[string]any{"sql": sqlText, "statements": stringList(statements)})
 }
 
 func (s *Server) handleDdlBuildAlterTable(req ipc.Message) ipc.Message {
@@ -836,7 +846,11 @@ func (s *Server) handleDdlBuildAlterTable(req ipc.Message) ipc.Message {
 	if err != nil {
 		return s.errFromError(req.ID, ErrInvalidParams, err)
 	}
-	return s.ok(req.ID, map[string]any{"statements": statements, "rollback_statements": rollback, "warnings": warnings})
+	return s.ok(req.ID, map[string]any{
+		"statements":          stringList(statements),
+		"rollback_statements": stringList(rollback),
+		"warnings":            stringList(warnings),
+	})
 }
 
 func (s *Server) handleDdlBuildDrop(req ipc.Message) ipc.Message {
@@ -1362,7 +1376,14 @@ func (s *Server) handleSchemaObjects(ctx context.Context, req ipc.Message) ipc.M
 		return s.ok(req.ID, []map[string]any{})
 	}
 	rows, err := queryObjects(ctx, conn.db, conn.schemaSQL.Objects(conn.config, p.Database, p.Schema, p.Kinds), func(cols []any) map[string]any {
-		return map[string]any{"name": stringCell(cols, 0), "kind": stringCell(cols, 1), "comment": stringCell(cols, 2)}
+		return map[string]any{
+			"name":    stringCell(cols, 0),
+			"kind":    stringCell(cols, 1),
+			"comment": stringCell(cols, 2),
+			// Optional 4th column: the object's owning schema. Drivers that do
+			// not project it leave it empty, which keeps the legacy behavior.
+			"schema": stringCell(cols, 3),
+		}
 	})
 	if err != nil {
 		return s.errFromError(req.ID, ErrSQLSyntax, err)
@@ -1400,6 +1421,9 @@ func (s *Server) handleSchemaColumns(ctx context.Context, req ipc.Message) ipc.M
 			"default":    nullableString(cols, 4),
 			"is_primary": false,
 			"is_unique":  false,
+			// Optional 6th column: the column comment. Drivers that do not
+			// project it leave it empty, which keeps the legacy behavior.
+			"comment": stringCell(cols, 5),
 		}
 	})
 	if err != nil {
@@ -1752,6 +1776,9 @@ func (s *Server) normalizeConnectionSpec(connSpec ConnectionSpec) (ConnectionSpe
 	}
 	if schemaSQLIsEmpty(connSpec.SchemaSQL) {
 		connSpec.SchemaSQL = s.spec.SchemaSQL
+	}
+	if connSpec.AdaptSchemaSQL == nil {
+		connSpec.AdaptSchemaSQL = s.spec.AdaptSchemaSQL
 	}
 	if connSpec.DriverName == "" {
 		return ConnectionSpec{}, fmt.Errorf("missing SQL driver name")

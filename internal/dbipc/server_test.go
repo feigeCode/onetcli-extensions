@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -703,6 +704,306 @@ func TestDdlBuilderUsesResolvedConnectionIdentifierQuotes(t *testing.T) {
 	}
 }
 
+func commentsTestSpec() DriverSpec {
+	spec := testSpec()
+	spec.IdentifierQuoteLeft = `"`
+	spec.IdentifierQuoteRight = `"`
+	spec.SupportsComments = true
+	return spec
+}
+
+func boolPtr(value bool) *bool {
+	return &value
+}
+
+func TestBuildCreateTableSQLAppendsComments(t *testing.T) {
+	spec := commentsTestSpec()
+	sqlText, statements, err := buildCreateTableSQL(spec, tableSpec{
+		Schema:  "app",
+		Name:    "demo",
+		Comment: "用户表 it's",
+		Columns: []columnDDL{
+			{Name: "id", Type: "BIGINT", Nullable: boolPtr(false)},
+			{Name: "name", Type: "VARCHAR(64)", Comment: "姓名"},
+			{Name: "note", Type: "TEXT", Comment: ""},
+		},
+	}, createTableOptions{})
+	if err != nil {
+		t.Fatalf("buildCreateTableSQL returned error: %v", err)
+	}
+	want := []string{
+		`CREATE TABLE "app"."demo" ("id" BIGINT NOT NULL, "name" VARCHAR(64), "note" TEXT)`,
+		`COMMENT ON TABLE "app"."demo" IS '用户表 it''s'`,
+		`COMMENT ON COLUMN "app"."demo"."name" IS '姓名'`,
+	}
+	if len(statements) != len(want) {
+		t.Fatalf("statements = %#v, want %#v", statements, want)
+	}
+	for i := range want {
+		if statements[i] != want[i] {
+			t.Errorf("statements[%d] = %q, want %q", i, statements[i], want[i])
+		}
+	}
+	if sqlText != want[0] {
+		t.Fatalf("create SQL = %q, want %q", sqlText, want[0])
+	}
+}
+
+func TestBuildCreateTableSQLRespectsWithCommentsOption(t *testing.T) {
+	spec := commentsTestSpec()
+	_, statements, err := buildCreateTableSQL(spec, tableSpec{
+		Name:    "demo",
+		Comment: "table comment",
+		Columns: []columnDDL{{Name: "id", Type: "BIGINT", Comment: "col comment"}},
+	}, createTableOptions{WithComments: boolPtr(false)})
+	if err != nil {
+		t.Fatalf("buildCreateTableSQL returned error: %v", err)
+	}
+	if len(statements) != 1 {
+		t.Fatalf("statements = %#v, want just the CREATE TABLE", statements)
+	}
+}
+
+func TestBuildCreateTableSQLNoCommentsWithoutCapability(t *testing.T) {
+	spec := testSpec()
+	spec.IdentifierQuoteLeft = `"`
+	_, statements, err := buildCreateTableSQL(spec, tableSpec{
+		Name:    "demo",
+		Comment: "table comment",
+		Columns: []columnDDL{{Name: "id", Type: "BIGINT", Comment: "col comment"}},
+	}, createTableOptions{})
+	if err != nil {
+		t.Fatalf("buildCreateTableSQL returned error: %v", err)
+	}
+	if len(statements) != 1 {
+		t.Fatalf("statements = %#v, want just the CREATE TABLE", statements)
+	}
+}
+
+func TestBuildAlterTableSQLDiffsComments(t *testing.T) {
+	spec := commentsTestSpec()
+	from := tableSpec{
+		Schema:  "app",
+		Name:    "demo",
+		Comment: "old table",
+		Columns: []columnDDL{
+			{Name: "id", Type: "BIGINT", Comment: "id desc"},
+			{Name: "name", Type: "VARCHAR(64)", Comment: "old name"},
+			{Name: "note", Type: "TEXT", Comment: "unchanged"},
+		},
+	}
+	to := tableSpec{
+		Schema:  "app",
+		Name:    "demo",
+		Comment: "new table",
+		Columns: []columnDDL{
+			{Name: "id", Type: "BIGINT", Comment: ""},
+			{Name: "name", Type: "VARCHAR(64)", Comment: "new name it's"},
+			{Name: "note", Type: "TEXT", Comment: "unchanged"},
+		},
+	}
+	statements, rollback, warnings, err := buildAlterTableSQL(spec, from, to, nil, alterTableOptions{WithRollback: true})
+	if err != nil {
+		t.Fatalf("buildAlterTableSQL returned error: %v", err)
+	}
+	wantStatements := []string{
+		`COMMENT ON TABLE "app"."demo" IS 'new table'`,
+		`COMMENT ON COLUMN "app"."demo"."id" IS ''`,
+		`COMMENT ON COLUMN "app"."demo"."name" IS 'new name it''s'`,
+	}
+	if len(statements) != len(wantStatements) {
+		t.Fatalf("statements = %#v, want %#v", statements, wantStatements)
+	}
+	for i := range wantStatements {
+		if statements[i] != wantStatements[i] {
+			t.Errorf("statements[%d] = %q, want %q", i, statements[i], wantStatements[i])
+		}
+	}
+	wantRollback := []string{
+		`COMMENT ON COLUMN "app"."demo"."name" IS 'old name'`,
+		`COMMENT ON COLUMN "app"."demo"."id" IS 'id desc'`,
+		`COMMENT ON TABLE "app"."demo" IS 'old table'`,
+	}
+	if len(rollback) != len(wantRollback) {
+		t.Fatalf("rollback = %#v, want %#v", rollback, wantRollback)
+	}
+	for i := range wantRollback {
+		if rollback[i] != wantRollback[i] {
+			t.Errorf("rollback[%d] = %q, want %q", i, rollback[i], wantRollback[i])
+		}
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %#v, want none", warnings)
+	}
+}
+
+func TestBuildAlterTableSQLNoCommentsWithoutCapability(t *testing.T) {
+	from := tableSpec{Name: "demo", Comment: "old", Columns: []columnDDL{{Name: "id", Type: "BIGINT", Comment: "a"}}}
+	to := tableSpec{Name: "demo", Comment: "new", Columns: []columnDDL{{Name: "id", Type: "BIGINT", Comment: "b"}}}
+	statements, _, _, err := buildAlterTableSQL(testSpec(), from, to, nil, alterTableOptions{})
+	if err != nil {
+		t.Fatalf("buildAlterTableSQL returned error: %v", err)
+	}
+	if len(statements) != 0 {
+		t.Fatalf("statements = %#v, want none when comments unsupported", statements)
+	}
+}
+
+func TestDdlBuildCommentsViaWire(t *testing.T) {
+	server := NewServer(commentsTestSpec(), nil)
+	server.initialized = true
+
+	createResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  "ddl/build_create_table",
+		Params: json.RawMessage(`{
+			"spec": {
+				"schema": "app",
+				"name": "demo",
+				"comment": "用户表",
+				"columns": [
+					{"name":"id","type":"BIGINT","nullable":false,"comment":"主键"}
+				]
+			},
+			"options": {}
+		}`),
+	})
+	if createResp.Error != nil {
+		t.Fatalf("ddl/build_create_table returned error: %#v", createResp.Error)
+	}
+	var createResult struct {
+		SQL        string   `json:"sql"`
+		Statements []string `json:"statements"`
+	}
+	decodeResult(t, createResp, &createResult)
+	if createResult.SQL != `CREATE TABLE "app"."demo" ("id" BIGINT NOT NULL)` {
+		t.Fatalf("create SQL = %q", createResult.SQL)
+	}
+	wantCreate := []string{
+		`CREATE TABLE "app"."demo" ("id" BIGINT NOT NULL)`,
+		`COMMENT ON TABLE "app"."demo" IS '用户表'`,
+		`COMMENT ON COLUMN "app"."demo"."id" IS '主键'`,
+	}
+	if len(createResult.Statements) != len(wantCreate) {
+		t.Fatalf("create statements = %#v, want %#v", createResult.Statements, wantCreate)
+	}
+	for i := range wantCreate {
+		if createResult.Statements[i] != wantCreate[i] {
+			t.Errorf("create statements[%d] = %q, want %q", i, createResult.Statements[i], wantCreate[i])
+		}
+	}
+
+	alterResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "ddl/build_alter_table",
+		Params: json.RawMessage(`{
+			"from_spec": {
+				"schema": "app",
+				"name": "demo",
+				"comment": "",
+				"columns": [{"name":"id","type":"BIGINT","comment":""}]
+			},
+			"to_spec": {
+				"schema": "app",
+				"name": "demo",
+				"comment": "新的备注",
+				"columns": [{"name":"id","type":"BIGINT","comment":"id 说明"}]
+			},
+			"column_renames": [],
+			"options": {"with_rollback": true}
+		}`),
+	})
+	if alterResp.Error != nil {
+		t.Fatalf("ddl/build_alter_table returned error: %#v", alterResp.Error)
+	}
+	var alterResult struct {
+		Statements         []string `json:"statements"`
+		RollbackStatements []string `json:"rollback_statements"`
+		Warnings           []string `json:"warnings"`
+	}
+	decodeResult(t, alterResp, &alterResult)
+	wantAlter := []string{
+		`COMMENT ON TABLE "app"."demo" IS '新的备注'`,
+		`COMMENT ON COLUMN "app"."demo"."id" IS 'id 说明'`,
+	}
+	if len(alterResult.Statements) != len(wantAlter) {
+		t.Fatalf("alter statements = %#v, want %#v", alterResult.Statements, wantAlter)
+	}
+	for i := range wantAlter {
+		if alterResult.Statements[i] != wantAlter[i] {
+			t.Errorf("alter statements[%d] = %q, want %q", i, alterResult.Statements[i], wantAlter[i])
+		}
+	}
+	wantRollback := []string{
+		`COMMENT ON COLUMN "app"."demo"."id" IS ''`,
+		`COMMENT ON TABLE "app"."demo" IS ''`,
+	}
+	if len(alterResult.RollbackStatements) != len(wantRollback) {
+		t.Fatalf("alter rollback = %#v, want %#v", alterResult.RollbackStatements, wantRollback)
+	}
+	for i := range wantRollback {
+		if alterResult.RollbackStatements[i] != wantRollback[i] {
+			t.Errorf("alter rollback[%d] = %q, want %q", i, alterResult.RollbackStatements[i], wantRollback[i])
+		}
+	}
+}
+
+// TestDdlBuildAlterTableWireListsNeverNull guards against nil slices being
+// marshalled to JSON `null`. The host-side Rust deserializer rejects explicit
+// `null` for Vec<String> fields (it only tolerates a missing key via
+// #[serde(default)]), which previously turned the table-designer SQL preview
+// blank for Go drivers.
+func TestDdlBuildAlterTableWireListsNeverNull(t *testing.T) {
+	server := NewServer(commentsTestSpec(), nil)
+	server.initialized = true
+
+	resp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  "ddl/build_alter_table",
+		Params: json.RawMessage(`{
+			"from_spec": {
+				"schema": "app",
+				"name": "demo",
+				"columns": [{"name":"id","type":"BIGINT","comment":"same"}]
+			},
+			"to_spec": {
+				"schema": "app",
+				"name": "demo",
+				"columns": [{"name":"id","type":"BIGINT","comment":"same"}]
+			},
+			"column_renames": [],
+			"options": {"allow_destructive": true, "with_rollback": false}
+		}`),
+	})
+	if resp.Error != nil {
+		t.Fatalf("ddl/build_alter_table returned error: %#v", resp.Error)
+	}
+
+	var result struct {
+		Statements         []string `json:"statements"`
+		RollbackStatements []string `json:"rollback_statements"`
+		Warnings           []string `json:"warnings"`
+	}
+	decodeResult(t, resp, &result)
+	if result.Statements == nil || len(result.Statements) != 0 {
+		t.Fatalf("statements = %#v, want empty non-nil slice", result.Statements)
+	}
+	if result.RollbackStatements == nil || len(result.RollbackStatements) != 0 {
+		t.Fatalf("rollback_statements = %#v, want empty non-nil slice", result.RollbackStatements)
+	}
+	if result.Warnings == nil || len(result.Warnings) != 0 {
+		t.Fatalf("warnings = %#v, want empty non-nil slice", result.Warnings)
+	}
+
+	raw := string(resp.Result)
+	if strings.Contains(raw, ":null") {
+		t.Fatalf("wire result contains explicit null, host serde cannot parse it: %s", raw)
+	}
+}
+
 func TestDataExportStreamsNdjsonAndClosesStream(t *testing.T) {
 	driverName, _ := registerStreamingDriver(t, [][]driver.Value{
 		{int64(1), "first"},
@@ -899,6 +1200,173 @@ func TestSchemaObjectsUsesDriverSQLAndReturnsKind(t *testing.T) {
 	}
 	if _, ok := object["kind"]; !ok {
 		t.Fatalf("object metadata missing kind: raw=%s", resp.Result)
+	}
+}
+
+func TestSchemaObjectsReturnsOptionalSchema(t *testing.T) {
+	driverName, state := registerStreamingDriver(t, [][]driver.Value{
+		{"orders", "table", "order rows", "sales"},
+	})
+	state.columns = []string{"object_name", "kind", "comment", "schema_name"}
+	spec := testSpecWithSQLDriver(driverName)
+	spec.SchemaSQL.Objects = func(cfg Config, database, schema string, kinds []string) string {
+		return "SELECT object_name, kind, comment, schema_name FROM test_objects"
+	}
+	server := NewServer(spec, nil)
+	server.initialized = true
+
+	connID := openTestConn(t, server)
+	resp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "schema/objects",
+		Params:  []byte(fmt.Sprintf(`{"conn_id":%d,"database":"main","schema":"sales","kinds":["table"]}`, connID)),
+	})
+	if resp.Error != nil {
+		t.Fatalf("schema/objects returned error: %#v", resp.Error)
+	}
+	var result []map[string]any
+	decodeResult(t, resp, &result)
+	if len(result) != 1 {
+		t.Fatalf("objects result = %#v, want one object", result)
+	}
+	object := result[0]
+	if object["name"] != "orders" || object["kind"] != "table" || object["comment"] != "order rows" || object["schema"] != "sales" {
+		t.Fatalf("object metadata = %#v", object)
+	}
+}
+
+func TestSchemaObjectsSchemaEmptyWhenNotProjected(t *testing.T) {
+	driverName, state := registerStreamingDriver(t, [][]driver.Value{
+		{"demo", "table", "demo table"},
+	})
+	state.columns = []string{"object_name", "kind", "comment"}
+	spec := testSpecWithSQLDriver(driverName)
+	spec.SchemaSQL.Objects = func(cfg Config, database, schema string, kinds []string) string {
+		return "SELECT object_name, kind, comment FROM test_objects"
+	}
+	server := NewServer(spec, nil)
+	server.initialized = true
+
+	connID := openTestConn(t, server)
+	resp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "schema/objects",
+		Params:  []byte(fmt.Sprintf(`{"conn_id":%d,"database":"main","schema":"app","kinds":["table"]}`, connID)),
+	})
+	if resp.Error != nil {
+		t.Fatalf("schema/objects returned error: %#v", resp.Error)
+	}
+	var result []map[string]any
+	decodeResult(t, resp, &result)
+	if len(result) != 1 {
+		t.Fatalf("objects result = %#v, want one object", result)
+	}
+	if object := result[0]; object["schema"] != "" {
+		t.Fatalf("object schema = %#v, want empty when not projected", object["schema"])
+	}
+}
+
+func TestSchemaColumnsReturnsOptionalComment(t *testing.T) {
+	driverName, state := registerStreamingDriver(t, [][]driver.Value{
+		{1, "id", "BIGINT", "NO", nil, "primary key"},
+		{2, "name", "VARCHAR(64)", "YES", "''", "user name"},
+	})
+	state.columns = []string{"ordinal", "name", "type", "nullable", "default", "comment"}
+	spec := testSpecWithSQLDriver(driverName)
+	spec.SchemaSQL.Columns = func(cfg Config, database, schema, table string) string {
+		return "SELECT ordinal, name, type, nullable, default, comment FROM test_columns"
+	}
+	server := NewServer(spec, nil)
+	server.initialized = true
+
+	connID := openTestConn(t, server)
+	resp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "schema/columns",
+		Params:  []byte(fmt.Sprintf(`{"conn_id":%d,"database":"main","schema":"app","table":"demo"}`, connID)),
+	})
+	if resp.Error != nil {
+		t.Fatalf("schema/columns returned error: %#v", resp.Error)
+	}
+	var result []map[string]any
+	decodeResult(t, resp, &result)
+	if len(result) != 2 {
+		t.Fatalf("columns result = %#v, want two columns", result)
+	}
+	if result[0]["name"] != "id" || result[0]["comment"] != "primary key" {
+		t.Fatalf("column metadata[0] = %#v", result[0])
+	}
+	if result[1]["name"] != "name" || result[1]["comment"] != "user name" {
+		t.Fatalf("column metadata[1] = %#v", result[1])
+	}
+}
+
+func TestSchemaColumnsCommentEmptyWhenNotProjected(t *testing.T) {
+	driverName, state := registerStreamingDriver(t, [][]driver.Value{
+		{1, "id", "BIGINT", "NO", nil},
+	})
+	state.columns = []string{"ordinal", "name", "type", "nullable", "default"}
+	spec := testSpecWithSQLDriver(driverName)
+	spec.SchemaSQL.Columns = func(cfg Config, database, schema, table string) string {
+		return "SELECT ordinal, name, type, nullable, default FROM test_columns"
+	}
+	server := NewServer(spec, nil)
+	server.initialized = true
+
+	connID := openTestConn(t, server)
+	resp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "schema/columns",
+		Params:  []byte(fmt.Sprintf(`{"conn_id":%d,"database":"main","schema":"app","table":"demo"}`, connID)),
+	})
+	if resp.Error != nil {
+		t.Fatalf("schema/columns returned error: %#v", resp.Error)
+	}
+	var result []map[string]any
+	decodeResult(t, resp, &result)
+	if len(result) != 1 {
+		t.Fatalf("columns result = %#v, want one column", result)
+	}
+	if result[0]["comment"] != "" {
+		t.Fatalf("column comment = %#v, want empty when not projected", result[0]["comment"])
+	}
+}
+
+func TestConnOpenAdaptsSchemaSQL(t *testing.T) {
+	driverName, state := registerStreamingDriver(t, [][]driver.Value{
+		{"demo"},
+	})
+	state.columns = []string{"name"}
+
+	spec := testSpecWithSQLDriver(driverName)
+	spec.SchemaSQL.Databases = func(cfg Config) string {
+		return "SELECT datname FROM sys_database WHERE datallowconn ORDER BY datname"
+	}
+	spec.AdaptSchemaSQL = func(ctx context.Context, db *sql.DB, schemaSQL SchemaSQL) (SchemaSQL, error) {
+		schemaSQL.Databases = func(cfg Config) string {
+			return "SELECT datname FROM pg_database WHERE datallowconn ORDER BY datname"
+		}
+		return schemaSQL, nil
+	}
+	server := NewServer(spec, nil)
+	server.initialized = true
+
+	connID := openTestConn(t, server)
+	resp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "schema/databases",
+		Params:  []byte(fmt.Sprintf(`{"conn_id":%d}`, connID)),
+	})
+	if resp.Error != nil {
+		t.Fatalf("schema/databases returned error: %#v", resp.Error)
+	}
+	if state.lastQuerySQL != "SELECT datname FROM pg_database WHERE datallowconn ORDER BY datname" {
+		t.Fatalf("databases query = %q, want adapted pg_database SQL", state.lastQuerySQL)
 	}
 }
 
@@ -1325,6 +1793,7 @@ type streamingDriverState struct {
 	commitCalls   int32
 	rollbackCalls int32
 	lastExecSQL   string
+	lastQuerySQL  string
 	lastQueryArgs []driver.NamedValue
 	lastExecArgs  []driver.NamedValue
 }
@@ -1371,10 +1840,11 @@ func (c *streamingConn) Ping(context.Context) error {
 	return nil
 }
 
-func (c *streamingConn) QueryContext(_ context.Context, _ string, args []driver.NamedValue) (driver.Rows, error) {
+func (c *streamingConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
 	if atomic.LoadInt32(&c.inTx) == 1 {
 		atomic.AddInt32(&c.state.txQueryCalls, 1)
 	}
+	c.state.lastQuerySQL = query
 	c.state.lastQueryArgs = cloneNamedValues(args)
 	return &streamingRows{state: c.state, rows: c.state.rows}, nil
 }
