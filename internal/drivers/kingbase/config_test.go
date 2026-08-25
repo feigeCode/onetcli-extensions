@@ -1,6 +1,8 @@
 package kingbase
 
 import (
+	"context"
+	"database/sql"
 	"strings"
 	"testing"
 )
@@ -178,5 +180,109 @@ func TestSpecBuildsKingbaseObjectsSQLWithProtocolKinds(t *testing.T) {
 		if !strings.Contains(viewsSQL, want) {
 			t.Fatalf("objects SQL %q does not contain %q", viewsSQL, want)
 		}
+	}
+}
+
+func TestSchemaSQLForNamesPGUsesPGCatalogs(t *testing.T) {
+	cfg, err := ConfigFromWire(map[string]any{
+		"host":     "127.0.0.1",
+		"username": "system",
+		"database": "TEST",
+	})
+	if err != nil {
+		t.Fatalf("ConfigFromWire returned error: %v", err)
+	}
+	schemaSQL := schemaSQLForNames(pgCatalogNames())
+
+	databasesSQL := schemaSQL.Databases(cfg)
+	if !strings.Contains(databasesSQL, "pg_database") {
+		t.Fatalf("databases SQL %q does not use pg_database", databasesSQL)
+	}
+
+	schemasSQL := schemaSQL.Schemas(cfg, "TEST")
+	if !strings.Contains(schemasSQL, "pg_namespace") {
+		t.Fatalf("schemas SQL %q does not use pg_namespace", schemasSQL)
+	}
+
+	columnsSQL := schemaSQL.Columns(cfg, "", "app", "demo")
+	for _, want := range []string{"pg_attribute", "pg_class", "pg_attrdef", "format_type", "pg_get_expr"} {
+		if !strings.Contains(columnsSQL, want) {
+			t.Fatalf("columns SQL %q does not contain %q", columnsSQL, want)
+		}
+	}
+
+	indexesSQL := schemaSQL.Indexes(cfg, "", "app", "demo")
+	for _, want := range []string{"pg_index", "pg_class", "pg_attribute", "pg_am"} {
+		if !strings.Contains(indexesSQL, want) {
+			t.Fatalf("indexes SQL %q does not contain %q", indexesSQL, want)
+		}
+	}
+
+	foreignKeysSQL := schemaSQL.ForeignKeys(cfg, "", "app", "demo")
+	for _, want := range []string{"pg_constraint", "pg_class", "pg_attribute"} {
+		if !strings.Contains(foreignKeysSQL, want) {
+			t.Fatalf("foreign keys SQL %q does not contain %q", foreignKeysSQL, want)
+		}
+	}
+
+	functionsSQL := schemaSQL.Functions(cfg, "", "app")
+	for _, want := range []string{"pg_proc", "pg_namespace", "pg_language"} {
+		if !strings.Contains(functionsSQL, want) {
+			t.Fatalf("functions SQL %q does not contain %q", functionsSQL, want)
+		}
+	}
+
+	viewSQL := schemaSQL.ViewDefinition(cfg, "", "app", "v_demo")
+	if !strings.Contains(viewSQL, "pg_views") {
+		t.Fatalf("view definition SQL %q does not use pg_views", viewSQL)
+	}
+
+	// The pg_* flavor must never reference sys_* relations.
+	for _, probe := range []string{
+		schemaSQL.Databases(cfg),
+		schemaSQL.Schemas(cfg, "TEST"),
+		schemaSQL.Objects(cfg, "", "app", nil),
+		schemaSQL.Columns(cfg, "", "app", "demo"),
+		schemaSQL.Indexes(cfg, "", "app", "demo"),
+		schemaSQL.ForeignKeys(cfg, "", "app", "demo"),
+		schemaSQL.Views(cfg, "", "app"),
+		schemaSQL.Functions(cfg, "", "app"),
+		schemaSQL.ViewDefinition(cfg, "", "app", "v_demo"),
+	} {
+		if strings.Contains(probe, "sys_") {
+			t.Fatalf("pg catalog SQL leaked sys_ relation: %q", probe)
+		}
+	}
+}
+
+func TestAdaptSchemaSQLUsesProbeResult(t *testing.T) {
+	oldProbe := catalogProbe
+	t.Cleanup(func() { catalogProbe = oldProbe })
+
+	cfg, err := ConfigFromWire(map[string]any{
+		"host":     "127.0.0.1",
+		"username": "system",
+		"database": "TEST",
+	})
+	if err != nil {
+		t.Fatalf("ConfigFromWire returned error: %v", err)
+	}
+
+	catalogProbe = func(ctx context.Context, db *sql.DB) string { return catalogPGPrefix }
+	adapted, err := adaptSchemaSQL(context.Background(), nil, schemaSQLForNames(sysCatalogNames()))
+	if err != nil {
+		t.Fatalf("adaptSchemaSQL returned error: %v", err)
+	}
+	if got := adapted.Databases(cfg); !strings.Contains(got, "pg_database") {
+		t.Fatalf("adaptSchemaSQL did not switch to pg catalogs, got %q", got)
+	}
+
+	catalogProbe = func(ctx context.Context, db *sql.DB) string { return catalogSysPrefix }
+	adapted, err = adaptSchemaSQL(context.Background(), nil, schemaSQLForNames(sysCatalogNames()))
+	if err != nil {
+		t.Fatalf("adaptSchemaSQL returned error: %v", err)
+	}
+	if got := adapted.Databases(cfg); !strings.Contains(got, "sys_database") {
+		t.Fatalf("adaptSchemaSQL should keep sys catalogs, got %q", got)
 	}
 }
