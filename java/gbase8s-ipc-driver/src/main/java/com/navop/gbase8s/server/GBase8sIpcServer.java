@@ -1168,6 +1168,10 @@ public final class GBase8sIpcServer {
         sql.append(qualifiedIdentifier("", schema, table)).append(" (").append(join(defs, ", ")).append(")");
         List<String> statements = new ArrayList<String>();
         statements.add(sql.toString());
+        if (params.path("options").path("with_comments").asBoolean(true)) {
+            addCommentStatements(statements, qualifiedIdentifier("", schema, table),
+                    optionalText(spec, "comment", ""), spec.path("columns"));
+        }
         Map<String, Object> result = new LinkedHashMap<String, Object>();
         result.put("sql", sql.toString());
         result.put("statements", statements);
@@ -1188,6 +1192,14 @@ public final class GBase8sIpcServer {
         Map<String, JsonNode> fromColumns = columnsByName(fromSpec.path("columns"));
         Map<String, JsonNode> toColumns = columnsByName(toSpec.path("columns"));
         String tableName = qualifiedIdentifier("", schema, table);
+        String fromTableComment = optionalText(fromSpec, "comment", "");
+        String toTableComment = optionalText(toSpec, "comment", "");
+        if (!fromTableComment.equals(toTableComment)) {
+            statements.add(commentStatement(tableName, null, toTableComment));
+            if (withRollback) {
+                rollback.add(0, commentStatement(tableName, null, fromTableComment));
+            }
+        }
         for (JsonNode rename : params.path("column_renames")) {
             String oldName = rename.path("old_name").asText("");
             String newName = rename.path("new_name").asText("");
@@ -1216,11 +1228,56 @@ public final class GBase8sIpcServer {
                 }
             }
         }
+        for (JsonNode column : toSpec.path("columns")) {
+            String name = column.path("name").asText("");
+            JsonNode fromColumn = fromColumns.get(name);
+            if (name.isEmpty() || fromColumn == null) {
+                continue;
+            }
+            String fromComment = optionalText(fromColumn, "comment", "");
+            String toComment = optionalText(column, "comment", "");
+            if (!fromComment.equals(toComment)) {
+                statements.add(commentStatement(tableName, name, toComment));
+                if (withRollback) {
+                    rollback.add(0, commentStatement(tableName, name, fromComment));
+                }
+            }
+        }
         Map<String, Object> result = new LinkedHashMap<String, Object>();
         result.put("statements", statements);
         result.put("rollback_statements", rollback);
         result.put("warnings", warnings);
         return ok(id, result);
+    }
+
+    /**
+     * 追加 COMMENT ON TABLE / COMMENT ON COLUMN 语句（仅在注释非空时）。
+     */
+    private void addCommentStatements(List<String> statements, String tableName, String tableComment, JsonNode columns) {
+        if (tableComment != null && !tableComment.isEmpty()) {
+            statements.add(commentStatement(tableName, null, tableComment));
+        }
+        for (JsonNode column : columns) {
+            String name = column.path("name").asText("");
+            String comment = optionalText(column, "comment", "");
+            if (!name.isEmpty() && !comment.isEmpty()) {
+                statements.add(commentStatement(tableName, name, comment));
+            }
+        }
+    }
+
+    private static String commentStatement(String tableName, String column, String comment) {
+        String kind = "TABLE";
+        String target = tableName;
+        if (column != null && !column.isEmpty()) {
+            kind = "COLUMN";
+            target = tableName + "." + quote(column);
+        }
+        return "COMMENT ON " + kind + " " + target + " IS '" + sqlString(comment == null ? "" : comment) + "'";
+    }
+
+    private static String sqlString(String value) {
+        return value.replace("'", "''");
     }
 
     private String columnDefinition(JsonNode col) {
