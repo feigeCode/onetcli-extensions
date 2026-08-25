@@ -1217,6 +1217,10 @@ public final class GBase8sIpcServer {
                 if (withRollback) {
                     rollback.add(0, "ALTER TABLE " + tableName + " DROP " + quote(name));
                 }
+                String comment = optionalText(column, "comment", "");
+                if (!comment.isEmpty()) {
+                    statements.add(commentStatement(tableName, name, comment));
+                }
             }
         }
         if (allowDestructive) {

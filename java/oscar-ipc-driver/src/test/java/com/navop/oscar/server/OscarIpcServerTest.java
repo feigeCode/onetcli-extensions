@@ -298,6 +298,131 @@ public class OscarIpcServerTest {
     }
 
     @Test
+    public void ddlBuildCreateTableEmitsTableAndColumnComments() throws Exception {
+        OscarIpcServer server = newServer();
+        server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));
+
+        JsonNode create = server.handle(request(
+            2,
+            "ddl/build_create_table",
+            "{\"spec\":{\"schema\":\"testuser\",\"name\":\"commented_table\",\"comment\":\"用户表\",\"columns\":[{\"name\":\"id\",\"type\":\"INT\",\"nullable\":false,\"comment\":\"主键\"},{\"name\":\"name\",\"type\":\"VARCHAR(20)\",\"nullable\":true,\"comment\":\"it's a name\"},{\"name\":\"age\",\"type\":\"INT\",\"nullable\":true}]},\"options\":{}}"
+        ));
+        assertEquals(
+            "CREATE TABLE testuser.commented_table (id INT NOT NULL, name VARCHAR(20), age INT)",
+            create.get("result").get("sql").asText()
+        );
+        assertEquals(4, create.get("result").get("statements").size());
+        assertEquals(
+            "COMMENT ON TABLE testuser.commented_table IS '用户表'",
+            create.get("result").get("statements").get(1).asText()
+        );
+        assertEquals(
+            "COMMENT ON COLUMN testuser.commented_table.id IS '主键'",
+            create.get("result").get("statements").get(2).asText()
+        );
+        assertEquals(
+            "COMMENT ON COLUMN testuser.commented_table.name IS 'it''s a name'",
+            create.get("result").get("statements").get(3).asText()
+        );
+    }
+
+    @Test
+    public void ddlBuildCreateTableSkipsCommentsWhenDisabled() throws Exception {
+        OscarIpcServer server = newServer();
+        server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));
+
+        JsonNode create = server.handle(request(
+            2,
+            "ddl/build_create_table",
+            "{\"spec\":{\"schema\":\"testuser\",\"name\":\"commented_table\",\"comment\":\"用户表\",\"columns\":[{\"name\":\"id\",\"type\":\"INT\",\"comment\":\"主键\"}]},\"options\":{\"with_comments\":false}}"
+        ));
+        assertEquals(1, create.get("result").get("statements").size());
+        assertEquals(
+            "CREATE TABLE testuser.commented_table (id INT)",
+            create.get("result").get("statements").get(0).asText()
+        );
+    }
+
+    @Test
+    public void ddlBuildAlterTableEmitsCommentChanges() throws Exception {
+        OscarIpcServer server = newServer();
+        server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));
+
+        JsonNode alter = server.handle(request(
+            2,
+            "ddl/build_alter_table",
+            "{\"from_spec\":{\"schema\":\"testuser\",\"name\":\"probe_table\",\"comment\":\"old comment\",\"columns\":[{\"name\":\"id\",\"type\":\"INT\",\"nullable\":false,\"comment\":\"旧主键\"},{\"name\":\"name\",\"type\":\"VARCHAR(20)\",\"nullable\":true,\"comment\":\"unchanged\"}]},\"to_spec\":{\"schema\":\"testuser\",\"name\":\"probe_table\",\"comment\":\"new comment\",\"columns\":[{\"name\":\"id\",\"type\":\"INT\",\"nullable\":false,\"comment\":\"新主键\"},{\"name\":\"name\",\"type\":\"VARCHAR(20)\",\"nullable\":true,\"comment\":\"unchanged\"}]},\"column_renames\":[],\"options\":{\"with_rollback\":true}}"
+        ));
+        JsonNode statements = alter.get("result").get("statements");
+        assertEquals(2, statements.size());
+        assertEquals(
+            "COMMENT ON TABLE testuser.probe_table IS 'new comment'",
+            statements.get(0).asText()
+        );
+        assertEquals(
+            "COMMENT ON COLUMN testuser.probe_table.id IS '新主键'",
+            statements.get(1).asText()
+        );
+        JsonNode rollback = alter.get("result").get("rollback_statements");
+        assertEquals(2, rollback.size());
+        assertEquals(
+            "COMMENT ON COLUMN testuser.probe_table.id IS '旧主键'",
+            rollback.get(0).asText()
+        );
+        assertEquals(
+            "COMMENT ON TABLE testuser.probe_table IS 'old comment'",
+            rollback.get(1).asText()
+        );
+    }
+
+    @Test
+    public void ddlBuildAlterTableEmitsCommentClearAndSkipsUnchanged() throws Exception {
+        OscarIpcServer server = newServer();
+        server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));
+
+        JsonNode alter = server.handle(request(
+            2,
+            "ddl/build_alter_table",
+            "{\"from_spec\":{\"schema\":\"testuser\",\"name\":\"probe_table\",\"comment\":\"remove me\",\"columns\":[{\"name\":\"id\",\"type\":\"INT\",\"comment\":\"keep\"}]},\"to_spec\":{\"schema\":\"testuser\",\"name\":\"probe_table\",\"comment\":\"\",\"columns\":[{\"name\":\"id\",\"type\":\"INT\",\"comment\":\"keep\"}]},\"column_renames\":[],\"options\":{}}"
+        ));
+        JsonNode statements = alter.get("result").get("statements");
+        assertEquals(1, statements.size());
+        assertEquals(
+            "COMMENT ON TABLE testuser.probe_table IS ''",
+            statements.get(0).asText()
+        );
+        assertFalse(alter.get("result").get("rollback_statements").has(0));
+    }
+
+    @Test
+    public void ddlBuildAlterTableEmitsCommentForNewlyAddedColumn() throws Exception {
+        OscarIpcServer server = newServer();
+        server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));
+
+        JsonNode alter = server.handle(request(
+            2,
+            "ddl/build_alter_table",
+            "{\"from_spec\":{\"schema\":\"testuser\",\"name\":\"probe_table\",\"columns\":[{\"name\":\"id\",\"type\":\"INT\"}]},\"to_spec\":{\"schema\":\"testuser\",\"name\":\"probe_table\",\"columns\":[{\"name\":\"id\",\"type\":\"INT\"},{\"name\":\"new_col\",\"type\":\"VARCHAR(20)\",\"comment\":\"新列注释\"}]},\"column_renames\":[],\"options\":{\"with_rollback\":true}}"
+        ));
+        JsonNode statements = alter.get("result").get("statements");
+        assertEquals(2, statements.size());
+        assertEquals(
+            "ALTER TABLE testuser.probe_table ADD new_col VARCHAR(20)",
+            statements.get(0).asText()
+        );
+        assertEquals(
+            "COMMENT ON COLUMN testuser.probe_table.new_col IS '新列注释'",
+            statements.get(1).asText()
+        );
+        JsonNode rollback = alter.get("result").get("rollback_statements");
+        assertEquals(1, rollback.size());
+        assertEquals(
+            "ALTER TABLE testuser.probe_table DROP new_col",
+            rollback.get(0).asText()
+        );
+    }
+
+    @Test
     public void schemaDatabasesUsesConnectionConfigWithoutCatalogSql() throws Exception {
         OscarIpcServer server = new OscarIpcServer(new JdbcConnectionFactory() {
             @Override

@@ -367,6 +367,34 @@ public class GBase8sIpcServerTest {
     }
 
     @Test
+    public void ddlBuildAlterTableEmitsCommentForNewlyAddedColumn() throws Exception {
+        GBase8sIpcServer server = newServer();
+        server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));
+
+        JsonNode alter = server.handle(request(
+            2,
+            "ddl/build_alter_table",
+            "{\"from_spec\":{\"schema\":\"testuser\",\"name\":\"probe_table\",\"columns\":[{\"name\":\"id\",\"type\":\"INT\"}]},\"to_spec\":{\"schema\":\"testuser\",\"name\":\"probe_table\",\"columns\":[{\"name\":\"id\",\"type\":\"INT\"},{\"name\":\"new_col\",\"type\":\"VARCHAR(20)\",\"comment\":\"新列注释\"}]},\"column_renames\":[],\"options\":{\"with_rollback\":true}}"
+        ));
+        JsonNode statements = alter.get("result").get("statements");
+        assertEquals(2, statements.size());
+        assertEquals(
+            "ALTER TABLE testuser.probe_table ADD new_col VARCHAR(20)",
+            statements.get(0).asText()
+        );
+        assertEquals(
+            "COMMENT ON COLUMN testuser.probe_table.new_col IS '新列注释'",
+            statements.get(1).asText()
+        );
+        JsonNode rollback = alter.get("result").get("rollback_statements");
+        assertEquals(1, rollback.size());
+        assertEquals(
+            "ALTER TABLE testuser.probe_table DROP new_col",
+            rollback.get(0).asText()
+        );
+    }
+
+    @Test
     public void schemaDatabasesUsesStatementForCrossDatabaseCatalogSql() throws Exception {
         GBase8sIpcServer server = new GBase8sIpcServer(new JdbcConnectionFactory() {
             @Override
