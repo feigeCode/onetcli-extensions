@@ -72,9 +72,12 @@ jobs:
 
           # Verify the repository is reachable before doing any work, so
           # connectivity problems fail with a clear message instead of a
-          # cryptic git error further down.
-          if ! git ls-remote --tags cnb >/dev/null 2>&1; then
+          # cryptic git error further down. Capture git's own stderr so an
+          # auth problem (CNB reports "仓库不存在" for an invalid token)
+          # isn't swallowed by the redirect.
+          if ! ls_out="$(git ls-remote --tags cnb 2>&1)"; then
             echo "::error::git authentication against cnb.cool failed. Verify the CNB_TOKEN secret and that ${CNB_REPOSITORY} exists on CNB."
+            echo "${ls_out}" >&2
             exit 1
           fi
 
