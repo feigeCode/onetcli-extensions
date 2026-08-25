@@ -47,7 +47,7 @@ public class GBase8sIpcServerTest {
         GBase8sIpcServer server = newServer();
 
         JsonNode init = server.handle(request(1, "init", "{\"host_version\":\"1.0.0\",\"api_offered\":{\"database\":\"1.0\"},\"instance_id\":\"test\",\"config\":{}}"));
-        assertEquals("0.1.16", init.get("result").get("extension_version").asText());
+        assertEquals("0.1.17", init.get("result").get("extension_version").asText());
         assertEquals("gbase8s", init.get("result").get("drivers_ready").get(0).asText());
         assertTrue(init.get("result").get("methods").toString().contains("schema/object_view"));
         assertFalse(init.get("result").get("methods").toString().contains("gbase8s/table_data"));
@@ -144,6 +144,7 @@ public class GBase8sIpcServerTest {
         assertEquals("gbasedbt", objects.get("result").get(0).get("schema").asText());
         assertEquals("sample", objects.get("result").get(0).get("name").asText());
         assertEquals("table", objects.get("result").get(0).get("kind").asText());
+        assertEquals("Sample table comment", objects.get("result").get(0).get("comment").asText());
 
         JsonNode views = server.handle(request(5, "schema/views", "{\"conn_id\":" + connId + ",\"database\":\"stores\",\"schema\":\"gbasedbt\"}"));
         assertEquals("stores", views.get("result").get(0).get("database").asText());
@@ -151,6 +152,7 @@ public class GBase8sIpcServerTest {
         assertEquals("v_sample", views.get("result").get(0).get("name").asText());
         assertEquals("view", views.get("result").get(0).get("kind").asText());
         assertEquals("", views.get("result").get(0).get("definition_sql").asText());
+        assertEquals("Sample view comment", views.get("result").get(0).get("comment").asText());
 
         JsonNode columns = server.handle(request(6, "schema/columns", "{\"conn_id\":" + connId + ",\"database\":\"stores\",\"schema\":\"gbasedbt\",\"table\":\"sample\"}"));
         assertEquals(1, columns.get("result").get(0).get("ordinal").asInt());
@@ -158,7 +160,9 @@ public class GBase8sIpcServerTest {
         assertEquals(true, columns.get("result").get(0).get("is_primary").asBoolean());
         assertEquals(false, columns.get("result").get(0).get("nullable").asBoolean());
         assertTrue(columns.get("result").get(0).get("default").isNull());
+        assertEquals("", columns.get("result").get(0).get("comment").asText());
         assertEquals("abc", columns.get("result").get(1).get("default").asText());
+        assertEquals("Sample column comment", columns.get("result").get(1).get("comment").asText());
 
         JsonNode indexes = server.handle(request(7, "schema/indexes", "{\"conn_id\":" + connId + ",\"database\":\"stores\",\"schema\":\"gbasedbt\",\"table\":\"sample\"}"));
         assertEquals("pk_sample", indexes.get("result").get(0).get("name").asText());
@@ -205,11 +209,13 @@ public class GBase8sIpcServerTest {
         assertEquals("INTEGER", columnView.get("result").get("rows").get(0).get(1).asText());
         assertEquals("", columnView.get("result").get("rows").get(0).get(3).asText());
         assertEquals("abc", columnView.get("result").get("rows").get(1).get(3).asText());
+        assertEquals("Sample column comment", columnView.get("result").get("rows").get(1).get(4).asText());
 
         JsonNode tableView = server.handle(request(13, "schema/object_view", "{\"conn_id\":" + connId + ",\"view\":\"tables\",\"database\":\"stores\",\"schema\":\"gbasedbt\"}"));
         assertEquals("Tables", tableView.get("result").get("title").asText());
         assertEquals("name", tableView.get("result").get("columns").get(0).get("key").asText());
         assertEquals(220, tableView.get("result").get("columns").get(0).get("width_px").asInt());
+        assertEquals("Sample table comment", tableView.get("result").get("rows").get(0).get(2).asText());
 
         JsonNode indexView = server.handle(request(14, "schema/object_view", "{\"conn_id\":" + connId + ",\"view\":\"indexes\",\"database\":\"stores\",\"schema\":\"gbasedbt\",\"table\":\"sample\"}"));
         assertEquals("Indexes", indexView.get("result").get("title").asText());
@@ -312,6 +318,11 @@ public class GBase8sIpcServerTest {
                 statement.execute("INSERT INTO syscolumns VALUES (100, 2, 'name', 13)");
                 statement.execute("CREATE TABLE sysdefaults (tabid INT, colno INT, type CHAR(1), default VARCHAR(255), class CHAR(1))");
                 statement.execute("INSERT INTO sysdefaults VALUES (100, 2, 'L', 'AAAAAw abc', 'T')");
+                statement.execute("CREATE TABLE syscomms (tabid INT, comments VARCHAR(255))");
+                statement.execute("INSERT INTO syscomms VALUES (100, 'Sample table comment')");
+                statement.execute("INSERT INTO syscomms VALUES (101, 'Sample view comment')");
+                statement.execute("CREATE TABLE syscolcomms (tabid INT, colno INT, comments VARCHAR(255))");
+                statement.execute("INSERT INTO syscolcomms VALUES (100, 2, 'Sample column comment')");
                 statement.execute("CREATE TABLE sysconstraints (constrid INT, constrname VARCHAR(64), owner VARCHAR(64), tabid INT, constrtype CHAR(1), idxname VARCHAR(64), collation VARCHAR(64))");
                 statement.execute("INSERT INTO sysconstraints VALUES (10, 'pk_parent_sample', 'gbasedbt', 99, 'P', 'pk_parent_sample', '')");
                 statement.execute("INSERT INTO sysconstraints VALUES (1, 'pk_sample', 'gbasedbt', 100, 'P', 'pk_sample', '')");

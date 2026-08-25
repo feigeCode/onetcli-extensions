@@ -245,7 +245,7 @@ public final class GBase8sIpcServer {
         for (String method : methodNames) {
             methods.add(method);
         }
-        result.put("extension_version", "0.1.16");
+        result.put("extension_version", "0.1.17");
         result.put("api_used", api);
         result.put("features", features);
         result.put("drivers_ready", drivers);
@@ -429,7 +429,7 @@ public final class GBase8sIpcServer {
             column.put("max_length", null);
             column.put("precision", null);
             column.put("scale", null);
-            column.put("comment", "");
+            column.put("comment", rowString(row, 5));
             column.put("extra", new LinkedHashMap<String, Object>());
             result.add(column);
         }
@@ -548,8 +548,8 @@ public final class GBase8sIpcServer {
             view.put("schema", schema);
             view.put("name", rowString(row, 0));
             view.put("kind", rowString(row, 1));
-            view.put("definition_sql", rowString(row, 2));
-            view.put("comment", "");
+            view.put("definition_sql", "");
+            view.put("comment", rowString(row, 2));
             view.put("extra", new LinkedHashMap<String, Object>());
             result.add(view);
         }
@@ -631,7 +631,7 @@ public final class GBase8sIpcServer {
             QueryResult query = queryRunner.queryBuffered(state.connection, GBase8sSchemaSql.viewsSql(database, schema), null, null);
             List<List<String>> rows = new ArrayList<List<String>>();
             for (List<Map<String, Object>> row : query.getRows()) {
-                rows.add(rowValues(rowString(row, 0), rowString(row, 1), ""));
+                rows.add(rowValues(rowString(row, 0), rowString(row, 1), rowString(row, 2)));
             }
             return ok(id, objectView("Views", objectViewColumns("name", "Name", "kind", "Kind", "comment", "Comment"), rows));
         }
@@ -650,7 +650,7 @@ public final class GBase8sIpcServer {
                     gbase8sColumnType(rowString(row, 2)),
                     Boolean.toString(nullable(rowString(row, 3))),
                     emptyIfNull(gbase8sDefault(rowValue(row, 4))),
-                    ""
+                    rowString(row, 5)
                 ));
             }
             return ok(id, objectView("Columns", columnObjectViewColumns(), rows));

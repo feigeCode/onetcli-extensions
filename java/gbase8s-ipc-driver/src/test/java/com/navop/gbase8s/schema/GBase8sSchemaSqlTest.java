@@ -26,7 +26,7 @@ public class GBase8sSchemaSqlTest {
     @Test
     public void objectsSqlMapsTablesAndViews() {
         assertEquals(
-            "SELECT tabname, CASE tabtype WHEN 'T' THEN 'table' WHEN 'V' THEN 'view' ELSE 'table' END, '' FROM systables WHERE tabid >= 100 AND TRIM(owner) = 'gbasedbt' AND tabtype IN ('T', 'V') ORDER BY tabname",
+            "SELECT t.tabname, CASE t.tabtype WHEN 'T' THEN 'table' WHEN 'V' THEN 'view' ELSE 'table' END, COALESCE(c.comments, '') FROM systables t LEFT JOIN syscomms c ON c.tabid = t.tabid WHERE t.tabid >= 100 AND TRIM(t.owner) = 'gbasedbt' AND t.tabtype IN ('T', 'V') ORDER BY t.tabname",
             GBase8sSchemaSql.objectsSql("stores", "gbasedbt", Arrays.asList("table", "view"))
         );
     }
@@ -34,8 +34,16 @@ public class GBase8sSchemaSqlTest {
     @Test
     public void columnsSqlEscapesTableName() {
         assertEquals(
-            "SELECT c.colno, c.colname, c.coltype, CASE WHEN BITAND(c.coltype, 256) = 256 THEN 'NO' ELSE 'YES' END, d.default FROM syscolumns c JOIN systables t ON c.tabid = t.tabid LEFT JOIN sysdefaults d ON d.tabid = c.tabid AND d.colno = c.colno WHERE t.tabname = 'order''items' AND TRIM(t.owner) = 'gbasedbt' ORDER BY c.colno",
+            "SELECT c.colno, c.colname, c.coltype, CASE WHEN BITAND(c.coltype, 256) = 256 THEN 'NO' ELSE 'YES' END, d.default, COALESCE(cm.comments, '') FROM syscolumns c JOIN systables t ON c.tabid = t.tabid LEFT JOIN sysdefaults d ON d.tabid = c.tabid AND d.colno = c.colno LEFT JOIN syscolcomms cm ON cm.tabid = c.tabid AND cm.colno = c.colno WHERE t.tabname = 'order''items' AND TRIM(t.owner) = 'gbasedbt' ORDER BY c.colno",
             GBase8sSchemaSql.columnsSql("stores", "gbasedbt", "order'items")
+        );
+    }
+
+    @Test
+    public void viewsSqlIncludesTableComment() {
+        assertEquals(
+            "SELECT t.tabname, 'view', COALESCE(c.comments, '') FROM systables t LEFT JOIN syscomms c ON c.tabid = t.tabid WHERE t.tabid >= 100 AND t.tabtype = 'V' AND TRIM(t.owner) = 'gbasedbt' ORDER BY t.tabname",
+            GBase8sSchemaSql.viewsSql("stores", "gbasedbt")
         );
     }
 }

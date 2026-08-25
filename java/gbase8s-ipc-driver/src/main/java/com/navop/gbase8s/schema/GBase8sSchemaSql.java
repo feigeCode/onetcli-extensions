@@ -15,14 +15,21 @@ public final class GBase8sSchemaSql {
     }
 
     public static String objectsSql(String database, String schema, List<String> kinds) {
-        return "SELECT tabname, CASE tabtype WHEN 'T' THEN 'table' WHEN 'V' THEN 'view' ELSE 'table' END, '' FROM systables WHERE tabid >= 100"
-            + ownerFilter("", schema)
+        return "SELECT t.tabname, CASE t.tabtype WHEN 'T' THEN 'table' WHEN 'V' THEN 'view' ELSE 'table' END, COALESCE(c.comments, '') "
+            + "FROM systables t LEFT JOIN syscomms c ON c.tabid = t.tabid "
+            + "WHERE t.tabid >= 100"
+            + ownerFilter("t", schema)
             + kindFilter(kinds)
-            + " ORDER BY tabname";
+            + " ORDER BY t.tabname";
     }
 
     public static String columnsSql(String database, String schema, String table) {
-        return "SELECT c.colno, c.colname, c.coltype, CASE WHEN BITAND(c.coltype, 256) = 256 THEN 'NO' ELSE 'YES' END, d.default FROM syscolumns c JOIN systables t ON c.tabid = t.tabid LEFT JOIN sysdefaults d ON d.tabid = c.tabid AND d.colno = c.colno WHERE t.tabname = '" + escapeSql(table) + "'" + ownerFilter("t", schema) + " ORDER BY c.colno";
+        return "SELECT c.colno, c.colname, c.coltype, CASE WHEN BITAND(c.coltype, 256) = 256 THEN 'NO' ELSE 'YES' END, d.default, COALESCE(cm.comments, '') "
+            + "FROM syscolumns c "
+            + "JOIN systables t ON c.tabid = t.tabid "
+            + "LEFT JOIN sysdefaults d ON d.tabid = c.tabid AND d.colno = c.colno "
+            + "LEFT JOIN syscolcomms cm ON cm.tabid = c.tabid AND cm.colno = c.colno "
+            + "WHERE t.tabname = '" + escapeSql(table) + "'" + ownerFilter("t", schema) + " ORDER BY c.colno";
     }
 
     public static String primaryKeyColumnsSql(String database, String schema, String table) {
@@ -81,7 +88,9 @@ public final class GBase8sSchemaSql {
     }
 
     public static String viewsSql(String database, String schema) {
-        return "SELECT tabname, 'view', '' FROM systables WHERE tabid >= 100 AND tabtype = 'V'" + ownerFilter("", schema) + " ORDER BY tabname";
+        return "SELECT t.tabname, 'view', COALESCE(c.comments, '') "
+            + "FROM systables t LEFT JOIN syscomms c ON c.tabid = t.tabid "
+            + "WHERE t.tabid >= 100 AND t.tabtype = 'V'" + ownerFilter("t", schema) + " ORDER BY t.tabname";
     }
 
     private static String ownerFilter(String tableAlias, String schema) {
@@ -99,13 +108,13 @@ public final class GBase8sSchemaSql {
         boolean wantsTable = kinds.contains("table");
         boolean wantsView = kinds.contains("view");
         if (wantsTable && wantsView) {
-            return " AND tabtype IN ('T', 'V')";
+            return " AND t.tabtype IN ('T', 'V')";
         }
         if (wantsTable) {
-            return " AND tabtype = 'T'";
+            return " AND t.tabtype = 'T'";
         }
         if (wantsView) {
-            return " AND tabtype = 'V'";
+            return " AND t.tabtype = 'V'";
         }
         return "";
     }
