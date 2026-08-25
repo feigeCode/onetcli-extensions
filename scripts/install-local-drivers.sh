@@ -6,15 +6,15 @@ usage() {
 Usage: scripts/install-local-drivers.sh [extension-id]
 
 Build, package, verify, and install IPC database driver extensions into the
-local one-hub database driver directory. Passing an extension id installs only
+local navop database driver directory. Passing an extension id installs only
 that driver; omitting it installs every driver under extensions/ipc.
 
 Environment:
   NAVOP_DATABASE_DRIVER_DIR    Override install root. The legacy
                                ONETCLI_DATABASE_DRIVER_DIR is also supported.
                                Defaults to
-                               $XDG_CONFIG_HOME/one-hub/extensions/database_drivers
-                               or $HOME/.config/one-hub/extensions/database_drivers.
+                               $XDG_CONFIG_HOME/navop/extensions/database_drivers
+                               or $HOME/.config/navop/extensions/database_drivers.
 EOF
 }
 
@@ -34,7 +34,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ARTIFACT_DIR="${REPO_DIR}/target/local-extension-artifacts"
 CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME}/.config}"
-INSTALL_ROOT="${NAVOP_DATABASE_DRIVER_DIR:-${ONETCLI_DATABASE_DRIVER_DIR:-${CONFIG_HOME}/one-hub/extensions/database_drivers}}"
+INSTALL_ROOT="${NAVOP_DATABASE_DRIVER_DIR:-${ONETCLI_DATABASE_DRIVER_DIR:-${CONFIG_HOME}/navop/extensions/database_drivers}}"
 
 fail() {
   printf 'error: %s\n' "$*" >&2
