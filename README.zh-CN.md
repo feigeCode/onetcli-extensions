@@ -173,7 +173,7 @@ cargo fmt --all --check
 校验 GitHub Actions YAML：
 
 ```bash
-ruby -e 'require "yaml"; YAML.load_file(".github/workflows/ci.yml"); YAML.load_file(".github/workflows/release.yml"); YAML.load_file(".github/workflows/upload-r2.yml"); puts "workflow yaml ok"'
+ruby -e 'require "yaml"; YAML.load_file(".github/workflows/ci.yml"); YAML.load_file(".github/workflows/release.yml"); YAML.load_file(".github/workflows/upload-r2.yml"); YAML.load_file(".github/workflows/backfill-windows-x86.yml"); YAML.load_file(".github/workflows/sync-cnb-release-assets.yml"); YAML.load_file(".github/workflows/sync-cnb-latest.yml"); puts "workflow yaml ok"'
 ```
 
 ## 构建和打包
@@ -394,6 +394,27 @@ extensions/manifest.json
 版本化扩展包使用 immutable cache。插件级 manifest 和全局市场索引使用 `no-cache`
 上传。全局 manifest 是仓库维护的根目录 `manifest.json`，会原样上传到
 `extensions/manifest.json`。
+
+## CNB 同步
+
+`.github/workflows/sync-cnb-release-assets.yml` 会把 release 的 Git tag 和资产镜像到
+CNB 仓库 `navop-dev/navop-extensions`。Release workflow 会在每次新 release 时触发它，
+`.github/workflows/sync-cnb-latest.yml` 则会按每日计划（以及 `workflow_dispatch`）
+把每个扩展的最新稳定 release 同步到 CNB，方便 navop-website 通过 CNB 下载扩展：
+
+```text
+https://cnb.cool/navop-dev/navop-extensions/-/releases/download/<release-tag>/<asset>
+```
+
+最新版本 workflow 的执行流程：
+
+1. 运行 `scripts/discover-latest-extension-releases.mjs`，读取每个
+   `extension.build.json` 的 `releaseTagPrefix`，为每个扩展解析出最新的稳定
+   GitHub release，生成构建矩阵。
+2. 对每个扩展调用一次 `sync-cnb-release-assets.yml`，传入
+   `tag: <extension>-v<version>`，并使用 `secrets: inherit`。
+
+CNB 同步需要仓库 secret：`CNB_TOKEN`。
 
 ## 新增另一个 IPC 驱动
 

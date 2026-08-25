@@ -1,0 +1,47 @@
+name: Sync Latest Extension Releases to CNB
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extension-cnb-latest-sync
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    name: Discover latest extension releases
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+      has_releases: ${{ steps.discover.outputs.has_releases }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Discover latest release tags
+        id: discover
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          matrix="$(node scripts/discover-latest-extension-releases.mjs)"
+          echo "$matrix"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          has_releases="$(node -e 'const m = JSON.parse(process.argv[1]); process.stdout.write(m.include.length > 0 ? "true" : "false");' "$matrix")"
+          echo "has_releases=$has_releases" >> "$GITHUB_OUTPUT"
+
+  sync:
+    name: Sync ${{ matrix.tag }} to CNB
+    needs: discover
+    if: ${{ needs.discover.outputs.has_releases == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
+    uses: ./.github/workflows/sync-cnb-release-assets.yml
+    with:
+      tag: ${{ matrix.tag }}
+    secrets: inherit

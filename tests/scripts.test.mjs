@@ -36,6 +36,66 @@ test("CNB release synchronization pushes tags before syncing release assets", ()
   assert.ok(pushTags >= 0 && pushTags < syncAssets);
 });
 
+test("latest CNB sync workflow reuses the per-tag sync workflow per matrix entry", () => {
+  const workflow = fs.readFileSync(
+    path.join(repoRoot, ".github/workflows/sync-cnb-latest.yml"),
+    "utf8",
+  );
+  const syncWorkflow = fs.readFileSync(
+    path.join(repoRoot, ".github/workflows/sync-cnb-release-assets.yml"),
+    "utf8",
+  );
+
+  assert.match(workflow, /^name: Sync Latest Extension Releases to CNB/m);
+  assert.match(workflow, /\n  schedule:\n/);
+  assert.match(workflow, /\n  workflow_dispatch:\n/);
+  assert.match(workflow, /group: extension-cnb-latest-sync/);
+  assert.match(workflow, /cancel-in-progress: false/);
+  assert.match(workflow, /scripts\/discover-latest-extension-releases\.mjs/);
+  assert.match(workflow, /has_releases="\$\(node -e/);
+  assert.match(workflow, /fail-fast: false/);
+  assert.match(workflow, /uses: \.\/\.github\/workflows\/sync-cnb-release-assets\.yml/);
+  assert.match(workflow, /with:\n      tag: \$\{\{ matrix\.tag \}\}/);
+  assert.match(workflow, /secrets: inherit/);
+
+  assert.match(syncWorkflow, /\n  workflow_call:\n/);
+  assert.match(syncWorkflow, /workflow_call:\n    inputs:\n      tag:/);
+});
+
+test("discover-latest-extension-releases picks the latest stable release per extension", () => {
+  const script = path.join(repoRoot, "scripts/discover-latest-extension-releases.mjs");
+  const fixture = [
+    { tagName: "dm-v0.1.4", publishedAt: "2026-07-01T00:00:00Z", isDraft: false, isPrerelease: false },
+    { tagName: "dm-v0.1.5", publishedAt: "2026-08-02T11:51:47Z", isDraft: false, isPrerelease: false },
+    { tagName: "dm-v9.9.9", publishedAt: "2026-09-01T00:00:00Z", isDraft: true, isPrerelease: false },
+    { tagName: "rdp-v0.3.6", publishedAt: "2026-08-11T09:39:46Z", isDraft: false, isPrerelease: false },
+    { tagName: "rdp-v0.4.0-rc.1", publishedAt: "2026-08-30T00:00:00Z", isDraft: false, isPrerelease: true },
+    { tagName: "claude-acp-v0.1.0", publishedAt: "2026-07-05T09:02:17Z", isDraft: false, isPrerelease: false },
+    { tagName: "opencode-acp-v1.0.0-rc.1", publishedAt: "2026-07-09T05:27:10Z", isDraft: false, isPrerelease: true },
+  ];
+  const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "navop-discover-"));
+  try {
+    const fixturePath = path.join(workdir, "releases.json");
+    fs.writeFileSync(fixturePath, JSON.stringify(fixture));
+    const output = execFileSync("node", [script], {
+      encoding: "utf8",
+      env: { ...process.env, GH_RELEASES_JSON: fixturePath },
+    });
+    const matrix = JSON.parse(output);
+    const byId = new Map(matrix.include.map((item) => [item.id, item]));
+
+    assert.strictEqual(byId.get("dm").tag, "dm-v0.1.5");
+    assert.strictEqual(byId.get("dm").version, "0.1.5");
+    assert.strictEqual(byId.get("claude-acp").tag, "claude-acp-v0.1.0");
+    assert.strictEqual(byId.get("rdp").tag, "rdp-v0.3.6");
+    assert.strictEqual(byId.get("opencode-acp").tag, "opencode-acp-v1.0.0-rc.1");
+    assert.strictEqual(byId.get("opencode-acp").version, "1.0.0-rc.1");
+    assert.equal(byId.has("astro"), false);
+  } finally {
+    fs.rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("go ipc driver metadata excludes Java drivers", () => {
   const ids = fs
     .readdirSync(path.join(repoRoot, "extensions/ipc"))

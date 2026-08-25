@@ -1,6 +1,12 @@
 name: Sync CNB Release Assets
 
 on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag to sync, for example dm-v0.1.5"
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       tag:

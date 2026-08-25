@@ -21,7 +21,7 @@ jobs:
       - name: Test repository scripts
         run: node --test tests/scripts.test.mjs
       - name: Validate workflow YAML
-        run: ruby -e 'require "yaml"; YAML.load_file(".github/workflows/ci.yml"); YAML.load_file(".github/workflows/release.yml"); YAML.load_file(".github/workflows/upload-r2.yml"); YAML.load_file(".github/workflows/backfill-windows-x86.yml"); puts "workflow yaml ok"'
+        run: ruby -e 'require "yaml"; YAML.load_file(".github/workflows/ci.yml"); YAML.load_file(".github/workflows/release.yml"); YAML.load_file(".github/workflows/upload-r2.yml"); YAML.load_file(".github/workflows/backfill-windows-x86.yml"); YAML.load_file(".github/workflows/sync-cnb-release-assets.yml"); YAML.load_file(".github/workflows/sync-cnb-latest.yml"); puts "workflow yaml ok"'
 
   detect:
     name: Detect changed extensions

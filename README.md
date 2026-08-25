@@ -199,7 +199,7 @@ cargo fmt --all --check
 Validate GitHub Actions YAML:
 
 ```bash
-ruby -e 'require "yaml"; YAML.load_file(".github/workflows/ci.yml"); YAML.load_file(".github/workflows/release.yml"); YAML.load_file(".github/workflows/upload-r2.yml"); puts "workflow yaml ok"'
+ruby -e 'require "yaml"; YAML.load_file(".github/workflows/ci.yml"); YAML.load_file(".github/workflows/release.yml"); YAML.load_file(".github/workflows/upload-r2.yml"); YAML.load_file(".github/workflows/backfill-windows-x86.yml"); YAML.load_file(".github/workflows/sync-cnb-release-assets.yml"); YAML.load_file(".github/workflows/sync-cnb-latest.yml"); puts "workflow yaml ok"'
 ```
 
 ## Build And Package
@@ -440,6 +440,29 @@ Versioned packages are uploaded with immutable caching. Plugin manifests and the
 global marketplace index are uploaded with `no-cache`. The global manifest is
 the repository-maintained root `manifest.json`, uploaded unchanged to
 `extensions/manifest.json`.
+
+## CNB Sync
+
+`.github/workflows/sync-cnb-release-assets.yml` mirrors a release's Git tags and
+assets to the CNB mirror `navop-dev/navop-extensions`. The Release workflow
+dispatches it for every new release, and `.github/workflows/sync-cnb-latest.yml`
+reconciles the latest stable release of every extension on a daily schedule
+(plus `workflow_dispatch`) so the Navop website can serve extension downloads
+from CNB:
+
+```text
+https://cnb.cool/navop-dev/navop-extensions/-/releases/download/<release-tag>/<asset>
+```
+
+The latest-version workflow:
+
+1. Runs `scripts/discover-latest-extension-releases.mjs`, which reads every
+   `extension.build.json` `releaseTagPrefix` and resolves the newest stable
+   GitHub release per extension into a build matrix.
+2. Calls `sync-cnb-release-assets.yml` once per extension with
+   `tag: <extension>-v<version>` and `secrets: inherit`.
+
+CNB synchronization requires the `CNB_TOKEN` repository secret.
 
 ## Adding Another IPC Driver
 
