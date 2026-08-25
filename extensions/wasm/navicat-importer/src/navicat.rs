@@ -105,11 +105,6 @@ fn record_from_dict(path: &str, key_path: &str, dict: &Dictionary) -> Option<Imp
         .next()
         .filter(|value| !value.is_empty())
         .unwrap_or(path);
-    let id_seed = if key_path.is_empty() {
-        path.to_string()
-    } else {
-        format!("{path}:{fallback_name}")
-    };
     let name = text_field(
         dict,
         &[
@@ -126,7 +121,7 @@ fn record_from_dict(path: &str, key_path: &str, dict: &Dictionary) -> Option<Imp
     .unwrap_or_else(|| fallback_name.to_string());
 
     Some(ImportRecord {
-        id: format!("navicat:{}", slug(&id_seed)),
+        id: record_id(&source_id),
         importer_id: "navicat".to_string(),
         source_label: "Navicat".to_string(),
         source_id: Some(source_id),
@@ -163,6 +158,7 @@ fn records_from_ncx(path: &str, text: &str) -> Vec<ImportRecord> {
     let mut reader = Reader::from_str(text);
     reader.config_mut().trim_text(true);
     let mut records = Vec::new();
+    let mut name_occurrences = BTreeMap::<String, usize>::new();
 
     loop {
         match reader.read_event() {
@@ -180,7 +176,15 @@ fn records_from_ncx(path: &str, text: &str) -> Vec<ImportRecord> {
                 }
                 let connection_name = text_field(&dict, &["ConnectionName"])
                     .unwrap_or_else(|| "connection".to_string());
-                let key_path = format!("Connections/{connection_name}");
+                let occurrence = name_occurrences
+                    .entry(connection_name.clone())
+                    .and_modify(|count| *count += 1)
+                    .or_insert(1);
+                let key_path = if *occurrence == 1 {
+                    format!("Connections/{connection_name}")
+                } else {
+                    format!("Connections/{connection_name}#{occurrence}")
+                };
                 if let Some(record) = record_from_dict(path, &key_path, &dict) {
                     records.push(record);
                 }
@@ -339,6 +343,23 @@ fn slug(value: &str) -> String {
     }
 }
 
+fn record_id(source_id: &str) -> String {
+    format!(
+        "navicat:{}:{:016x}",
+        slug(source_id),
+        stable_hash(source_id)
+    )
+}
+
+fn stable_hash(value: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,7 +396,10 @@ mod tests {
 
         assert_eq!(1, records.len());
         let record = &records[0];
-        assert_eq!("navicat:com-prect-navicatpremium-mysql-prod", record.id);
+        assert_eq!(
+            record_id("com.prect.NavicatPremium.plist:Servers/mysql-prod"),
+            record.id
+        );
         assert_eq!("navicat", record.importer_id);
         assert_eq!("Navicat", record.source_label);
         assert_eq!(
@@ -430,7 +454,10 @@ mod tests {
 
         assert_eq!(1, records.len());
         let record = &records[0];
-        assert_eq!("navicat:conn-prod-lite", record.id);
+        assert_eq!(
+            record_id("conn.plist:Connections/MySQL/prod-lite"),
+            record.id
+        );
         assert_eq!("navicat", record.importer_id);
         assert_eq!("Navicat", record.source_label);
         assert_eq!(
@@ -451,6 +478,103 @@ mod tests {
     }
 
     #[test]
+    fn uses_full_key_path_to_distinguish_same_named_connections() {
+        let plist = br#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Connections</key>
+  <dict>
+    <key>MySQL</key>
+    <dict>
+      <key>shared</key>
+      <dict>
+        <key>host</key><string>mysql.example.test</string>
+        <key>serviceprovider</key><string>Default</string>
+      </dict>
+    </dict>
+    <key>PostgreSQL</key>
+    <dict>
+      <key>shared</key>
+      <dict>
+        <key>host</key><string>postgres.example.test</string>
+        <key>serviceprovider</key><string>Default</string>
+      </dict>
+    </dict>
+  </dict>
+</dict>
+</plist>"#;
+
+        let records =
+            preview_records_from_plists(vec![("conn.plist".to_string(), plist.as_slice())], true);
+
+        assert_eq!(2, records.len());
+        assert_ne!(records[0].id, records[1].id);
+        assert_eq!(
+            Some("conn.plist:Connections/MySQL/shared"),
+            records[0].source_id.as_deref()
+        );
+        assert_eq!(
+            Some("conn.plist:Connections/PostgreSQL/shared"),
+            records[1].source_id.as_deref()
+        );
+    }
+
+    #[test]
+    fn slug_collisions_and_unicode_paths_keep_distinct_stable_ids() {
+        let connection = br#"<?xml version="1.0" encoding="UTF-8"?>
+<Connections Ver="1.5">
+  <Connection ConnectionName="Prod" ConnType="MYSQL" Host="db.example.test"/>
+</Connections>"#;
+        let sources = vec![
+            ("A-B.ncx".to_string(), connection.as_slice()),
+            ("A_B.ncx".to_string(), connection.as_slice()),
+            ("生产.ncx".to_string(), connection.as_slice()),
+            ("测试.ncx".to_string(), connection.as_slice()),
+        ];
+
+        let first = preview_records_from_plists(sources.clone(), true);
+        let second = preview_records_from_plists(sources, true);
+
+        assert_eq!(4, first.len());
+        assert_eq!(
+            4,
+            first
+                .iter()
+                .map(|record| &record.id)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+        );
+        assert_eq!(
+            first.iter().map(|record| &record.id).collect::<Vec<_>>(),
+            second.iter().map(|record| &record.id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn duplicate_ncx_names_get_distinct_source_ids() {
+        let ncx = br#"<?xml version="1.0" encoding="UTF-8"?>
+<Connections Ver="1.5">
+  <Connection ConnectionName="Prod" ConnType="MYSQL" Host="first.example.test"/>
+  <Connection ConnectionName="Prod" ConnType="MYSQL" Host="second.example.test"/>
+</Connections>"#;
+
+        let records =
+            preview_records_from_plists(vec![("connection.ncx".to_string(), ncx.as_slice())], true);
+
+        assert_eq!(2, records.len());
+        assert_ne!(records[0].id, records[1].id);
+        assert_eq!(
+            Some("connection.ncx:Connections/Prod"),
+            records[0].source_id.as_deref()
+        );
+        assert_eq!(
+            Some("connection.ncx:Connections/Prod#2"),
+            records[1].source_id.as_deref()
+        );
+    }
+
+    #[test]
     fn parses_navicat_connection_ncx_export() {
         let ncx = br#"<?xml version="1.0" encoding="UTF-8"?>
 <Connections Ver="1.5">
@@ -464,7 +588,7 @@ mod tests {
         assert_eq!(2, records.len());
 
         let mysql = &records[0];
-        assert_eq!("navicat:connection-prod-mysql", mysql.id);
+        assert_eq!(record_id("connection.ncx:Connections/Prod MySQL"), mysql.id);
         assert_eq!(
             Some("connection.ncx:Connections/Prod MySQL"),
             mysql.source_id.as_deref()
