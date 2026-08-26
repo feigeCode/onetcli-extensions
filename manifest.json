@@ -266,8 +266,8 @@
       "id": "gbase8s",
       "kind": "database_driver",
       "name": "GBase 8s",
-      "version": "0.1.19",
-      "release_tag": "gbase8s-v0.1.19",
+      "version": "0.1.20",
+      "release_tag": "gbase8s-v0.1.20",
       "description": "使用 Java 开发的南大通用 GBase 8s 数据库 IPC 驱动，支持连接测试、SQL 执行、事务处理、对象浏览及数据传输。 Java-based IPC driver for GBase 8s with connection testing, SQL execution, transactions, object browsing, and data transfer.",
       "file_extensions": [],
       "manifest": "gbase8s/manifest.json"
