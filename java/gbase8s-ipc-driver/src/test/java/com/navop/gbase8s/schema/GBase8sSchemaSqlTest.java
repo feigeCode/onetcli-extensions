@@ -46,4 +46,12 @@ public class GBase8sSchemaSqlTest {
             GBase8sSchemaSql.viewsSql("stores", "gbasedbt")
         );
     }
+
+    @Test
+    public void dumpDdlSqlCallsGetDdlWithEscapedOwnerAndTable() {
+        assertEquals(
+            "EXECUTE PROCEDURE get_ddl('table', 'gbasedbt', 'order''items', 0)",
+            GBase8sSchemaSql.dumpDdlSql("gbasedbt", "order'items")
+        );
+    }
 }

@@ -50,6 +50,7 @@ public class GBase8sIpcServerTest {
         assertEquals("0.1.20", init.get("result").get("extension_version").asText());
         assertEquals("gbase8s", init.get("result").get("drivers_ready").get(0).asText());
         assertTrue(init.get("result").get("methods").toString().contains("schema/object_view"));
+        assertTrue(init.get("result").get("methods").toString().contains("schema/dump_ddl"));
         assertFalse(init.get("result").get("methods").toString().contains("gbase8s/table_data"));
 
         JsonNode unknown = server.handle(request(2, "sql/format", "{\"sql\":\"select 1\"}"));
@@ -238,6 +239,21 @@ public class GBase8sIpcServerTest {
         JsonNode procedureView = server.handle(request(16, "schema/object_view", "{\"conn_id\":" + connId + ",\"view\":\"procedures\",\"database\":\"stores\",\"schema\":\"gbasedbt\"}"));
         assertEquals("Procedures", procedureView.get("result").get("title").asText());
         assertEquals("demo_touch_proc", procedureView.get("result").get("rows").get(0).get(0).asText());
+    }
+
+    @Test
+    public void schemaDumpDdlReportsErrorWhenGetDdlSplIsUnavailable() throws Exception {
+        GBase8sIpcServer server = newServer();
+        server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));
+        JsonNode open = server.handle(request(2, "conn/open", "{\"driver_id\":\"gbase8s\",\"config\":" + configJson() + "}"));
+        long connId = open.get("result").get("conn_id").asLong();
+
+        JsonNode dump = server.handle(request(3, "schema/dump_ddl", "{\"conn_id\":" + connId + ",\"database\":\"stores\",\"schema\":\"gbasedbt\",\"table\":\"sample\",\"options\":{}}"));
+
+        assertTrue(dump.toString(), dump.has("error"));
+        assertTrue(dump.toString(), !dump.has("result"));
+        assertEquals(ProtocolError.SQL_SYNTAX, dump.get("error").get("code").asInt());
+        assertTrue(dump.get("error").get("data").get("vendor_code").asInt() != 0);
     }
 
     @Test

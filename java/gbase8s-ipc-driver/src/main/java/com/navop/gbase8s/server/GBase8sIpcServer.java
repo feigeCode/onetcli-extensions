@@ -209,9 +209,7 @@ public final class GBase8sIpcServer {
             return ok(id, result);
         }
         if ("schema/dump_ddl".equals(method)) {
-            Map<String, Object> result = new LinkedHashMap<String, Object>();
-            result.put("statements", new ArrayList<String>());
-            return ok(id, result);
+            return handleSchemaDumpDdl(id, params);
         }
         return error(id, ProtocolError.METHOD_NOT_FOUND, "method `" + method + "` is not implemented");
     }
@@ -437,6 +435,34 @@ public final class GBase8sIpcServer {
             column.put("extra", new LinkedHashMap<String, Object>());
             result.add(column);
         }
+        return ok(id, result);
+    }
+
+    private JsonNode handleSchemaDumpDdl(JsonNode id, JsonNode params) throws SQLException {
+        ConnectionState state = requireConnection(id, requiredLong(params, "conn_id"));
+        if (state == null) {
+            return lastError;
+        }
+        String owner = optionalText(params, "schema", "");
+        if (owner.trim().isEmpty()) {
+            owner = state.config.getUsername();
+        }
+        String table = requiredText(params, "table");
+        QueryResult query = queryRunner.queryBuffered(
+            state.connection,
+            GBase8sSchemaSql.dumpDdlSql(owner, table),
+            null,
+            null
+        );
+        List<String> statements = new ArrayList<String>();
+        for (List<Map<String, Object>> row : query.getRows()) {
+            String ddl = rowString(row, 0);
+            if (!ddl.isEmpty()) {
+                statements.add(ddl);
+            }
+        }
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("statements", statements);
         return ok(id, result);
     }
 

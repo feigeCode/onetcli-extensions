@@ -94,6 +94,17 @@ public final class GBase8sSchemaSql {
             + "WHERE t.tabid >= 100 AND t.tabtype = 'V'" + ownerFilter("t", schema) + " ORDER BY t.tabname";
     }
 
+    /**
+     * Invokes the official GBase 8s <code>get_ddl</code> SPL recipe to dump a
+     * table's full structure. The SPL returns a single lvarchar(32000) blob
+     * containing CREATE TABLE, index, PRIMARY KEY and COMMENT statements, so the
+     * caller must treat the whole value as one atomic script rather than split it.
+     * {@code p_del}=0 emits unquoted identifiers, matching this driver's dialect.
+     */
+    public static String dumpDdlSql(String owner, String table) {
+        return "EXECUTE PROCEDURE get_ddl('table', '" + escapeSql(owner) + "', '" + escapeSql(table) + "', 0)";
+    }
+
     private static String ownerFilter(String tableAlias, String schema) {
         if (schema == null || schema.trim().length() == 0) {
             return "";
