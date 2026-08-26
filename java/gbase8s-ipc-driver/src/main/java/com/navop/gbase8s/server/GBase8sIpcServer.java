@@ -414,21 +414,25 @@ public final class GBase8sIpcServer {
         );
         List<Map<String, Object>> result = new ArrayList<Map<String, Object>>();
         for (List<Map<String, Object>> row : query.getRows()) {
-            String rawType = gbase8sColumnType(rowString(row, 2));
+            String coltype = rowString(row, 2);
+            String collength = rowString(row, 6);
+            String name = rowString(row, 1);
+            String rawType = gbase8sFullColumnType(coltype, collength, rowString(row, 7));
+            Integer[] metrics = gbase8sColumnMetrics(coltype, collength);
             Map<String, Object> column = new LinkedHashMap<String, Object>();
             column.put("ordinal", Integer.valueOf(rowInt(row, 0)));
-            column.put("name", rowString(row, 1));
+            column.put("name", name);
             column.put("type", rawType);
             column.put("raw_type", rawType);
             column.put("nullable", Boolean.valueOf(nullable(rowString(row, 3))));
             column.put("default", gbase8sDefault(rowValue(row, 4)));
-            column.put("is_primary", Boolean.valueOf(primaryColumns.contains(rowString(row, 1))));
+            column.put("is_primary", Boolean.valueOf(primaryColumns.contains(name)));
             column.put("is_unique", Boolean.FALSE);
             column.put("is_partition_key", Boolean.FALSE);
             column.put("is_clustering_key", Boolean.FALSE);
-            column.put("max_length", null);
-            column.put("precision", null);
-            column.put("scale", null);
+            column.put("max_length", metrics[0]);
+            column.put("precision", metrics[1]);
+            column.put("scale", metrics[2]);
             column.put("comment", rowString(row, 5));
             column.put("extra", new LinkedHashMap<String, Object>());
             result.add(column);
@@ -1837,8 +1841,91 @@ public final class GBase8sIpcServer {
                 return "BOOLEAN";
             case 40:
                 return "LVARCHAR";
+            case 41:
+                return "BOOLEAN";
+            case 43:
+            case 52:
+                return "BIGINT";
+            case 44:
+            case 53:
+                return "BIGSERIAL";
             default:
                 return value == null ? "" : value;
+        }
+    }
+
+    /**
+     * Builds the full column type, preferring the server-provided syscolumnsext
+     * name (which includes DATETIME/INTERVAL qualifiers and CHAR/VARCHAR sizes).
+     * DECIMAL/MONEY precision and scale are decoded from collength when the
+     * server name is the bare type word, matching the official get_ddl tool.
+     */
+    private String gbase8sFullColumnType(String coltype, String collength, String coltypename2) {
+        String typeName = coltypename2 == null || coltypename2.trim().isEmpty()
+            ? gbase8sColumnType(coltype)
+            : coltypename2.trim();
+        if ("DECIMAL".equalsIgnoreCase(typeName) || "MONEY".equalsIgnoreCase(typeName)) {
+            int precision;
+            int scale;
+            try {
+                int length = Integer.parseInt(collength == null ? "" : collength.trim());
+                precision = length / 256;
+                scale = length % 256;
+            } catch (NumberFormatException error) {
+                return typeName;
+            }
+            return scale == 255
+                ? typeName + "(" + precision + ")"
+                : typeName + "(" + precision + "," + scale + ")";
+        }
+        return typeName;
+    }
+
+    /**
+     * Derives max_length / precision / scale from the raw coltype and collength.
+     * Character sizes come straight from collength; DECIMAL/MONEY encode
+     * precision in the high byte and scale in the low byte.
+     */
+    private Integer[] gbase8sColumnMetrics(String coltype, String collength) {
+        int code;
+        try {
+            code = Integer.parseInt(coltype == null ? "" : coltype.trim());
+        } catch (NumberFormatException error) {
+            return new Integer[] { null, null, null };
+        }
+        int length;
+        try {
+            length = Integer.parseInt(collength == null ? "" : collength.trim());
+        } catch (NumberFormatException error) {
+            return new Integer[] { null, null, null };
+        }
+        switch (code & 255) {
+            case 0:   // CHAR
+            case 13:  // VARCHAR
+            case 15:  // NCHAR
+            case 16:  // NVARCHAR
+            case 40:  // LVARCHAR
+                return new Integer[] { Integer.valueOf(length), null, null };
+            case 5:   // DECIMAL
+            case 8:   // MONEY
+            {
+                int precision = length / 256;
+                int scale = length % 256;
+                return new Integer[] {
+                    Integer.valueOf(precision),
+                    Integer.valueOf(precision),
+                    scale == 255 ? null : Integer.valueOf(scale)
+                };
+            }
+            case 10:  // DATETIME
+            case 14:  // INTERVAL
+                return new Integer[] {
+                    Integer.valueOf(((length >> 8 & 0xFF) + (length & 0xFF & 1) + 3) / 2),
+                    null,
+                    null
+                };
+            default:
+                return new Integer[] { null, null, null };
         }
     }
 

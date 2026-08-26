@@ -24,11 +24,12 @@ public final class GBase8sSchemaSql {
     }
 
     public static String columnsSql(String database, String schema, String table) {
-        return "SELECT c.colno, c.colname, c.coltype, CASE WHEN BITAND(c.coltype, 256) = 256 THEN 'NO' ELSE 'YES' END, d.default, COALESCE(cm.comments, '') "
+        return "SELECT c.colno, c.colname, c.coltype, CASE WHEN BITAND(c.coltype, 256) = 256 THEN 'NO' ELSE 'YES' END, d.default, COALESCE(cm.comments, ''), c.collength, CAST(ce.coltypename2 AS VARCHAR(128)) "
             + "FROM syscolumns c "
             + "JOIN systables t ON c.tabid = t.tabid "
             + "LEFT JOIN sysdefaults d ON d.tabid = c.tabid AND d.colno = c.colno "
             + "LEFT JOIN syscolcomms cm ON cm.tabid = c.tabid AND cm.colno = c.colno "
+            + "LEFT JOIN syscolumnsext ce ON ce.tabid = c.tabid AND ce.colno = c.colno "
             + "WHERE t.tabname = '" + escapeSql(table) + "'" + ownerFilter("t", schema) + " ORDER BY c.colno";
     }
 
