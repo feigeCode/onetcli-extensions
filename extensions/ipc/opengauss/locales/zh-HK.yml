@@ -22,3 +22,7 @@
 "database.connection.ssl.prefer": "優先"
 "database.connection.ssl.require": "要求"
 "database.opengauss.connection.title": "新增 openGauss 連線"
+"common.create": "建立"
+"database.opengauss.database.new": "新建資料庫"
+"database.opengauss.database.name": "資料庫名稱"
+"database.opengauss.database.name.placeholder": "輸入資料庫名稱"

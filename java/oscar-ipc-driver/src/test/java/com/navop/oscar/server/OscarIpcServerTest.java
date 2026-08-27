@@ -45,7 +45,7 @@ public class OscarIpcServerTest {
         OscarIpcServer server = newServer();
 
         JsonNode init = server.handle(request(1, "init", "{\"host_version\":\"1.0.0\",\"api_offered\":{\"database\":\"1.0\"},\"instance_id\":\"test\",\"config\":{}}"));
-        assertEquals("0.1.3", init.get("result").get("extension_version").asText());
+        assertEquals("0.1.4", init.get("result").get("extension_version").asText());
         assertEquals("oscar", init.get("result").get("drivers_ready").get(0).asText());
         assertTrue(init.get("result").get("methods").toString().contains("schema/object_view"));
         assertFalse(init.get("result").get("methods").toString().contains("oscar/table_data"));
@@ -328,6 +328,28 @@ public class OscarIpcServerTest {
             "{\"kind\":\"table\",\"database\":\"testdb\",\"schema\":\"testuser\",\"name\":\"probe_table\"}"
         ));
         assertEquals("DROP TABLE testuser.probe_table", drop.get("result").get("sql").asText());
+    }
+
+    @Test
+    public void ddlBuildCreateAndDropDatabase() throws Exception {
+        OscarIpcServer server = newServer();
+        server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));
+
+        JsonNode create = server.handle(request(
+            2,
+            "ddl/build",
+            "{\"op\":\"create_database\",\"payload\":{\"database_name\":\"sales\",\"field_values\":{}}}"
+        ));
+        assertEquals("CREATE DATABASE sales", create.get("result").get("sql").asText());
+        assertEquals("CREATE DATABASE sales", create.get("result").get("statements").get(0).asText());
+
+        JsonNode drop = server.handle(request(
+            3,
+            "ddl/build",
+            "{\"op\":\"drop_database\",\"payload\":{\"name\":\"sales\",\"database_name\":\"sales\"}}"
+        ));
+        assertEquals("DROP DATABASE sales", drop.get("result").get("sql").asText());
+        assertEquals("DROP DATABASE sales", drop.get("result").get("statements").get(0).asText());
     }
 
     @Test

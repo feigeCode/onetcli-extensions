@@ -1,2 +1,7 @@
 name: KingbaseES
 description: 金倉 KingbaseES 數據庫 IPC 驅動
+"common.create": "建立"
+"database.connection.tab.general": "一般"
+"database.kingbase.database.new": "新建資料庫"
+"database.kingbase.database.name": "資料庫名稱"
+"database.kingbase.database.name.placeholder": "輸入資料庫名稱"

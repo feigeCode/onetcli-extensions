@@ -19,3 +19,7 @@ description: Oscar Java IPC driver
 "database.oscar.field.jdbc_jar.help": "Optional path to the Oscar JDBC driver jar. Required when the driver is not bundled."
 "database.oscar.field.driver_class": "JDBC Driver Class"
 "database.oscar.field.driver_class.help": "Defaults to the common Oscar JDBC driver class."
+"common.create": "Create"
+"database.oscar.database.new": "New Database"
+"database.oscar.database.name": "Database Name"
+"database.oscar.database.name.placeholder": "Enter database name"

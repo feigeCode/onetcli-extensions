@@ -27,3 +27,8 @@ ImportExport.dump_sql_data: 转储 SQL 数据
 ImportExport.dump_sql_structure_and_data: 转储 SQL 结构和数据
 Connection.close: 关闭连接
 Connection.delete: 删除连接
+common.create: 创建
+database.connection.tab.general: 常规
+database.oceanbase.database.new: 新建数据库
+database.oceanbase.database.name: 数据库名称
+database.oceanbase.database.name.placeholder: 输入数据库名称

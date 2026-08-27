@@ -6,7 +6,7 @@
 
     <groupId>com.navop</groupId>
     <artifactId>oscar-ipc-driver</artifactId>
-    <version>0.1.3</version>
+    <version>0.1.4</version>
     <packaging>jar</packaging>
 
     <name>Navop Oscar IPC Driver</name>

@@ -19,3 +19,7 @@ description: Oscar Java IPC 驱动
 "database.oscar.field.jdbc_jar.help": "Oscar JDBC 驱动 jar 路径。未随扩展打包时需要填写。"
 "database.oscar.field.driver_class": "JDBC 驱动类"
 "database.oscar.field.driver_class.help": "默认使用常见 Oscar JDBC 驱动类。"
+"common.create": "创建"
+"database.oscar.database.new": "新建数据库"
+"database.oscar.database.name": "数据库名称"
+"database.oscar.database.name.placeholder": "输入数据库名称"

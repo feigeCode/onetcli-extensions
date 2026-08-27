@@ -1,2 +1,7 @@
 name: KingbaseES
 description: 金仓 KingbaseES 数据库 IPC 驱动
+"common.create": "创建"
+"database.connection.tab.general": "常规"
+"database.kingbase.database.new": "新建数据库"
+"database.kingbase.database.name": "数据库名称"
+"database.kingbase.database.name.placeholder": "输入数据库名称"

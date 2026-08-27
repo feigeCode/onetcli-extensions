@@ -765,6 +765,40 @@ func (s *Server) handleDdlBuild(req ipc.Message) ipc.Message {
 		return *errResp
 	}
 	switch p.Op {
+	case "create_database":
+		var payload struct {
+			DatabaseName string `json:"database_name"`
+			Name         string `json:"name"`
+		}
+		if err := decodePayload(p.Payload, &payload); err != nil {
+			return s.errFromError(req.ID, ErrInvalidParams, err)
+		}
+		name := strings.TrimSpace(payload.DatabaseName)
+		if name == "" {
+			name = strings.TrimSpace(payload.Name)
+		}
+		if name == "" {
+			return s.err(req.ID, ErrInvalidParams, "database name is required")
+		}
+		sqlText := "CREATE DATABASE " + quoteIdentifier(spec, name)
+		return s.ok(req.ID, map[string]any{"sql": sqlText, "statements": []string{sqlText}, "warnings": []string{}})
+	case "drop_database":
+		var payload struct {
+			DatabaseName string `json:"database_name"`
+			Name         string `json:"name"`
+		}
+		if err := decodePayload(p.Payload, &payload); err != nil {
+			return s.errFromError(req.ID, ErrInvalidParams, err)
+		}
+		name := strings.TrimSpace(payload.DatabaseName)
+		if name == "" {
+			name = strings.TrimSpace(payload.Name)
+		}
+		if name == "" {
+			return s.err(req.ID, ErrInvalidParams, "database name is required")
+		}
+		sqlText := "DROP DATABASE " + quoteIdentifier(spec, name)
+		return s.ok(req.ID, map[string]any{"sql": sqlText, "statements": []string{sqlText}, "warnings": []string{}})
 	case "create_table":
 		var payload struct {
 			Spec    tableSpec          `json:"spec"`

@@ -22,3 +22,7 @@
 "database.connection.ssl.prefer": "Prefer"
 "database.connection.ssl.require": "Require"
 "database.opengauss.connection.title": "New openGauss Connection"
+"common.create": "Create"
+"database.opengauss.database.new": "New Database"
+"database.opengauss.database.name": "Database Name"
+"database.opengauss.database.name.placeholder": "Enter database name"

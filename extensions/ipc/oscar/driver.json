@@ -3,7 +3,7 @@
   "name": "Oscar",
   "description": "使用 Java 开发的神通 Oscar 数据库 IPC 驱动，支持连接测试、SQL 执行、事务处理、Schema 浏览及数据传输。 Java-based IPC driver for Oscar with connection testing, SQL execution, transactions, schema browsing, and data transfer.",
   "category": "domestic_database",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "engines": {
     "onetcli": ">=0.10.0"
   },
@@ -305,6 +305,36 @@
               "id": "remark",
               "label_i18n_key": "ConnectionForm.remark",
               "fields": []
+            }
+          ]
+        },
+        {
+          "kind": "CreateDatabase",
+          "title_i18n_key": "database.oscar.database.new",
+          "submit_i18n_key": "common.create",
+          "tabs": [
+            {
+              "id": "general",
+              "label_i18n_key": "database.connection.tab.general",
+              "fields": [
+                {
+                  "id": "name",
+                  "label_i18n_key": "database.oscar.database.name",
+                  "field_type": "Text",
+                  "required": true,
+                  "default_value": null,
+                  "placeholder_i18n_key": "database.oscar.database.name.placeholder",
+                  "help_i18n_key": null,
+                  "options": [],
+                  "options_source": null,
+                  "visible_when": [],
+                  "default_when": [],
+                  "disabled_when_editing": false,
+                  "rows": null,
+                  "min": null,
+                  "max": null
+                }
+              ]
             }
           ]
         }
@@ -742,6 +772,21 @@
             "group": null,
             "submenu_of": null,
             "toolbar_scope": "SelectedRow"
+          },
+          {
+            "id": "CreateDatabase",
+            "label_i18n_key": "database.oscar.database.new",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "Connection"
+              }
+            ],
+            "placement": "Both",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": "CurrentNode"
           }
         ]
       }

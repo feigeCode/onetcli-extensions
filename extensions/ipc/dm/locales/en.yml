@@ -1,2 +1,7 @@
 name: Dameng DM
 description: Dameng DM database IPC driver
+"common.create": "Create"
+"database.connection.tab.general": "General"
+"database.dm.database.new": "New Database"
+"database.dm.database.name": "Database Name"
+"database.dm.database.name.placeholder": "Enter database name"

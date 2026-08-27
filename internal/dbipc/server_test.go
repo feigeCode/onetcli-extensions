@@ -704,6 +704,62 @@ func TestDdlBuilderUsesResolvedConnectionIdentifierQuotes(t *testing.T) {
 	}
 }
 
+func TestDdlBuildCreateAndDropDatabase(t *testing.T) {
+	server := NewServer(testSpec(), nil)
+	server.initialized = true
+
+	createResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  "ddl/build",
+		Params: json.RawMessage(`{
+			"op": "create_database",
+			"payload": {"database_name": "sales", "field_values": {}}
+		}`),
+	})
+	if createResp.Error != nil {
+		t.Fatalf("ddl/build create_database returned error: %#v", createResp.Error)
+	}
+	var createResult struct {
+		SQL        string   `json:"sql"`
+		Statements []string `json:"statements"`
+	}
+	decodeResult(t, createResp, &createResult)
+	if createResult.SQL != `CREATE DATABASE "sales"` {
+		t.Fatalf("create database SQL = %q", createResult.SQL)
+	}
+	if len(createResult.Statements) != 1 || createResult.Statements[0] != `CREATE DATABASE "sales"` {
+		t.Fatalf("create database statements = %#v", createResult.Statements)
+	}
+
+	dropResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "ddl/build",
+		Params:  json.RawMessage(`{"op": "drop_database", "payload": {"name": "sales", "database_name": "sales"}}`),
+	})
+	if dropResp.Error != nil {
+		t.Fatalf("ddl/build drop_database returned error: %#v", dropResp.Error)
+	}
+	var dropResult struct {
+		SQL string `json:"sql"`
+	}
+	decodeResult(t, dropResp, &dropResult)
+	if dropResult.SQL != `DROP DATABASE "sales"` {
+		t.Fatalf("drop database SQL = %q", dropResult.SQL)
+	}
+
+	emptyResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`3`),
+		Method:  "ddl/build",
+		Params:  json.RawMessage(`{"op": "create_database", "payload": {}}`),
+	})
+	if emptyResp.Error == nil {
+		t.Fatalf("create_database with empty payload should error")
+	}
+}
+
 func commentsTestSpec() DriverSpec {
 	spec := testSpec()
 	spec.IdentifierQuoteLeft = `"`

@@ -2,7 +2,7 @@
   "id": "oceanbase",
   "name": "OceanBase",
   "description": "使用 Go 开发的 OceanBase 数据库 IPC 驱动，支持连接测试、SQL 查询、事务、数据库对象浏览及数据传输。 Go-based IPC driver for OceanBase with connection testing, SQL queries, transactions, database object browsing, and data transfer.",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "engines": {
     "onetcli": ">=0.10.0"
   },
@@ -297,6 +297,36 @@
               "fields": []
             }
           ]
+        },
+        {
+          "kind": "CreateDatabase",
+          "title_i18n_key": "database.oceanbase.database.new",
+          "submit_i18n_key": "common.create",
+          "tabs": [
+            {
+              "id": "general",
+              "label_i18n_key": "database.connection.tab.general",
+              "fields": [
+                {
+                  "id": "name",
+                  "label_i18n_key": "database.oceanbase.database.name",
+                  "field_type": "Text",
+                  "required": true,
+                  "default_value": null,
+                  "placeholder_i18n_key": "database.oceanbase.database.name.placeholder",
+                  "help_i18n_key": null,
+                  "options": [],
+                  "options_source": null,
+                  "visible_when": [],
+                  "default_when": [],
+                  "disabled_when_editing": false,
+                  "rows": null,
+                  "min": null,
+                  "max": null
+                }
+              ]
+            }
+          ]
         }
       ],
       "actions": {
@@ -483,6 +513,21 @@
             "group": null,
             "submenu_of": null,
             "toolbar_scope": null
+          },
+          {
+            "id": "CreateDatabase",
+            "label_i18n_key": "database.oceanbase.database.new",
+            "icon": null,
+            "targets": [
+              {
+                "node_type": "Connection"
+              }
+            ],
+            "placement": "Both",
+            "requires_active_connection": true,
+            "group": null,
+            "submenu_of": null,
+            "toolbar_scope": "CurrentNode"
           }
         ]
       }

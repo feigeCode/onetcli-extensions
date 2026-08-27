@@ -27,3 +27,8 @@ ImportExport.dump_sql_data: 轉儲 SQL 資料
 ImportExport.dump_sql_structure_and_data: 轉儲 SQL 結構和資料
 Connection.close: 關閉連線
 Connection.delete: 刪除連線
+common.create: 建立
+database.connection.tab.general: 一般
+database.oceanbase.database.new: 新建資料庫
+database.oceanbase.database.name: 資料庫名稱
+database.oceanbase.database.name.placeholder: 輸入資料庫名稱

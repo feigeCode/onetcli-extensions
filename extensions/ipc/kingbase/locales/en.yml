@@ -1,2 +1,7 @@
 name: KingbaseES
 description: KingbaseES database IPC driver
+"common.create": "Create"
+"database.connection.tab.general": "General"
+"database.kingbase.database.new": "New Database"
+"database.kingbase.database.name": "Database Name"
+"database.kingbase.database.name.placeholder": "Enter database name"

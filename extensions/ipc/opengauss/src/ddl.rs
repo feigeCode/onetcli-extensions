@@ -13,6 +13,22 @@ pub fn handle_ddl_build(params: &Value) -> Result<Value, ProtocolError> {
     let p: BuildDdlParams =
         serde_json::from_value(params.clone()).map_err(params_deserialize_error)?;
     let result = match p.op {
+        DdlBuildOp::CreateDatabase => {
+            let name = database_name_from_payload(&p.payload)?;
+            let sql = format!("CREATE DATABASE {}", quote_identifier(&name));
+            BuildDdlResult {
+                statements: vec![sql],
+                warnings: Vec::new(),
+            }
+        }
+        DdlBuildOp::DropDatabase => {
+            let name = database_name_from_payload(&p.payload)?;
+            let sql = format!("DROP DATABASE {}", quote_identifier(&name));
+            BuildDdlResult {
+                statements: vec![sql],
+                warnings: Vec::new(),
+            }
+        }
         DdlBuildOp::CreateTable => {
             let spec: TableSpec =
                 serde_json::from_value(p.payload).map_err(params_deserialize_error)?;
@@ -60,6 +76,21 @@ pub fn handle_ddl_build(params: &Value) -> Result<Value, ProtocolError> {
         }
     };
     serde_json::to_value(result).map_err(params_deserialize_error)
+}
+
+fn database_name_from_payload(payload: &Value) -> Result<String, ProtocolError> {
+    let database_name = payload
+        .get("database_name")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let name = payload.get("name").and_then(Value::as_str).unwrap_or("");
+    if !database_name.trim().is_empty() {
+        return Ok(database_name.trim().to_string());
+    }
+    if !name.trim().is_empty() {
+        return Ok(name.trim().to_string());
+    }
+    Err(invalid_params("database name is required"))
 }
 
 pub fn handle_ddl_build_create_table(params: &Value) -> Result<Value, ProtocolError> {
@@ -514,6 +545,35 @@ mod tests {
                 .iter()
                 .any(|sql| sql.starts_with("COMMENT ON TABLE"))
         );
+    }
+
+    #[test]
+    fn handle_ddl_build_create_and_drop_database() {
+        let create = handle_ddl_build(
+            &serde_json::json!({
+                "op": "create_database",
+                "payload": {"database_name": "sales", "field_values": {}}
+            }),
+        )
+        .unwrap();
+        let result: BuildDdlResult = serde_json::from_value(create).unwrap();
+        assert_eq!(result.statements, vec!["CREATE DATABASE \"sales\""]);
+
+        let drop = handle_ddl_build(
+            &serde_json::json!({
+                "op": "drop_database",
+                "payload": {"name": "sales", "database_name": "sales"}
+            }),
+        )
+        .unwrap();
+        let result: BuildDdlResult = serde_json::from_value(drop).unwrap();
+        assert_eq!(result.statements, vec!["DROP DATABASE \"sales\""]);
+
+        let err = handle_ddl_build(&serde_json::json!({
+            "op": "create_database",
+            "payload": {}
+        }));
+        assert!(err.is_err());
     }
 
     #[test]

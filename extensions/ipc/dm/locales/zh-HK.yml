@@ -1,2 +1,7 @@
 name: 達夢 DM
 description: 達夢 DM 數據庫 IPC 驅動
+"common.create": "建立"
+"database.connection.tab.general": "一般"
+"database.dm.database.new": "新建資料庫"
+"database.dm.database.name": "資料庫名稱"
+"database.dm.database.name.placeholder": "輸入資料庫名稱"
