@@ -403,9 +403,14 @@ public final class GBase8sIpcServer {
         String database = optionalText(params, "database", state.config.getDatabase());
         String schema = optionalText(params, "schema", "");
         String table = requiredText(params, "table");
-        List<String> primaryColumns = primaryKeyColumns(state.connection, database, schema, table);
+        List<Map<String, Object>> result = readColumns(state.connection, database, schema, table);
+        return ok(id, result);
+    }
+
+    private List<Map<String, Object>> readColumns(Connection connection, String database, String schema, String table) throws SQLException {
+        List<String> primaryColumns = primaryKeyColumns(connection, database, schema, table);
         QueryResult query = queryRunner.queryBuffered(
-            state.connection,
+            connection,
             GBase8sSchemaSql.columnsSql(database, schema, table),
             null,
             null
@@ -435,7 +440,7 @@ public final class GBase8sIpcServer {
             column.put("extra", new LinkedHashMap<String, Object>());
             result.add(column);
         }
-        return ok(id, result);
+        return result;
     }
 
     private JsonNode handleSchemaDumpDdl(JsonNode id, JsonNode params) throws SQLException {
@@ -448,41 +453,179 @@ public final class GBase8sIpcServer {
             return ok(id, emptyDumpResult());
         }
         // The host sends every export target as an object ref. Only tables have
-        // a server-side get_ddl dump; views/sequences/etc. fall through to the
-        // host's shared builders.
+        // a usable DDL dump; views/sequences/etc. fall through to the host's
+        // shared builders.
+        String database = "";
         String owner = "";
+        String schema = "";
         String table = "";
         for (JsonNode object : objects) {
             String kind = textOrEmpty(object.get("kind"));
             if (!isTableKind(kind)) {
                 continue;
             }
-            owner = optionalText(object, "schema", "");
+            database = optionalText(object, "database", state.config.getDatabase());
+            schema = optionalText(object, "schema", "");
             table = textOrEmpty(object.get("name"));
             break;
         }
         if (table.isEmpty()) {
             return ok(id, emptyDumpResult());
         }
-        if (owner.trim().isEmpty()) {
-            owner = state.config.getUsername();
-        }
-        QueryResult query = queryRunner.queryBuffered(
-            state.connection,
-            GBase8sSchemaSql.dumpDdlSql(owner, table),
-            null,
-            null
-        );
-        List<String> statements = new ArrayList<String>();
-        for (List<Map<String, Object>> row : query.getRows()) {
-            String ddl = rowString(row, 0);
-            if (!ddl.isEmpty()) {
-                statements.add(GBase8sSchemaSql.normalizeGetDdlScript(ddl));
-            }
+        // Prefer the official GBase 8s get_ddl SPL recipe when the server has
+        // it installed: it reproduces the structure exactly like the vendor
+        // tools. When the SPL is missing (routine not resolvable) or emits
+        // nothing, rebuild the DDL from the catalogs so the exported structure
+        // keeps every statement terminated and re-imports cleanly.
+        owner = schema.trim().isEmpty() ? state.config.getUsername() : schema.trim();
+        List<String> statements = getDdlScript(state.connection, owner, table);
+        if (statements.isEmpty()) {
+            statements = buildTableDdl(state.connection, database, schema, table);
         }
         Map<String, Object> result = new LinkedHashMap<String, Object>();
         result.put("statements", statements);
         return ok(id, result);
+    }
+
+    /**
+     * Calls the official get_ddl SPL recipe. Returns an empty list when the
+     * routine is not installed on the server or emits nothing, so the caller
+     * can fall back to a catalog-based DDL.
+     */
+    private List<String> getDdlScript(Connection connection, String owner, String table) {
+        List<String> statements = new ArrayList<String>();
+        try {
+            QueryResult query = queryRunner.queryBuffered(
+                connection,
+                GBase8sSchemaSql.dumpDdlSql(owner, table),
+                null,
+                null
+            );
+            for (List<Map<String, Object>> row : query.getRows()) {
+                String ddl = rowString(row, 0);
+                if (!ddl.isEmpty()) {
+                    statements.add(GBase8sSchemaSql.normalizeGetDdlScript(ddl));
+                }
+            }
+        } catch (SQLException error) {
+            return new ArrayList<String>();
+        }
+        return statements;
+    }
+
+    /**
+     * Rebuilds a table's DDL from the system catalogs when the server has no
+     * get_ddl SPL: column types, NOT NULL, PRIMARY KEY, table/column comments
+     * and non-primary indexes. Every returned statement is terminated with
+     * {@code ;}: the host joins dump statements with newlines and only appends
+     * one trailing terminator, so an unterminated CREATE TABLE directly
+     * followed by COMMENT ON is parsed as a single statement and fails on
+     * re-import with a syntax error.
+     */
+    private List<String> buildTableDdl(Connection connection, String database, String schema, String table) {
+        List<Map<String, Object>> columns;
+        try {
+            columns = readColumns(connection, database, schema, table);
+        } catch (SQLException error) {
+            return new ArrayList<String>();
+        }
+        if (columns.isEmpty()) {
+            return new ArrayList<String>();
+        }
+        String tableName = qualifiedIdentifier("", schema, table);
+        List<String> definitions = new ArrayList<String>();
+        List<String> primary = new ArrayList<String>();
+        for (Map<String, Object> column : columns) {
+            definitions.add(dumpColumnDefinition(column));
+            if (Boolean.TRUE.equals(column.get("is_primary"))) {
+                primary.add(quote(String.valueOf(column.get("name"))));
+            }
+        }
+        if (!primary.isEmpty()) {
+            definitions.add("PRIMARY KEY (" + join(primary, ", ") + ")");
+        }
+        List<String> statements = new ArrayList<String>();
+        statements.add("CREATE TABLE " + tableName + " (" + join(definitions, ", ") + ");");
+        String tableComment = readTableComment(connection, schema, table);
+        if (!tableComment.isEmpty()) {
+            statements.add(commentStatement(tableName, null, tableComment) + ";");
+        }
+        for (Map<String, Object> column : columns) {
+            String comment = String.valueOf(column.get("comment"));
+            if (!comment.isEmpty()) {
+                statements.add(commentStatement(tableName, String.valueOf(column.get("name")), comment) + ";");
+            }
+        }
+        for (Map<String, Object> index : readIndexes(connection, database, schema, table)) {
+            if (Boolean.TRUE.equals(index.get("is_primary"))) {
+                continue;
+            }
+            if (isInternalIndex(index)) {
+                continue;
+            }
+            statements.add(indexStatement(schema, table, index) + ";");
+        }
+        return statements;
+    }
+
+    /**
+     * Auto-generated GBase 8s indexes (names like {@code 103_6}) and indexes
+     * that merely back a foreign key (constraint type {@code R}) are system
+     * bookkeeping, not user structure: recreating them with a literal
+     * {@code CREATE INDEX} is both invalid (numeric leading identifier) and
+     * wrong (the FK recreates its own index). Only user-named indexes are kept.
+     */
+    private static boolean isInternalIndex(Map<String, Object> index) {
+        String constraintType = String.valueOf(index.get("constraint_type"));
+        if ("R".equalsIgnoreCase(constraintType)) {
+            return true;
+        }
+        String name = String.valueOf(index.get("name"));
+        return !name.isEmpty() && Character.isDigit(name.charAt(0));
+    }
+
+    private static String dumpColumnDefinition(Map<String, Object> column) {
+        StringBuilder definition = new StringBuilder();
+        definition.append(quote(String.valueOf(column.get("name")))).append(' ').append(String.valueOf(column.get("raw_type")));
+        if (Boolean.FALSE.equals(column.get("nullable"))) {
+            definition.append(" NOT NULL");
+        }
+        Object defaultValue = column.get("default");
+        if (defaultValue != null && !String.valueOf(defaultValue).trim().isEmpty()) {
+            definition.append(" DEFAULT ").append(String.valueOf(defaultValue));
+        }
+        return definition.toString();
+    }
+
+    private String readTableComment(Connection connection, String schema, String table) {
+        try {
+            QueryResult query = queryRunner.queryBuffered(
+                connection,
+                GBase8sSchemaSql.tablesSql(schema),
+                null,
+                null
+            );
+            for (List<Map<String, Object>> row : query.getRows()) {
+                if (table.equals(rowString(row, 0))) {
+                    return rowString(row, 2);
+                }
+            }
+        } catch (SQLException error) {
+            // Table comments are best-effort; the export still carries the
+            // column structure and column comments.
+        }
+        return "";
+    }
+
+    private String indexStatement(String schema, String table, Map<String, Object> index) {
+        StringBuilder sql = new StringBuilder("CREATE ");
+        if (Boolean.TRUE.equals(index.get("is_unique"))) {
+            sql.append("UNIQUE ");
+        }
+        sql.append("INDEX ").append(quote(String.valueOf(index.get("name"))))
+            .append(" ON ").append(qualifiedIdentifier("", schema, table))
+            .append(" (").append(quoteList(stringList(index.get("columns")))).append(")");
+        return sql.toString();
     }
 
     private boolean isTableKind(String kind) {
@@ -887,7 +1030,8 @@ public final class GBase8sIpcServer {
                 }
                 Map<String, Object> index = indexes.get(name);
                 if (index == null) {
-                    boolean primary = "YES".equalsIgnoreCase(rowString(row, 2));
+                    String constraintType = rowString(row, 2);
+                    boolean primary = "P".equalsIgnoreCase(constraintType);
                     String type = rowString(row, 1);
                     index = new LinkedHashMap<String, Object>();
                     index.put("database", database);
@@ -897,6 +1041,7 @@ public final class GBase8sIpcServer {
                     index.put("columns", new ArrayList<String>());
                     index.put("is_unique", Boolean.valueOf(primary || "U".equalsIgnoreCase(type)));
                     index.put("is_primary", Boolean.valueOf(primary));
+                    index.put("constraint_type", constraintType);
                     index.put("type", primary ? "PRIMARY" : ("U".equalsIgnoreCase(type) ? "UNIQUE" : "INDEX"));
                     index.put("comment", "");
                     index.put("extra", new LinkedHashMap<String, Object>());

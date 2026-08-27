@@ -242,7 +242,7 @@ public class GBase8sIpcServerTest {
     }
 
     @Test
-    public void schemaDumpDdlReportsErrorWhenGetDdlSplIsUnavailable() throws Exception {
+    public void schemaDumpDdlFallsBackToCatalogDdlWhenGetDdlSplIsUnavailable() throws Exception {
         GBase8sIpcServer server = newServer();
         server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));
         JsonNode open = server.handle(request(2, "conn/open", "{\"driver_id\":\"gbase8s\",\"config\":" + configJson() + "}"));
@@ -250,10 +250,19 @@ public class GBase8sIpcServerTest {
 
         JsonNode dump = server.handle(request(3, "schema/dump_ddl", "{\"conn_id\":" + connId + ",\"objects\":[{\"kind\":\"table\",\"name\":\"sample\",\"schema\":\"gbasedbt\",\"database\":\"stores\"}],\"options\":{}}"));
 
-        assertTrue(dump.toString(), dump.has("error"));
-        assertTrue(dump.toString(), !dump.has("result"));
-        assertEquals(ProtocolError.SQL_SYNTAX, dump.get("error").get("code").asInt());
-        assertTrue(dump.get("error").get("data").get("vendor_code").asInt() != 0);
+        // The host no get_ddl SPL: the driver rebuilds the DDL from catalogs
+        // and every statement is terminated so the script re-imports cleanly.
+        assertTrue(dump.toString(), dump.has("result"));
+        assertFalse(dump.toString(), dump.has("error"));
+        JsonNode statements = dump.get("result").get("statements");
+        assertEquals(4, statements.size());
+        assertEquals("CREATE TABLE gbasedbt.sample (id INTEGER NOT NULL, name VARCHAR(64) DEFAULT abc, created_at DATETIME YEAR TO FRACTION(3), price DECIMAL(10,2), PRIMARY KEY (id));", statements.get(0).asText());
+        assertEquals("COMMENT ON TABLE gbasedbt.sample IS 'Sample table comment';", statements.get(1).asText());
+        assertEquals("COMMENT ON COLUMN gbasedbt.sample.name IS 'Sample column comment';", statements.get(2).asText());
+        assertEquals("CREATE INDEX zz_sample_name_id ON gbasedbt.sample (name, id);", statements.get(3).asText());
+        for (JsonNode statement : statements) {
+            assertTrue(statement.toString(), statement.asText().trim().endsWith(";"));
+        }
     }
 
     @Test

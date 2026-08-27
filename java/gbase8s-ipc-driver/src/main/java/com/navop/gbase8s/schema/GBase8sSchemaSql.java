@@ -24,6 +24,12 @@ public final class GBase8sSchemaSql {
             + " ORDER BY t.tabname";
     }
 
+    public static String tablesSql(String schema) {
+        return "SELECT t.tabname, 'table', COALESCE(c.comments, '') "
+            + "FROM systables t LEFT JOIN syscomms c ON c.tabid = t.tabid "
+            + "WHERE t.tabid >= 100 AND t.tabtype = 'T'" + ownerFilter("t", schema) + " ORDER BY t.tabname";
+    }
+
     public static String columnsSql(String database, String schema, String table) {
         return "SELECT c.colno, c.colname, c.coltype, CASE WHEN BITAND(c.coltype, 256) = 256 THEN 'NO' ELSE 'YES' END, d.default, COALESCE(cm.comments, ''), c.collength, CAST(ce.coltypename2 AS VARCHAR(128)) "
             + "FROM syscolumns c "
@@ -45,7 +51,7 @@ public final class GBase8sSchemaSql {
     }
 
     public static String indexesSql(String database, String schema, String table) {
-        return "SELECT i.idxname, i.idxtype, CASE WHEN cn.constrtype = 'P' THEN 'YES' ELSE 'NO' END, "
+        return "SELECT i.idxname, i.idxtype, COALESCE(cn.constrtype, ''), "
             + "c.colname, c.colno, " + partOrderExpression("i", "c.colno") + " "
             + "FROM sysindexes i "
             + "JOIN systables t ON i.tabid = t.tabid "
