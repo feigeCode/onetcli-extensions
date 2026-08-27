@@ -244,7 +244,7 @@ public final class OscarIpcServer {
         for (String method : methodNames) {
             methods.add(method);
         }
-        result.put("extension_version", "0.1.4");
+        result.put("extension_version", "0.1.5");
         result.put("api_used", api);
         result.put("features", features);
         result.put("drivers_ready", drivers);
@@ -459,25 +459,29 @@ public final class OscarIpcServer {
             definitions.add("PRIMARY KEY (" + join(primary, ", ") + ")");
         }
         List<String> statements = new ArrayList<String>();
-        statements.add("CREATE TABLE " + tableName + " (" + join(definitions, ", ") + ")");
+        // Each entry is an independent statement. The host joins `schema/dump_ddl`
+        // statements with newlines and only appends one trailing `;`, so every
+        // statement must carry its own terminator or re-importing the export
+        // fails with a syntax error (several statements parsed as one).
+        statements.add("CREATE TABLE " + tableName + " (" + join(definitions, ", ") + ");");
         String tableComment = readTableComment(connection, database, schema, table);
         if (!tableComment.isEmpty()) {
-            statements.add(commentStatement(tableName, null, tableComment));
+            statements.add(commentStatement(tableName, null, tableComment) + ";");
         }
         for (Map<String, Object> column : columns) {
             String comment = String.valueOf(column.get("comment"));
             if (!comment.isEmpty()) {
-                statements.add(commentStatement(tableName, String.valueOf(column.get("name")), comment));
+                statements.add(commentStatement(tableName, String.valueOf(column.get("name")), comment) + ";");
             }
         }
         for (Map<String, Object> index : readIndexes(connection, database, schema, table)) {
             if (Boolean.TRUE.equals(index.get("is_primary"))) {
                 continue;
             }
-            statements.add(indexStatement(schema, table, index));
+            statements.add(indexStatement(schema, table, index) + ";");
         }
         for (Map<String, Object> foreignKey : readForeignKeys(connection, database, schema, table)) {
-            statements.add(foreignKeyStatement(schema, foreignKey));
+            statements.add(foreignKeyStatement(schema, foreignKey) + ";");
         }
         return statements;
     }

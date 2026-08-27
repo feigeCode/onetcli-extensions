@@ -3,7 +3,7 @@
   "name": "Oscar",
   "description": "使用 Java 开发的神通 Oscar 数据库 IPC 驱动，支持连接测试、SQL 执行、事务处理、Schema 浏览及数据传输。 Java-based IPC driver for Oscar with connection testing, SQL execution, transactions, schema browsing, and data transfer.",
   "category": "domestic_database",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "engines": {
     "onetcli": ">=0.10.0"
   },

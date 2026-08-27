@@ -45,7 +45,7 @@ public class OscarIpcServerTest {
         OscarIpcServer server = newServer();
 
         JsonNode init = server.handle(request(1, "init", "{\"host_version\":\"1.0.0\",\"api_offered\":{\"database\":\"1.0\"},\"instance_id\":\"test\",\"config\":{}}"));
-        assertEquals("0.1.4", init.get("result").get("extension_version").asText());
+        assertEquals("0.1.5", init.get("result").get("extension_version").asText());
         assertEquals("oscar", init.get("result").get("drivers_ready").get(0).asText());
         assertTrue(init.get("result").get("methods").toString().contains("schema/object_view"));
         assertFalse(init.get("result").get("methods").toString().contains("oscar/table_data"));
@@ -135,13 +135,13 @@ public class OscarIpcServerTest {
         assertTrue(dump.toString(), dump.has("result"));
         JsonNode statements = dump.get("result").get("statements");
         assertEquals(
-            "CREATE TABLE SYSDBA.sample (id BIGINT NOT NULL, name VARCHAR(64) DEFAULT 'abc', ts TIMESTAMP(6), amount DECIMAL(12,2), PRIMARY KEY (id))",
+            "CREATE TABLE SYSDBA.sample (id BIGINT NOT NULL, name VARCHAR(64) DEFAULT 'abc', ts TIMESTAMP(6), amount DECIMAL(12,2), PRIMARY KEY (id));",
             statements.get(0).asText()
         );
-        assertEquals("CREATE INDEX idx_sample_name ON SYSDBA.sample (name)", statements.get(1).asText());
-        assertEquals("CREATE INDEX zz_sample_name_id ON SYSDBA.sample (name, id)", statements.get(2).asText());
+        assertEquals("CREATE INDEX idx_sample_name ON SYSDBA.sample (name);", statements.get(1).asText());
+        assertEquals("CREATE INDEX zz_sample_name_id ON SYSDBA.sample (name, id);", statements.get(2).asText());
         assertEquals(
-            "ALTER TABLE SYSDBA.sample ADD CONSTRAINT fk_sample_parent FOREIGN KEY (id) REFERENCES SYSDBA.parent_sample (id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+            "ALTER TABLE SYSDBA.sample ADD CONSTRAINT fk_sample_parent FOREIGN KEY (id) REFERENCES SYSDBA.parent_sample (id) ON UPDATE RESTRICT ON DELETE RESTRICT;",
             statements.get(3).asText()
         );
 
