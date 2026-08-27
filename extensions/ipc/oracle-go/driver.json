@@ -2,7 +2,7 @@
   "id": "oracle-go",
   "name": "Oracle Go",
   "description": "使用纯 Go 开发的 Oracle 数据库 IPC 驱动，无需额外 Oracle 客户端即可进行连接管理、SQL 查询、事务和对象浏览。 Pure Go IPC driver for Oracle with connection management, SQL queries, transactions, and object browsing without requiring a separate Oracle client.",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "engines": {
     "onetcli": ">=0.10.0"
   },

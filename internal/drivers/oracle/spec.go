@@ -37,6 +37,7 @@ func Spec() dbipc.DriverSpec {
 			Triggers:       oracleTriggersSQL,
 			Sequences:      oracleSequencesSQL,
 			ViewDefinition: oracleViewDefinitionSQL,
+			DumpDDL:        oracleDumpDDL,
 		},
 	}
 }
@@ -162,6 +163,17 @@ func oracleViewDefinitionSQL(cfg dbipc.Config, database, schema, view string) st
 		ownerFilter = fmt.Sprintf(" AND OWNER = '%s'", upperEscapeSQL(owner))
 	}
 	return fmt.Sprintf("SELECT TEXT, 'NO' FROM ALL_VIEWS WHERE VIEW_NAME = '%s'%s", upperEscapeSQL(view), ownerFilter)
+}
+
+// oracleDumpDDL asks the server for the official CREATE TABLE text via
+// DBMS_METADATA. The schema/owner argument is omitted when unknown so the
+// provider uses the connected user's schema.
+func oracleDumpDDL(cfg dbipc.Config, database, schema, table string) string {
+	owner, table := oracleOwnerAndTable(database, schema, table)
+	if owner == "" {
+		return fmt.Sprintf("SELECT DBMS_METADATA.GET_DDL('TABLE', '%s') FROM DUAL", upperEscapeSQL(table))
+	}
+	return fmt.Sprintf("SELECT DBMS_METADATA.GET_DDL('TABLE', '%s', '%s') FROM DUAL", upperEscapeSQL(table), upperEscapeSQL(owner))
 }
 
 func oracleOwner(database, schema string) string {
