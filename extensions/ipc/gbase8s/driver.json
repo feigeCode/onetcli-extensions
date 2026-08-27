@@ -3,7 +3,7 @@
   "name": "GBase 8s",
   "description": "使用 Java 开发的南大通用 GBase 8s 数据库 IPC 驱动，支持连接测试、SQL 执行、事务处理、对象浏览及数据传输。 Java-based IPC driver for GBase 8s with connection testing, SQL execution, transactions, object browsing, and data transfer.",
   "category": "domestic_database",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "engines": {
     "onetcli": ">=0.10.0"
   },

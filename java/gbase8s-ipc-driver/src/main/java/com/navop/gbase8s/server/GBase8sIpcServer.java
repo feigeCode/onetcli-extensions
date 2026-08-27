@@ -243,7 +243,7 @@ public final class GBase8sIpcServer {
         for (String method : methodNames) {
             methods.add(method);
         }
-        result.put("extension_version", "0.1.21");
+        result.put("extension_version", "0.1.22");
         result.put("api_used", api);
         result.put("features", features);
         result.put("drivers_ready", drivers);
@@ -443,11 +443,30 @@ public final class GBase8sIpcServer {
         if (state == null) {
             return lastError;
         }
-        String owner = optionalText(params, "schema", "");
+        JsonNode objects = params.get("objects");
+        if (objects == null || !objects.isArray()) {
+            return ok(id, emptyDumpResult());
+        }
+        // The host sends every export target as an object ref. Only tables have
+        // a server-side get_ddl dump; views/sequences/etc. fall through to the
+        // host's shared builders.
+        String owner = "";
+        String table = "";
+        for (JsonNode object : objects) {
+            String kind = textOrEmpty(object.get("kind"));
+            if (!isTableKind(kind)) {
+                continue;
+            }
+            owner = optionalText(object, "schema", "");
+            table = textOrEmpty(object.get("name"));
+            break;
+        }
+        if (table.isEmpty()) {
+            return ok(id, emptyDumpResult());
+        }
         if (owner.trim().isEmpty()) {
             owner = state.config.getUsername();
         }
-        String table = requiredText(params, "table");
         QueryResult query = queryRunner.queryBuffered(
             state.connection,
             GBase8sSchemaSql.dumpDdlSql(owner, table),
@@ -464,6 +483,16 @@ public final class GBase8sIpcServer {
         Map<String, Object> result = new LinkedHashMap<String, Object>();
         result.put("statements", statements);
         return ok(id, result);
+    }
+
+    private boolean isTableKind(String kind) {
+        return "table".equals(kind) || "base_table".equals(kind);
+    }
+
+    private Map<String, Object> emptyDumpResult() {
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("statements", new ArrayList<String>());
+        return result;
     }
 
     private JsonNode handleSchemaIndexes(JsonNode id, JsonNode params) throws SQLException {

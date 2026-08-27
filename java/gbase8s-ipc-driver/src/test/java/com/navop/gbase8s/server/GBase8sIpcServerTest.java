@@ -47,7 +47,7 @@ public class GBase8sIpcServerTest {
         GBase8sIpcServer server = newServer();
 
         JsonNode init = server.handle(request(1, "init", "{\"host_version\":\"1.0.0\",\"api_offered\":{\"database\":\"1.0\"},\"instance_id\":\"test\",\"config\":{}}"));
-        assertEquals("0.1.21", init.get("result").get("extension_version").asText());
+        assertEquals("0.1.22", init.get("result").get("extension_version").asText());
         assertEquals("gbase8s", init.get("result").get("drivers_ready").get(0).asText());
         assertTrue(init.get("result").get("methods").toString().contains("schema/object_view"));
         assertTrue(init.get("result").get("methods").toString().contains("schema/dump_ddl"));
@@ -248,12 +248,25 @@ public class GBase8sIpcServerTest {
         JsonNode open = server.handle(request(2, "conn/open", "{\"driver_id\":\"gbase8s\",\"config\":" + configJson() + "}"));
         long connId = open.get("result").get("conn_id").asLong();
 
-        JsonNode dump = server.handle(request(3, "schema/dump_ddl", "{\"conn_id\":" + connId + ",\"database\":\"stores\",\"schema\":\"gbasedbt\",\"table\":\"sample\",\"options\":{}}"));
+        JsonNode dump = server.handle(request(3, "schema/dump_ddl", "{\"conn_id\":" + connId + ",\"objects\":[{\"kind\":\"table\",\"name\":\"sample\",\"schema\":\"gbasedbt\",\"database\":\"stores\"}],\"options\":{}}"));
 
         assertTrue(dump.toString(), dump.has("error"));
         assertTrue(dump.toString(), !dump.has("result"));
         assertEquals(ProtocolError.SQL_SYNTAX, dump.get("error").get("code").asInt());
         assertTrue(dump.get("error").get("data").get("vendor_code").asInt() != 0);
+    }
+
+    @Test
+    public void schemaDumpDdlReturnsEmptyWhenNoTableObject() throws Exception {
+        GBase8sIpcServer server = newServer();
+        server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));
+        JsonNode open = server.handle(request(2, "conn/open", "{\"driver_id\":\"gbase8s\",\"config\":" + configJson() + "}"));
+        long connId = open.get("result").get("conn_id").asLong();
+
+        JsonNode dump = server.handle(request(3, "schema/dump_ddl", "{\"conn_id\":" + connId + ",\"objects\":[{\"kind\":\"view\",\"name\":\"v_sample\",\"schema\":\"gbasedbt\"}],\"options\":{}}"));
+
+        assertTrue(dump.toString(), dump.has("result"));
+        assertEquals(0, dump.get("result").get("statements").size());
     }
 
     @Test
