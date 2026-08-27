@@ -45,7 +45,7 @@ public class OscarIpcServerTest {
         OscarIpcServer server = newServer();
 
         JsonNode init = server.handle(request(1, "init", "{\"host_version\":\"1.0.0\",\"api_offered\":{\"database\":\"1.0\"},\"instance_id\":\"test\",\"config\":{}}"));
-        assertEquals("0.1.2", init.get("result").get("extension_version").asText());
+        assertEquals("0.1.3", init.get("result").get("extension_version").asText());
         assertEquals("oscar", init.get("result").get("drivers_ready").get(0).asText());
         assertTrue(init.get("result").get("methods").toString().contains("schema/object_view"));
         assertFalse(init.get("result").get("methods").toString().contains("oscar/table_data"));
@@ -124,7 +124,7 @@ public class OscarIpcServerTest {
     }
 
     @Test
-    public void schemaDumpDdlReturnsEmptySoHostFallsBackToSharedBuilder() throws Exception {
+    public void schemaDumpDdlEmitsFullTableStructure() throws Exception {
         OscarIpcServer server = newServer();
         server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));
         JsonNode open = server.handle(request(2, "conn/open", "{\"driver_id\":\"oscar\",\"config\":" + configJson() + "}"));
@@ -133,7 +133,25 @@ public class OscarIpcServerTest {
         JsonNode dump = server.handle(request(3, "schema/dump_ddl", "{\"conn_id\":" + connId + ",\"objects\":[{\"kind\":\"table\",\"name\":\"sample\",\"schema\":\"SYSDBA\",\"database\":\"OSRDB\"}],\"options\":{}}"));
 
         assertTrue(dump.toString(), dump.has("result"));
-        assertEquals(0, dump.get("result").get("statements").size());
+        JsonNode statements = dump.get("result").get("statements");
+        assertEquals(
+            "CREATE TABLE SYSDBA.sample (id BIGINT NOT NULL, name VARCHAR(64) DEFAULT 'abc', ts TIMESTAMP(6), amount DECIMAL(12,2), PRIMARY KEY (id))",
+            statements.get(0).asText()
+        );
+        assertEquals("CREATE INDEX idx_sample_name ON SYSDBA.sample (name)", statements.get(1).asText());
+        assertEquals("CREATE INDEX zz_sample_name_id ON SYSDBA.sample (name, id)", statements.get(2).asText());
+        assertEquals(
+            "ALTER TABLE SYSDBA.sample ADD CONSTRAINT fk_sample_parent FOREIGN KEY (id) REFERENCES SYSDBA.parent_sample (id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+            statements.get(3).asText()
+        );
+
+        // View/sequence objects fall through to the host shared builder: no DDL here.
+        JsonNode viewDump = server.handle(request(4, "schema/dump_ddl", "{\"conn_id\":" + connId + ",\"objects\":[{\"kind\":\"view\",\"name\":\"v_sample\",\"schema\":\"SYSDBA\",\"database\":\"OSRDB\"}],\"options\":{}}"));
+        assertEquals(0, viewDump.get("result").get("statements").size());
+
+        // Without a table object the handler returns an empty statement list.
+        JsonNode empty = server.handle(request(5, "schema/dump_ddl", "{\"conn_id\":" + connId + ",\"objects\":[],\"options\":{}}"));
+        assertEquals(0, empty.get("result").get("statements").size());
     }
 
     @Test
@@ -172,6 +190,8 @@ public class OscarIpcServerTest {
         assertEquals(false, columns.get("result").get(0).get("nullable").asBoolean());
         assertTrue(columns.get("result").get(0).get("default").isNull());
         assertEquals("abc", columns.get("result").get(1).get("default").asText());
+        assertEquals("BIGINT", columns.get("result").get(0).get("raw_type").asText());
+        assertEquals("VARCHAR(64)", columns.get("result").get(1).get("raw_type").asText());
 
         JsonNode indexes = server.handle(request(7, "schema/indexes", "{\"conn_id\":" + connId + ",\"database\":\"OSRDB\",\"schema\":\"SYSDBA\",\"table\":\"sample\"}"));
         JsonNode primaryIndex = findPrimaryIndex(indexes.get("result"));
@@ -469,11 +489,11 @@ public class OscarIpcServerTest {
                 statement.execute("INSERT INTO sample VALUES (2, 'beta')");
                 statement.execute("CREATE SCHEMA SYSDBA");
                 statement.execute("CREATE TABLE SYSDBA.parent_sample (id BIGINT PRIMARY KEY)");
-                statement.execute("CREATE TABLE SYSDBA.sample (id BIGINT NOT NULL, name VARCHAR(64) DEFAULT 'abc', CONSTRAINT pk_sample PRIMARY KEY (id), CONSTRAINT fk_sample_parent FOREIGN KEY (id) REFERENCES SYSDBA.parent_sample(id))");
+                statement.execute("CREATE TABLE SYSDBA.sample (id BIGINT NOT NULL, name VARCHAR(64) DEFAULT 'abc', ts TIMESTAMP(6), amount DECIMAL(12,2), CONSTRAINT pk_sample PRIMARY KEY (id), CONSTRAINT fk_sample_parent FOREIGN KEY (id) REFERENCES SYSDBA.parent_sample(id))");
                 statement.execute("INSERT INTO SYSDBA.parent_sample VALUES (1)");
                 statement.execute("INSERT INTO SYSDBA.parent_sample VALUES (2)");
-                statement.execute("INSERT INTO SYSDBA.sample VALUES (1, 'alpha')");
-                statement.execute("INSERT INTO SYSDBA.sample VALUES (2, 'beta')");
+                statement.execute("INSERT INTO SYSDBA.sample VALUES (1, 'alpha', TIMESTAMP '2024-01-01 12:00:00.123456', 123.45)");
+                statement.execute("INSERT INTO SYSDBA.sample VALUES (2, 'beta', TIMESTAMP '2024-02-01 00:00:00.000000', 678.90)");
                 statement.execute("CREATE INDEX idx_sample_name ON SYSDBA.sample(name)");
                 statement.execute("CREATE INDEX zz_sample_name_id ON SYSDBA.sample(name, id)");
                 statement.execute("CREATE VIEW SYSDBA.v_sample AS SELECT id, name FROM SYSDBA.sample");

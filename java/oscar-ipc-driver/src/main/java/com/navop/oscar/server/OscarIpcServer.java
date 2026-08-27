@@ -210,9 +210,7 @@ public final class OscarIpcServer {
             return ok(id, result);
         }
         if ("schema/dump_ddl".equals(method)) {
-            Map<String, Object> result = new LinkedHashMap<String, Object>();
-            result.put("statements", new ArrayList<String>());
-            return ok(id, result);
+            return handleSchemaDumpDdl(id, params);
         }
         return error(id, ProtocolError.METHOD_NOT_FOUND, "method `" + method + "` is not implemented");
     }
@@ -246,7 +244,7 @@ public final class OscarIpcServer {
         for (String method : methodNames) {
             methods.add(method);
         }
-        result.put("extension_version", "0.1.2");
+        result.put("extension_version", "0.1.3");
         result.put("api_used", api);
         result.put("features", features);
         result.put("drivers_ready", drivers);
@@ -390,6 +388,205 @@ public final class OscarIpcServer {
             return lastError;
         }
         return ok(id, new ArrayList<Map<String, Object>>());
+    }
+
+    private JsonNode handleSchemaDumpDdl(JsonNode id, JsonNode params) throws SQLException {
+        ConnectionState state = requireConnection(id, requiredLong(params, "conn_id"));
+        if (state == null) {
+            return lastError;
+        }
+        JsonNode objects = params.get("objects");
+        if (objects == null || !objects.isArray()) {
+            return ok(id, emptyDumpResult());
+        }
+        // The host sends every export target as an object ref. Only tables have
+        // a JDBC-metadata based dump; views/sequences/etc. fall through to the
+        // host's shared builders.
+        String database = "";
+        String schema = "";
+        String table = "";
+        for (JsonNode object : objects) {
+            if (!isTableKind(textOrEmpty(object.get("kind")))) {
+                continue;
+            }
+            database = optionalText(object, "database", "");
+            schema = optionalText(object, "schema", "");
+            table = textOrEmpty(object.get("name"));
+            break;
+        }
+        if (table.isEmpty()) {
+            return ok(id, emptyDumpResult());
+        }
+        if (database.isEmpty()) {
+            database = state.config.getDatabase();
+        }
+        List<String> statements = buildTableDdl(state.connection, database, schema, table);
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("statements", statements);
+        return ok(id, result);
+    }
+
+    private boolean isTableKind(String kind) {
+        return "table".equals(kind) || "base_table".equals(kind);
+    }
+
+    private Map<String, Object> emptyDumpResult() {
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("statements", new ArrayList<String>());
+        return result;
+    }
+
+    /**
+     * 从 JDBC metadata 组装完整表结构 DDL（列、主键、注释、普通/唯一索引、外键）。
+     * Oscar 没有稳定的服务端 get_ddl 函数，因此按 metadata 逐条重建，
+     * 输出结果优于 host 的共享列构建器（后者不含索引与外键）。
+     */
+    private List<String> buildTableDdl(Connection connection, String database, String schema, String table) throws SQLException {
+        List<Map<String, Object>> columns = readColumns(connection, database, schema, table);
+        if (columns.isEmpty()) {
+            return new ArrayList<String>();
+        }
+        String tableName = qualifiedIdentifier("", schema, table);
+        List<String> definitions = new ArrayList<String>();
+        List<String> primary = new ArrayList<String>();
+        for (Map<String, Object> column : columns) {
+            definitions.add(dumpColumnDefinition(column));
+            if (Boolean.TRUE.equals(column.get("is_primary"))) {
+                primary.add(quote(String.valueOf(column.get("name"))));
+            }
+        }
+        if (!primary.isEmpty()) {
+            definitions.add("PRIMARY KEY (" + join(primary, ", ") + ")");
+        }
+        List<String> statements = new ArrayList<String>();
+        statements.add("CREATE TABLE " + tableName + " (" + join(definitions, ", ") + ")");
+        String tableComment = readTableComment(connection, database, schema, table);
+        if (!tableComment.isEmpty()) {
+            statements.add(commentStatement(tableName, null, tableComment));
+        }
+        for (Map<String, Object> column : columns) {
+            String comment = String.valueOf(column.get("comment"));
+            if (!comment.isEmpty()) {
+                statements.add(commentStatement(tableName, String.valueOf(column.get("name")), comment));
+            }
+        }
+        for (Map<String, Object> index : readIndexes(connection, database, schema, table)) {
+            if (Boolean.TRUE.equals(index.get("is_primary"))) {
+                continue;
+            }
+            statements.add(indexStatement(schema, table, index));
+        }
+        for (Map<String, Object> foreignKey : readForeignKeys(connection, database, schema, table)) {
+            statements.add(foreignKeyStatement(schema, foreignKey));
+        }
+        return statements;
+    }
+
+    private static String dumpColumnDefinition(Map<String, Object> column) {
+        StringBuilder definition = new StringBuilder();
+        definition.append(quote(String.valueOf(column.get("name")))).append(' ').append(String.valueOf(column.get("raw_type")));
+        if (Boolean.FALSE.equals(column.get("nullable"))) {
+            definition.append(" NOT NULL");
+        }
+        String defaultValue = rawDefault(column);
+        if (!defaultValue.isEmpty()) {
+            definition.append(" DEFAULT ").append(defaultValue);
+        }
+        return definition.toString();
+    }
+
+    /**
+     * 优先使用 metadata 的原始 COLUMN_DEF（未去除引号的 raw_default），
+     * 避免把字符串默认值 'abc' 展开成裸标识符 abc。
+     */
+    @SuppressWarnings("unchecked")
+    private static String rawDefault(Map<String, Object> column) {
+        Object extra = column.get("extra");
+        if (extra instanceof Map) {
+            Object raw = ((Map<String, Object>) extra).get("raw_default");
+            if (raw != null && !String.valueOf(raw).isEmpty()) {
+                return String.valueOf(raw);
+            }
+        }
+        Object value = column.get("default");
+        return value == null ? "" : String.valueOf(value);
+    }
+
+    private static String indexStatement(String schema, String table, Map<String, Object> index) {
+        StringBuilder sql = new StringBuilder("CREATE ");
+        if (Boolean.TRUE.equals(index.get("is_unique"))) {
+            sql.append("UNIQUE ");
+        }
+        sql.append("INDEX ").append(quote(String.valueOf(index.get("name"))))
+            .append(" ON ").append(qualifiedIdentifier("", schema, table))
+            .append(" (").append(quoteList(columnList(index))).append(")");
+        return sql.toString();
+    }
+
+    private static List<String> columnList(Map<String, Object> map) {
+        return toStringList(map.get("columns"));
+    }
+
+    private String foreignKeyStatement(String schema, Map<String, Object> foreignKey) {
+        StringBuilder sql = new StringBuilder("ALTER TABLE ");
+        sql.append(qualifiedIdentifier("", schema, String.valueOf(foreignKey.get("from_table"))));
+        sql.append(" ADD CONSTRAINT ").append(quote(String.valueOf(foreignKey.get("name"))));
+        sql.append(" FOREIGN KEY (").append(quoteList(toStringList(foreignKey.get("from_columns")))).append(")");
+        String refSchema = firstNonEmpty(String.valueOf(foreignKey.get("to_schema")), schema);
+        sql.append(" REFERENCES ").append(qualifiedIdentifier("", refSchema, String.valueOf(foreignKey.get("to_table"))));
+        List<String> refColumns = toStringList(foreignKey.get("to_columns"));
+        sql.append(" (").append(quoteList(refColumns)).append(")");
+        String onUpdate = String.valueOf(foreignKey.get("on_update"));
+        if (!onUpdate.isEmpty() && !"NO ACTION".equals(onUpdate)) {
+            sql.append(" ON UPDATE ").append(onUpdate);
+        }
+        String onDelete = String.valueOf(foreignKey.get("on_delete"));
+        if (!onDelete.isEmpty() && !"NO ACTION".equals(onDelete)) {
+            sql.append(" ON DELETE ").append(onDelete);
+        }
+        return sql.toString();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> toStringList(Object value) {
+        List<String> result = new ArrayList<String>();
+        if (value instanceof List) {
+            for (Object item : (List<Object>) value) {
+                result.add(String.valueOf(item));
+            }
+        }
+        return result;
+    }
+
+    private String readTableComment(Connection connection, String database, String schema, String table) {
+        try {
+            DatabaseMetaData metadata = connection.getMetaData();
+            for (String catalogPattern : catalogPatterns(database)) {
+                for (String schemaPattern : schemaPatterns(schema)) {
+                    ResultSet rows;
+                    try {
+                        rows = metadata.getTables(emptyToNull(catalogPattern), emptyToNull(schemaPattern), table, new String[]{"TABLE"});
+                    } catch (SQLException error) {
+                        continue;
+                    }
+                    try {
+                        while (rows.next()) {
+                            String rowSchema = resultString(rows, "TABLE_SCHEM");
+                            String rowTable = resultString(rows, "TABLE_NAME");
+                            if (!schemaMatches(schema, rowSchema) || !nameMatches(table, rowTable)) {
+                                continue;
+                            }
+                            return resultString(rows, "REMARKS");
+                        }
+                    } finally {
+                        rows.close();
+                    }
+                }
+            }
+        } catch (SQLException error) {
+            return "";
+        }
+        return "";
     }
 
     private JsonNode handleSchemaViews(JsonNode id, JsonNode params) throws SQLException {
@@ -710,13 +907,17 @@ public final class OscarIpcServer {
                         int size = resultInt(rows, "COLUMN_SIZE", 0);
                         int scale = resultInt(rows, "DECIMAL_DIGITS", 0);
                         String rawType = resultString(rows, "TYPE_NAME");
+                        String rawColumnDef = resultString(rows, "COLUMN_DEF");
+                        String typeName = columnType(rawType, size, scale);
+                        Map<String, Object> extra = new LinkedHashMap<String, Object>();
+                        extra.put("raw_default", rawColumnDef);
                         Map<String, Object> column = new LinkedHashMap<String, Object>();
                         column.put("ordinal", Integer.valueOf(resultInt(rows, "ORDINAL_POSITION", columns.size() + 1)));
                         column.put("name", name);
-                        column.put("type", rawType);
-                        column.put("raw_type", rawType);
+                        column.put("type", typeName);
+                        column.put("raw_type", typeName);
                         column.put("nullable", Boolean.valueOf(nullableCode != DatabaseMetaData.columnNoNulls));
-                        column.put("default", metadataDefault(resultString(rows, "COLUMN_DEF")));
+                        column.put("default", metadataDefault(rawColumnDef));
                         column.put("is_primary", Boolean.valueOf(containsIgnoreCase(primaryKey.columns, name)));
                         column.put("is_unique", Boolean.FALSE);
                         column.put("is_partition_key", Boolean.FALSE);
@@ -725,7 +926,7 @@ public final class OscarIpcServer {
                         column.put("precision", size > 0 ? Integer.valueOf(size) : null);
                         column.put("scale", scale > 0 ? Integer.valueOf(scale) : null);
                         column.put("comment", resultString(rows, "REMARKS"));
-                        column.put("extra", new LinkedHashMap<String, Object>());
+                        column.put("extra", extra);
                         columns.add(column);
                     }
                 } finally {
@@ -838,6 +1039,7 @@ public final class OscarIpcServer {
                                 foreignKey.put("from_table", rowTable);
                                 foreignKey.put("from_columns", new ArrayList<String>());
                                 foreignKey.put("to_table", resultString(rows, "PKTABLE_NAME"));
+                                foreignKey.put("to_schema", resultString(rows, "PKTABLE_SCHEM"));
                                 foreignKey.put("to_columns", new ArrayList<String>());
                                 foreignKey.put("on_update", jdbcReferentialAction(resultShort(rows, "UPDATE_RULE", (short) DatabaseMetaData.importedKeyNoAction)));
                                 foreignKey.put("on_delete", jdbcReferentialAction(resultShort(rows, "DELETE_RULE", (short) DatabaseMetaData.importedKeyNoAction)));
@@ -1550,6 +1752,32 @@ public final class OscarIpcServer {
 
     private static String sqlString(String value) {
         return value.replace("'", "''");
+    }
+
+    /**
+     * 补全 JDBC TYPE_NAME 的类型限定符：CHAR/VARCHAR 追加长度，
+     * DECIMAL/NUMERIC 追加 (精度[,小数位])，TIMESTAMP/DATETIME/TIME
+     * 追加小数秒精度。真实驱动若已返回带括号的类型则原样保留。
+     */
+    private static String columnType(String base, int size, int scale) {
+        if (base.isEmpty() || base.indexOf('(') >= 0 || base.indexOf(' ') >= 0) {
+            return base;
+        }
+        String upper = base.toUpperCase();
+        if (upper.contains("CHAR") || upper.contains("VARCHAR") || upper.contains("BINARY")) {
+            if (size > 0) {
+                return base + "(" + size + ")";
+            }
+        } else if ("DECIMAL".equals(upper) || "NUMERIC".equals(upper) || "NUMBER".equals(upper)) {
+            if (size > 0) {
+                return scale > 0 ? base + "(" + size + "," + scale + ")" : base + "(" + size + ")";
+            }
+        } else if ("TIMESTAMP".equals(upper) || "DATETIME".equals(upper) || "TIME".equals(upper)) {
+            if (scale > 0) {
+                return base + "(" + scale + ")";
+            }
+        }
+        return base;
     }
 
     private String columnDefinition(JsonNode col) {
