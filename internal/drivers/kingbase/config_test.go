@@ -149,6 +149,37 @@ func TestSpecBuildsKingbaseMetadataSQL(t *testing.T) {
 			t.Fatalf("view definition SQL %q does not contain %q", viewSQL, want)
 		}
 	}
+
+	dumpDiskSQL := spec.SchemaSQL.DumpDDL(cfg, "", "app", "demo")
+	for _, want := range []string{"sys_get_tabledef", "sys_class", "sys_namespace", "c.relname = 'demo'", "n.nspname = 'app'", "c.relkind IN ('r','p','f')"} {
+		if !strings.Contains(dumpDiskSQL, want) {
+			t.Fatalf("dump DDL SQL %q does not contain %q", dumpDiskSQL, want)
+		}
+	}
+
+	dumpUnqualifiedSQL := spec.SchemaSQL.DumpDDL(cfg, "", "", "demo")
+	if strings.Contains(dumpUnqualifiedSQL, "n.nspname") {
+		t.Fatalf("dump DDL SQL without schema still filters by schema: %q", dumpUnqualifiedSQL)
+	}
+}
+
+func TestSchemaSQLForNamesDumpDDLEscapesValues(t *testing.T) {
+	cfg, err := ConfigFromWire(map[string]any{
+		"host":     "127.0.0.1",
+		"username": "system",
+		"database": "TEST",
+	})
+	if err != nil {
+		t.Fatalf("ConfigFromWire returned error: %v", err)
+	}
+
+	dumpSQL := schemaSQLForNames(sysCatalogNames()).DumpDDL(cfg, "", "it's", "de'mo")
+	if !strings.Contains(dumpSQL, "c.relname = 'de''mo'") {
+		t.Fatalf("dump DDL SQL does not escape table name: %q", dumpSQL)
+	}
+	if !strings.Contains(dumpSQL, "n.nspname = 'it''s'") {
+		t.Fatalf("dump DDL SQL does not escape schema name: %q", dumpSQL)
+	}
 }
 
 func TestSpecBuildsKingbaseObjectsSQLWithProtocolKinds(t *testing.T) {
@@ -237,6 +268,13 @@ func TestSchemaSQLForNamesPGUsesPGCatalogs(t *testing.T) {
 		t.Fatalf("view definition SQL %q does not use pg_views", viewSQL)
 	}
 
+	dumpSQL := schemaSQL.DumpDDL(cfg, "", "app", "demo")
+	for _, want := range []string{"pg_get_tabledef", "pg_class", "pg_namespace", "c.relkind IN ('r','p','f')"} {
+		if !strings.Contains(dumpSQL, want) {
+			t.Fatalf("dump DDL SQL %q does not contain %q", dumpSQL, want)
+		}
+	}
+
 	// The pg_* flavor must never reference sys_* relations.
 	for _, probe := range []string{
 		schemaSQL.Databases(cfg),
@@ -248,6 +286,7 @@ func TestSchemaSQLForNamesPGUsesPGCatalogs(t *testing.T) {
 		schemaSQL.Views(cfg, "", "app"),
 		schemaSQL.Functions(cfg, "", "app"),
 		schemaSQL.ViewDefinition(cfg, "", "app", "v_demo"),
+		schemaSQL.DumpDDL(cfg, "", "app", "demo"),
 	} {
 		if strings.Contains(probe, "sys_") {
 			t.Fatalf("pg catalog SQL leaked sys_ relation: %q", probe)

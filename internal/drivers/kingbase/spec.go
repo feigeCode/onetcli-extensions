@@ -38,6 +38,7 @@ type catalogNames struct {
 	language   string // sys_language / pg_language
 	am         string // sys_am / pg_am
 	views      string // sys_views / pg_views
+	ddlFunc    string // sys_get_tabledef / pg_get_tabledef
 }
 
 func sysCatalogNames() catalogNames {
@@ -53,6 +54,7 @@ func sysCatalogNames() catalogNames {
 		language:   "sys_language",
 		am:         "sys_am",
 		views:      "sys_views",
+		ddlFunc:    "sys_get_tabledef",
 	}
 }
 
@@ -69,6 +71,7 @@ func pgCatalogNames() catalogNames {
 		language:   "pg_language",
 		am:         "pg_am",
 		views:      "pg_views",
+		ddlFunc:    "pg_get_tabledef",
 	}
 }
 
@@ -203,6 +206,13 @@ func schemaSQLForNames(c catalogNames) dbipc.SchemaSQL {
 				schemaFilter = fmt.Sprintf(" AND schemaname = '%s'", escapeSQL(schema))
 			}
 			return fmt.Sprintf("SELECT definition, 'NO' FROM %s WHERE viewname = '%s'%s", c.views, escapeSQL(view), schemaFilter)
+		},
+		DumpDDL: func(cfg dbipc.Config, database, schema, table string) string {
+			schemaFilter := ""
+			if schema != "" {
+				schemaFilter = fmt.Sprintf(" AND n.nspname = '%s'", escapeSQL(schema))
+			}
+			return fmt.Sprintf("SELECT %s(c.oid) FROM %s c JOIN %s n ON n.oid = c.relnamespace WHERE c.relname = '%s'%s AND c.relkind IN ('r','p','f')", c.ddlFunc, c.class, c.namespace, escapeSQL(table), schemaFilter)
 		},
 	}
 }
