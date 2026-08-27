@@ -1209,8 +1209,9 @@ public final class GBase8sIpcServer {
         List<String> statements = readStringArray(params.path("statements"));
         boolean stopOnError = !params.has("stop_on_error") || params.path("stop_on_error").asBoolean(true);
         boolean inTransaction = params.path("in_transaction").asBoolean(false);
+        boolean logging = isLogging(state);
         boolean originalAutoCommit = state.connection.getAutoCommit();
-        if (inTransaction) {
+        if (inTransaction && logging) {
             state.connection.setAutoCommit(false);
         }
         List<Map<String, Object>> results = new ArrayList<Map<String, Object>>();
@@ -1235,7 +1236,7 @@ public final class GBase8sIpcServer {
                     }
                 }
             }
-            if (inTransaction) {
+            if (inTransaction && logging) {
                 if (errors.isEmpty()) {
                     state.connection.commit();
                 } else {
@@ -1243,7 +1244,7 @@ public final class GBase8sIpcServer {
                 }
             }
         } finally {
-            if (inTransaction) {
+            if (inTransaction && logging) {
                 state.connection.setAutoCommit(originalAutoCommit);
             }
         }
@@ -1262,8 +1263,11 @@ public final class GBase8sIpcServer {
         if (state.activeTxId != null) {
             return error(id, ProtocolError.INVALID_PARAMS, "connection already has an active transaction");
         }
-        state.originalAutoCommit = state.connection.getAutoCommit();
-        state.connection.setAutoCommit(false);
+        boolean logging = isLogging(state);
+        if (logging) {
+            state.originalAutoCommit = state.connection.getAutoCommit();
+            state.connection.setAutoCommit(false);
+        }
         String txId = DRIVER_ID + "-tx-" + nextTxId++;
         state.activeTxId = txId;
         transactions.put(txId, new TxState(connId));
@@ -1278,7 +1282,9 @@ public final class GBase8sIpcServer {
             return lastError;
         }
         ConnectionState state = connections.get(Long.valueOf(tx.connId));
-        state.connection.commit();
+        if (state.logging) {
+            state.connection.commit();
+        }
         finishTransaction(requiredText(params, "tx_id"), state);
         return ok(id, null);
     }
@@ -1296,10 +1302,14 @@ public final class GBase8sIpcServer {
             if (sp == null) {
                 return error(id, ProtocolError.INVALID_PARAMS, "unknown savepoint `" + savepoint + "`");
             }
-            state.connection.rollback(sp);
+            if (state.logging) {
+                state.connection.rollback(sp);
+            }
             return ok(id, null);
         }
-        state.connection.rollback();
+        if (state.logging) {
+            state.connection.rollback();
+        }
         finishTransaction(txId, state);
         return ok(id, null);
     }
@@ -1312,7 +1322,7 @@ public final class GBase8sIpcServer {
         }
         String name = requiredText(params, "name");
         ConnectionState state = connections.get(Long.valueOf(tx.connId));
-        tx.savepoints.put(name, state.connection.setSavepoint(name));
+        tx.savepoints.put(name, state.logging ? state.connection.setSavepoint(name) : null);
         return ok(id, null);
     }
 
@@ -1327,7 +1337,10 @@ public final class GBase8sIpcServer {
         if (sp == null) {
             return error(id, ProtocolError.INVALID_PARAMS, "unknown savepoint `" + name + "`");
         }
-        connections.get(Long.valueOf(tx.connId)).connection.releaseSavepoint(sp);
+        ConnectionState state = connections.get(Long.valueOf(tx.connId));
+        if (state.logging && sp != null) {
+            state.connection.releaseSavepoint(sp);
+        }
         return ok(id, null);
     }
 
@@ -1342,7 +1355,11 @@ public final class GBase8sIpcServer {
         }
         if ("create_database".equals(op)) {
             String database = requiredText(payload, "database_name");
-            String sql = "CREATE DATABASE " + database;
+            // A plain CREATE DATABASE creates a non-logging database in which
+            // transactions are not supported (-79744). Create WITH LOG so the
+            // database accepts transaction-backed imports like the vendor
+            // tools do.
+            String sql = "CREATE DATABASE " + database + " WITH LOG";
             List<String> statements = new ArrayList<String>();
             statements.add(sql);
             Map<String, Object> result = new LinkedHashMap<String, Object>();
@@ -1707,8 +1724,43 @@ public final class GBase8sIpcServer {
 
     private void finishTransaction(String txId, ConnectionState state) throws SQLException {
         transactions.remove(txId);
-        state.connection.setAutoCommit(state.originalAutoCommit);
+        if (state.logging) {
+            state.connection.setAutoCommit(state.originalAutoCommit);
+        }
         state.activeTxId = null;
+    }
+
+    /**
+     * Returns whether the connected database supports transactions (i.e. was
+     * created WITH LOG). Databases created without WITH LOG have is_logging = 0
+     * and reject BEGIN WORK / setAutoCommit(false) with -79744 ("不支持事务").
+     * The result is cached on the connection state. When the catalog cannot be
+     * read the method is conservative and reports logging = true to preserve
+     * the previous behavior.
+     */
+    private boolean isLogging(ConnectionState state) {
+        if (state.loggingChecked) {
+            return state.logging;
+        }
+        state.logging = true;
+        state.loggingChecked = true;
+        try {
+            // Must use a plain Statement: the GBase 8s JDBC driver rejects
+            // prepared statements that reference the cross-database catalog
+            // (sysmaster:sysdatabases) with a syntax error.
+            QueryResult result = queryRunner.queryBufferedStatement(
+                state.connection,
+                GBase8sSchemaSql.loggingSql(state.config.getDatabase()),
+                null
+            );
+            if (!result.getRows().isEmpty()) {
+                String value = rowString(result.getRows().get(0), 0);
+                state.logging = !"0".equals(value);
+            }
+        } catch (SQLException ignored) {
+            // Cannot determine logging support; keep transactions enabled.
+        }
+        return state.logging;
     }
 
     private static String quote(String name) {
@@ -2296,6 +2348,8 @@ public final class GBase8sIpcServer {
         private final Connection connection;
         private boolean originalAutoCommit = true;
         private String activeTxId;
+        private boolean logging = true;
+        private boolean loggingChecked;
 
         private ConnectionState(GBase8sConfig config, Connection connection) {
             this.config = config;

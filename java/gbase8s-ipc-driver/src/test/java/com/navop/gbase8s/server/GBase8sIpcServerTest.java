@@ -7,6 +7,7 @@ import org.junit.Test;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
@@ -14,6 +15,7 @@ import java.sql.Statement;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
@@ -326,11 +328,11 @@ public class GBase8sIpcServerTest {
             "{\"op\":\"create_database\",\"payload\":{\"database_name\":\"demo_parent\"}}"
         ));
         assertEquals(
-            "CREATE DATABASE demo_parent",
+            "CREATE DATABASE demo_parent WITH LOG",
             create.get("result").get("sql").asText()
         );
         assertEquals(
-            "CREATE DATABASE demo_parent",
+            "CREATE DATABASE demo_parent WITH LOG",
             create.get("result").get("statements").get(0).asText()
         );
 
@@ -343,6 +345,45 @@ public class GBase8sIpcServerTest {
             "DROP DATABASE demo_parent",
             drop.get("result").get("sql").asText()
         );
+    }
+
+    @Test
+    public void nonLoggingDatabaseKeepsAutoCommitAndSkipsJdbcTransactionCalls() throws Exception {
+        final AtomicBoolean setAutoCommitCalled = new AtomicBoolean();
+        final AtomicBoolean commitCalled = new AtomicBoolean();
+        final AtomicBoolean rollbackCalled = new AtomicBoolean();
+
+        GBase8sIpcServer server = new GBase8sIpcServer(new JdbcConnectionFactory() {
+            @Override
+            public Connection open(GBase8sConfig config) throws Exception {
+                return nonLoggingConnection(setAutoCommitCalled, commitCalled, rollbackCalled);
+            }
+        });
+        server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));
+        JsonNode open = server.handle(request(2, "conn/open", "{\"driver_id\":\"gbase8s\",\"config\":" + configJson() + "}"));
+        assertTrue(open.toString(), open.has("result"));
+        long connId = open.get("result").get("conn_id").asLong();
+
+        JsonNode begin = server.handle(request(3, "tx/begin", "{\"conn_id\":" + connId + "}"));
+        assertTrue(begin.toString(), begin.has("result"));
+        String txId = begin.get("result").get("tx_id").asText();
+        assertFalse("tx/begin must not disable auto commit on a non-logging database", setAutoCommitCalled.get());
+
+        JsonNode exec = server.handle(request(4, "exec/run",
+            "{\"conn_id\":" + connId + ",\"sql\":\"INSERT INTO demo_child VALUES (1)\",\"tx_id\":\"" + txId + "\"}"));
+        assertTrue(exec.toString(), exec.has("result"));
+        assertEquals(1, exec.get("result").get("affected_rows").asInt());
+
+        JsonNode commit = server.handle(request(5, "tx/commit", "{\"tx_id\":\"" + txId + "\"}"));
+        assertTrue(commit.toString(), commit.has("result"));
+        assertFalse("tx/commit must not call JDBC commit on a non-logging database", commitCalled.get());
+
+        JsonNode begin2 = server.handle(request(6, "tx/begin", "{\"conn_id\":" + connId + "}"));
+        assertTrue(begin2.toString(), begin2.has("result"));
+        String txId2 = begin2.get("result").get("tx_id").asText();
+        JsonNode rollback = server.handle(request(7, "tx/rollback", "{\"tx_id\":\"" + txId2 + "\"}"));
+        assertTrue(rollback.toString(), rollback.has("result"));
+        assertFalse("tx/rollback must not call JDBC rollback on a non-logging database", rollbackCalled.get());
     }
 
     @Test
@@ -594,6 +635,118 @@ public class GBase8sIpcServerTest {
                     }
                     if ("prepareStatement".equals(name)) {
                         throw new SQLException("prepared sysmaster catalog query is not supported");
+                    }
+                    if ("close".equals(name)) {
+                        return null;
+                    }
+                    throw new UnsupportedOperationException(name);
+                }
+            }
+        );
+    }
+
+    private static Connection nonLoggingConnection(
+        final AtomicBoolean setAutoCommitCalled,
+        final AtomicBoolean commitCalled,
+        final AtomicBoolean rollbackCalled
+    ) {
+        return (Connection) Proxy.newProxyInstance(
+            GBase8sIpcServerTest.class.getClassLoader(),
+            new Class<?>[]{Connection.class},
+            new InvocationHandler() {
+                @Override
+                public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+                    String name = method.getName();
+                    if ("isValid".equals(name)) {
+                        return Boolean.TRUE;
+                    }
+                    if ("getAutoCommit".equals(name)) {
+                        return Boolean.TRUE;
+                    }
+                    if ("setAutoCommit".equals(name)) {
+                        setAutoCommitCalled.set(Boolean.TRUE);
+                        return null;
+                    }
+                    if ("createStatement".equals(name)) {
+                        return loggingStatement("0");
+                    }
+                    if ("prepareStatement".equals(name)) {
+                        String sql = String.valueOf(args[0]);
+                        if (sql.contains("sysmaster:sysdatabases")) {
+                            return loggingPreparedStatement("0");
+                        }
+                        return updatePreparedStatement(1L);
+                    }
+                    if ("commit".equals(name)) {
+                        commitCalled.set(Boolean.TRUE);
+                        return null;
+                    }
+                    if ("rollback".equals(name)) {
+                        rollbackCalled.set(Boolean.TRUE);
+                        return null;
+                    }
+                    if ("close".equals(name)) {
+                        return null;
+                    }
+                    throw new UnsupportedOperationException(name);
+                }
+            }
+        );
+    }
+
+    private static Statement loggingStatement(final String isLogging) {
+        return (Statement) Proxy.newProxyInstance(
+            GBase8sIpcServerTest.class.getClassLoader(),
+            new Class<?>[]{Statement.class},
+            new InvocationHandler() {
+                @Override
+                public Object invoke(Object proxy, Method method, Object[] args) {
+                    String name = method.getName();
+                    if ("executeQuery".equals(name)) {
+                        return singleColumnResultSet(isLogging);
+                    }
+                    if ("close".equals(name)) {
+                        return null;
+                    }
+                    throw new UnsupportedOperationException(name);
+                }
+            }
+        );
+    }
+
+    private static PreparedStatement loggingPreparedStatement(final String isLogging) {
+        return (PreparedStatement) Proxy.newProxyInstance(
+            GBase8sIpcServerTest.class.getClassLoader(),
+            new Class<?>[]{PreparedStatement.class},
+            new InvocationHandler() {
+                @Override
+                public Object invoke(Object proxy, Method method, Object[] args) {
+                    String name = method.getName();
+                    if ("executeQuery".equals(name)) {
+                        return singleColumnResultSet(isLogging);
+                    }
+                    if ("executeUpdate".equals(name)) {
+                        return Integer.valueOf(0);
+                    }
+                    if ("close".equals(name)) {
+                        return null;
+                    }
+                    throw new UnsupportedOperationException(name);
+                }
+            }
+        );
+    }
+
+    private static PreparedStatement updatePreparedStatement(final long affected) {
+        return (PreparedStatement) Proxy.newProxyInstance(
+            GBase8sIpcServerTest.class.getClassLoader(),
+            new Class<?>[]{PreparedStatement.class},
+            new InvocationHandler() {
+                @Override
+                public Object invoke(Object proxy, Method method, Object[] args) {
+                    String name = method.getName();
+                    if ("executeUpdate".equals(name)) {
+                        return Integer.valueOf((int) affected);
                     }
                     if ("close".equals(name)) {
                         return null;

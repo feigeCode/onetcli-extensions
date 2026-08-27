@@ -11,6 +11,14 @@ public final class GBase8sSchemaSql {
         return "SELECT name FROM sysmaster:sysdatabases ORDER BY name";
     }
 
+    /**
+     * Returns the transaction logging flag of the current database (1 when the
+     * database was created WITH LOG and supports transactions, 0 otherwise).
+     */
+    public static String loggingSql(String database) {
+        return "SELECT is_logging FROM sysmaster:sysdatabases WHERE name = '" + escapeSql(database) + "'";
+    }
+
     public static String schemasSql(String database) {
         return "SELECT username, username FROM sysusers ORDER BY username";
     }
