@@ -1669,6 +1669,76 @@ func TestSchemaViewDefinitionUsesDriverSQL(t *testing.T) {
 	}
 }
 
+func TestSchemaDumpDDLReturnsEmptyWhenDriverHasNoProvider(t *testing.T) {
+	driverName, state := registerStreamingDriver(t, nil)
+	spec := testSpecWithSQLDriver(driverName)
+	server := NewServer(spec, nil)
+	server.initialized = true
+
+	connID := openTestConn(t, server)
+	resp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "schema/dump_ddl",
+		Params:  []byte(fmt.Sprintf(`{"conn_id":%d,"objects":[{"kind":"table","name":"demo","schema":"app","database":"main"}],"options":{}}`, connID)),
+	})
+	if resp.Error != nil {
+		t.Fatalf("schema/dump_ddl returned error: %#v", resp.Error)
+	}
+	if string(resp.Result) != `{"statements":[]}` {
+		t.Fatalf("dump_ddl raw result = %s, want empty statements", resp.Result)
+	}
+	if got := atomic.LoadInt32(&state.queryCalls); got != 0 {
+		t.Fatalf("provider-less dump_ddl executed %d queries, want 0", got)
+	}
+}
+
+func TestSchemaDumpDDLUsesLastColumnAndSkipsNonTables(t *testing.T) {
+	driverName, state := registerStreamingDriver(t, [][]driver.Value{
+		{"", "CREATE TABLE app.demo (id INT NOT NULL)"},
+		{"", "ALTER TABLE app.demo ADD CONSTRAINT pk_demo PRIMARY KEY (id)"},
+		{"", ""},
+	})
+	state.columns = []string{"ignored", "ddl"}
+	spec := testSpecWithSQLDriver(driverName)
+	spec.SchemaSQL.DumpDDL = func(cfg Config, database, schema, table string) string {
+		if database != "main" || schema != "app" || table != "demo" {
+			t.Fatalf("dump_ddl params = database:%q schema:%q table:%q", database, schema, table)
+		}
+		return "SELECT '', ddl FROM test_tables"
+	}
+	server := NewServer(spec, nil)
+	server.initialized = true
+
+	connID := openTestConn(t, server)
+	resp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "schema/dump_ddl",
+		Params:  []byte(fmt.Sprintf(`{"conn_id":%d,"objects":[{"kind":"view","name":"v_demo","schema":"app"},{"kind":"table","name":"demo","schema":"app","database":"main"}],"options":{}}`, connID)),
+	})
+	if resp.Error != nil {
+		t.Fatalf("schema/dump_ddl returned error: %#v", resp.Error)
+	}
+
+	var result struct {
+		Statements []string `json:"statements"`
+	}
+	decodeResult(t, resp, &result)
+	if len(result.Statements) != 2 {
+		t.Fatalf("dump_ddl statements = %#v, want two non-empty DDL rows", result.Statements)
+	}
+	if result.Statements[0] != "CREATE TABLE app.demo (id INT NOT NULL)" {
+		t.Fatalf("dump_ddl statement[0] = %q", result.Statements[0])
+	}
+	if result.Statements[1] != "ALTER TABLE app.demo ADD CONSTRAINT pk_demo PRIMARY KEY (id)" {
+		t.Fatalf("dump_ddl statement[1] = %q", result.Statements[1])
+	}
+	if got := atomic.LoadInt32(&state.queryCalls); got != 1 {
+		t.Fatalf("dump_ddl executed %d queries, want 1 (non-table object must be skipped)", got)
+	}
+}
+
 func TestOptionalSchemaMethodsReturnEmptyResults(t *testing.T) {
 	server := NewServer(testSpec(), nil)
 	server.initialized = true
@@ -1784,6 +1854,7 @@ var streamingDriverSeq uint64
 type streamingDriverState struct {
 	rows          [][]driver.Value
 	columns       []string
+	queryCalls    int32
 	nextCalls     int32
 	closeCalls    int32
 	execCalls     int32
@@ -1841,6 +1912,7 @@ func (c *streamingConn) Ping(context.Context) error {
 }
 
 func (c *streamingConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	atomic.AddInt32(&c.state.queryCalls, 1)
 	if atomic.LoadInt32(&c.inTx) == 1 {
 		atomic.AddInt32(&c.state.txQueryCalls, 1)
 	}

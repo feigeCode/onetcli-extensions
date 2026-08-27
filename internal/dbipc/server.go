@@ -242,7 +242,7 @@ func (s *Server) Handle(ctx context.Context, req ipc.Message) ipc.Message {
 	case "schema/view_definition":
 		return s.handleSchemaViewDefinition(ctx, req)
 	case "schema/dump_ddl":
-		return s.handleEmptyDumpDDL(req)
+		return s.handleSchemaDumpDDL(ctx, req)
 	default:
 		return s.err(req.ID, ErrMethodNotFound, fmt.Sprintf("method `%s` is not implemented", req.Method))
 	}
@@ -1718,18 +1718,72 @@ func (s *Server) handleSchemaViewDefinition(ctx context.Context, req ipc.Message
 	return s.ok(req.ID, map[string]any{"sql": sqlText, "is_materialized": isMaterialized})
 }
 
+func (s *Server) handleSchemaDumpDDL(ctx context.Context, req ipc.Message) ipc.Message {
+	var p struct {
+		ConnID  uint64 `json:"conn_id"`
+		Objects []struct {
+			Kind     string `json:"kind"`
+			Name     string `json:"name"`
+			Database string `json:"database,omitempty"`
+			Schema   string `json:"schema,omitempty"`
+		} `json:"objects"`
+	}
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.errFromError(req.ID, ErrInvalidParams, err)
+	}
+	conn, ok := s.conns[p.ConnID]
+	if !ok {
+		return s.err(req.ID, ErrUnknownConnID, fmt.Sprintf("unknown conn_id %d", p.ConnID))
+	}
+	if conn.schemaSQL.DumpDDL == nil {
+		return s.ok(req.ID, map[string]any{"statements": []string{}})
+	}
+	// The host exports one table per `schema/dump_ddl` request; each object's
+	// provider SQL is expected to return one row per statement with the DDL
+	// text in the last column (e.g. DBMS_METADATA.GET_DDL or SHOW CREATE
+	// TABLE). Any provider failure is non-fatal: an empty result lets the host
+	// fall back to its shared column-based DDL builder.
+	statements := []string{}
+	for _, object := range p.Objects {
+		if !isTableKind(object.Kind) || strings.TrimSpace(object.Name) == "" {
+			continue
+		}
+		sqlText := conn.schemaSQL.DumpDDL(conn.config, object.Database, object.Schema, object.Name)
+		if strings.TrimSpace(sqlText) == "" {
+			continue
+		}
+		rows, err := queryObjects(ctx, conn.db, sqlText, func(cols []any) map[string]any {
+			if len(cols) == 0 {
+				return map[string]any{"ddl": ""}
+			}
+			return map[string]any{"ddl": stringCell(cols, len(cols)-1)}
+		})
+		if err != nil {
+			return s.ok(req.ID, map[string]any{"statements": []string{}})
+		}
+		for _, row := range rows {
+			if ddl, ok := row["ddl"].(string); ok && strings.TrimSpace(ddl) != "" {
+				statements = append(statements, ddl)
+			}
+		}
+	}
+	return s.ok(req.ID, map[string]any{"statements": statements})
+}
+
+func isTableKind(kind string) bool {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "table", "base_table":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Server) handleEmptySchemaList(req ipc.Message) ipc.Message {
 	if _, errResp := s.connFromParams(req); errResp != nil {
 		return *errResp
 	}
 	return s.ok(req.ID, []map[string]any{})
-}
-
-func (s *Server) handleEmptyDumpDDL(req ipc.Message) ipc.Message {
-	if _, errResp := s.connFromParams(req); errResp != nil {
-		return *errResp
-	}
-	return s.ok(req.ID, map[string]any{"statements": []string{}})
 }
 
 func (s *Server) parseConfig(ctx context.Context, params json.RawMessage) (Config, ConnectionSpec, error) {

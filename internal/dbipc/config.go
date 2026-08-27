@@ -61,6 +61,11 @@ type SchemaSQL struct {
 	Triggers       func(Config, string, string, string) string
 	Sequences      func(Config, string, string) string
 	ViewDefinition func(Config, string, string, string) string
+	// DumpDDL returns SQL that produces the full server-side structure DDL
+	// (one row per statement, DDL text in the last column) for the given
+	// table. Return an empty string when the dialect has no such provider so
+	// the host falls back to the shared column-based DDL builder.
+	DumpDDL func(Config, string, string, string) string
 }
 
 func ConfigFromWire(raw map[string]any, defaultPort int) (Config, error) {
