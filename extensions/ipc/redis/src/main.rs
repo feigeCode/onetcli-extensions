@@ -456,7 +456,10 @@ fn connection_url(config: &RedisConnectionConfig) -> String {
             encode_userinfo(username),
             encode_userinfo(password)
         ),
-        (None, Some(password)) => format!("default:{}@", encode_userinfo(password)),
+        // 未配置用户名时生成 `:pass@`（空用户名），使 redis-rs 以单参数 `AUTH <pass>`
+        // 认证；若生成 `default:<pass>@` 会以双参数 `AUTH default <pass>` 认证，
+        // 在不支持/不期望用户名认证的 Redis 上会导致连接失败或超时。
+        (None, Some(password)) => format!(":{}@", encode_userinfo(password)),
         _ => String::new(),
     };
     let host = if config.host.parse::<std::net::Ipv6Addr>().is_ok() {
@@ -691,7 +694,7 @@ mod tests {
     }
 
     #[test]
-    fn connection_url_uses_default_username_for_password_only_auth() {
+    fn connection_url_uses_empty_username_for_password_only_auth() {
         let config = RedisConnectionConfig {
             host: "127.0.0.1".into(),
             port: 6379,
@@ -703,7 +706,25 @@ mod tests {
         };
 
         assert_eq!(
-            "rediss://default:secret@127.0.0.1:6379/0",
+            "rediss://:secret@127.0.0.1:6379/0",
+            connection_url(&config)
+        );
+    }
+
+    #[test]
+    fn connection_url_empty_username_is_same_as_no_username() {
+        let config = RedisConnectionConfig {
+            host: "127.0.0.1".into(),
+            port: 6379,
+            username: Some(String::new()),
+            password: Some("secret".into()),
+            database: 0,
+            use_tls: false,
+            connect_timeout_ms: None,
+        };
+
+        assert_eq!(
+            "redis://:secret@127.0.0.1:6379/0",
             connection_url(&config)
         );
     }
