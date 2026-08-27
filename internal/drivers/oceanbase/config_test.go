@@ -80,6 +80,79 @@ func TestSpecBuildsMySQLDSNWithoutHostManagedSSHOptions(t *testing.T) {
 	}
 }
 
+func TestSpecMySQLDSNDropsDriverControlParamsFromWire(t *testing.T) {
+	cfg := ConfigFromWireNoError(t, map[string]any{
+		"host":     "127.0.0.1",
+		"username": "root@test",
+		"password": "secret",
+		"database": "app",
+		"extra_params": map[string]any{
+			"PROTOCOL":                 "mysql",
+			"oracle_mysql_wire_driver": "oboracle-test",
+			"charset":                  "utf8mb4",
+		},
+	})
+	if cfg.Protocol != "mysql" {
+		t.Fatalf("protocol = %q, want mysql", cfg.Protocol)
+	}
+
+	dsn, err := buildMySQLDSN(cfg)
+	if err != nil {
+		t.Fatalf("buildMySQLDSN returned error: %v", err)
+	}
+	parsed, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		t.Fatalf("mysql.ParseDSN(%q) returned error: %v", dsn, err)
+	}
+	assertNoDriverControlParams(t, parsed.Params)
+	if parsed.Params["charset"] != "utf8mb4" {
+		t.Fatalf("charset = %q, want utf8mb4; params = %#v", parsed.Params["charset"], parsed.Params)
+	}
+}
+
+func TestSpecMySQLDSNDropsDriverControlParamsWhenBypassingWire(t *testing.T) {
+	// Guard mysqlDriverExtra directly: even if ConfigFromWire misses a variant
+	// (or cfg is built without ConfigFromWire), driver-control params must not
+	// become server SET statements.
+	cfg := dbipc.Config{
+		Host:     "127.0.0.1",
+		Port:     2881,
+		Username: "root@test",
+		Password: "secret",
+		Database: "app",
+		Extra: map[string]string{
+			"protocol":                   "mysql",
+			"PROTOCOL":                   "mysql",
+			"Oracle_MySQL_Wire_Driver":   "oboracle-test",
+			" oracle_mysql_wire_driver ": "dedicated",
+			"charset":                    "utf8mb4",
+		},
+	}
+
+	dsn, err := buildMySQLDSN(cfg)
+	if err != nil {
+		t.Fatalf("buildMySQLDSN returned error: %v", err)
+	}
+	parsed, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		t.Fatalf("mysql.ParseDSN(%q) returned error: %v", dsn, err)
+	}
+	assertNoDriverControlParams(t, parsed.Params)
+	if parsed.Params["charset"] != "utf8mb4" {
+		t.Fatalf("charset = %q, want utf8mb4; params = %#v", parsed.Params["charset"], parsed.Params)
+	}
+}
+
+func assertNoDriverControlParams(t *testing.T, params map[string]string) {
+	t.Helper()
+	for key := range params {
+		normalized := strings.ToLower(strings.TrimSpace(key))
+		if normalized == "protocol" || normalized == "oracle_mysql_wire_driver" {
+			t.Fatalf("dsn leaked driver-control param %q as server SET statement: %#v", key, params)
+		}
+	}
+}
+
 func TestSpecNormalizesMySQLConnectTimeoutAliasAsSeconds(t *testing.T) {
 	cfg := ConfigFromWireNoError(t, map[string]any{
 		"host":     "127.0.0.1",

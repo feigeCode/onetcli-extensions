@@ -138,6 +138,13 @@ func mysqlDriverExtra(extra map[string]string) (map[string]string, error) {
 	for _, key := range keys {
 		normalizedKey := strings.ToLower(strings.TrimSpace(key))
 		switch normalizedKey {
+		case "protocol", "oracle_mysql_wire_driver":
+			// Driver-control parameters selected by ConfigFromWire and
+			// oracleMySQLWireDriverName must never leak into MySQL server
+			// system-variable params. go-sql-driver/mysql sends every param as
+			// SET during handshake, and OceanBase rejects `protocol` with
+			// Error 1193 (Unknown system variable 'protocol').
+			delete(params, key)
 		case "timeout":
 			if !timeoutIsCanonical || key == "timeout" {
 				timeoutValue = params[key]
