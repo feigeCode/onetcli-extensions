@@ -124,6 +124,19 @@ public class OscarIpcServerTest {
     }
 
     @Test
+    public void schemaDumpDdlReturnsEmptySoHostFallsBackToSharedBuilder() throws Exception {
+        OscarIpcServer server = newServer();
+        server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));
+        JsonNode open = server.handle(request(2, "conn/open", "{\"driver_id\":\"oscar\",\"config\":" + configJson() + "}"));
+        long connId = open.get("result").get("conn_id").asLong();
+
+        JsonNode dump = server.handle(request(3, "schema/dump_ddl", "{\"conn_id\":" + connId + ",\"objects\":[{\"kind\":\"table\",\"name\":\"sample\",\"schema\":\"SYSDBA\",\"database\":\"OSRDB\"}],\"options\":{}}"));
+
+        assertTrue(dump.toString(), dump.has("result"));
+        assertEquals(0, dump.get("result").get("statements").size());
+    }
+
+    @Test
     public void schemaMethodsReadJdbcMetadataRows() throws Exception {
         OscarIpcServer server = newServer();
         server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));
