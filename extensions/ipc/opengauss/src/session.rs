@@ -784,18 +784,60 @@ impl OpenGaussSession {
                         ));
                     }
                 }
-                ObjectKind::Table => statements.push(format!(
-                    "-- DDL dump for table {} requires server-side pg_get_tabledef support",
-                    crate::ddl::qualified_name(
+                ObjectKind::Table => {
+                    let qualified = crate::ddl::qualified_name(
                         object.database.as_deref(),
                         object.schema.as_deref(),
-                        &object.name
-                    )
-                )),
+                        &object.name,
+                    );
+                    match self.table_definition(
+                        object.database.as_deref(),
+                        object.schema.as_deref(),
+                        &object.name,
+                    )? {
+                        Some(ddl) => statements.push(ddl),
+                        None => statements.push(format!(
+                            "-- DDL dump for table {qualified} requires server-side pg_get_tabledef support"
+                        )),
+                    }
+                }
                 _ => {}
             }
         }
         Ok(statements)
+    }
+
+    /// Returns the official CREATE TABLE definition produced by the server, or
+    /// `None` when the table does not exist or the server does not expose
+    /// `pg_get_tabledef` (older openGauss builds).
+    fn table_definition(
+        &mut self,
+        database: Option<&str>,
+        schema: Option<&str>,
+        table: &str,
+    ) -> Result<Option<String>> {
+        if !self.database_matches(database)? {
+            return Ok(None);
+        }
+        let schema = schema
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("public");
+        let sql = format!(
+            "SELECT pg_catalog.pg_get_tabledef(c.oid) \
+             FROM pg_catalog.pg_class c \
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = {} AND c.relname = {} AND c.relkind IN ('r','p','f')",
+            quote_literal(schema),
+            quote_literal(table)
+        );
+        let rows = self
+            .runtime
+            .block_on(self.client.query(sql.as_str(), &[]));
+        Ok(rows.ok().and_then(|rows| {
+            rows.first().and_then(|row| {
+                row.try_get::<_, Option<String>>(0).ok().flatten()
+            })
+        }))
     }
 
     fn query_single_string(&mut self, sql: &str) -> Result<String> {
