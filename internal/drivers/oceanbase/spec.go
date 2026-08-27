@@ -57,6 +57,7 @@ func Spec() dbipc.DriverSpec {
 			Views:          oceanbaseMySQLViewsSQL,
 			Functions:      oceanbaseMySQLFunctionsSQL,
 			ViewDefinition: oceanbaseMySQLViewDefinitionSQL,
+			DumpDDL:        oceanbaseMySQLDumpDDL,
 		},
 	}
 }
@@ -402,6 +403,14 @@ func oceanbaseMySQLViewDefinitionSQL(cfg dbipc.Config, database, schema, view st
 	return fmt.Sprintf("SELECT VIEW_DEFINITION, 'NO' FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_SCHEMA = '%s' AND TABLE_NAME = '%s'", escapeSQL(db), escapeSQL(view))
 }
 
+// oceanbaseMySQLDumpDDL uses SHOW CREATE TABLE, the standard MySQL-compatible
+// way to get the official full CREATE TABLE text. The result's last column
+// (Create Table) carries the DDL and is consumed by the shared dump handler.
+func oceanbaseMySQLDumpDDL(cfg dbipc.Config, database, schema, table string) string {
+	db := mysqlCatalog(database, schema, cfg.Database)
+	return fmt.Sprintf("SHOW CREATE TABLE `%s`.`%s`", escapeBacktick(db), escapeBacktick(stripIdentifierQuotes(table)))
+}
+
 func mysqlCatalog(database, schema, fallback string) string {
 	if strings.TrimSpace(schema) != "" {
 		return schema
@@ -439,4 +448,12 @@ func mysqlKindFilter(kinds []string) string {
 
 func escapeSQL(value string) string {
 	return strings.ReplaceAll(value, "'", "''")
+}
+
+func escapeBacktick(value string) string {
+	return strings.ReplaceAll(value, "`", "``")
+}
+
+func stripIdentifierQuotes(value string) string {
+	return strings.Trim(strings.TrimSpace(value), "`")
 }

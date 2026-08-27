@@ -552,6 +552,38 @@ func ConfigFromWireNoError(t *testing.T, raw map[string]any) dbipc.Config {
 	return cfg
 }
 
+func TestSpecBuildsOceanBaseMySQLDumpDDL(t *testing.T) {
+	cfg := ConfigFromWireNoError(t, map[string]any{
+		"host":     "127.0.0.1",
+		"username": "root@test",
+		"database": "app",
+	})
+	spec := Spec()
+	if spec.SchemaSQL.DumpDDL == nil {
+		t.Fatalf("oceanbase Spec() must provide DumpDDL")
+	}
+
+	fromConfigDB := spec.SchemaSQL.DumpDDL(cfg, "", "", "demo")
+	if fromConfigDB != "SHOW CREATE TABLE `app`.`demo`" {
+		t.Fatalf("config-database DumpDDL SQL = %q", fromConfigDB)
+	}
+
+	fromSchema := spec.SchemaSQL.DumpDDL(cfg, "shop", "shop", "demo")
+	if fromSchema != "SHOW CREATE TABLE `shop`.`demo`" {
+		t.Fatalf("schema DumpDDL SQL = %q", fromSchema)
+	}
+
+	escaped := spec.SchemaSQL.DumpDDL(cfg, "", "", "we`ird")
+	if !strings.Contains(escaped, "`we``ird`") {
+		t.Fatalf("DumpDDL SQL %q does not escape a backtick", escaped)
+	}
+
+	quoted := spec.SchemaSQL.DumpDDL(cfg, "", "", "`demo`")
+	if !strings.Contains(quoted, "`demo`") {
+		t.Fatalf("DumpDDL SQL %q should strip identifier quotes around the table", quoted)
+	}
+}
+
 func mysqlHandshakePacket(serverVersion string) []byte {
 	return mysqlPacket(mysqlHandshakePayload(serverVersion))
 }
