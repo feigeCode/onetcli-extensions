@@ -54,4 +54,64 @@ public class GBase8sSchemaSqlTest {
             GBase8sSchemaSql.dumpDdlSql("gbasedbt", "order'items")
         );
     }
+
+    @Test
+    public void normalizeGetDdlScriptTerminatesCreateTableBeforeComment() {
+        String raw = "CREATE TABLE demo_child (\n"
+            + "    id INTEGER NOT NULL,\n"
+            + "    parent_id INTEGER,\n"
+            + "    name VARCHAR(40),\n"
+            + "    PRIMARY KEY (id)\n"
+            + ")\n"
+            + "COMMENT ON TABLE demo_child IS 'demo表';\n"
+            + "COMMENT ON COLUMN demo_child.id IS '主键';\n"
+            + "COMMENT ON COLUMN demo_child.parent_id IS '父级Id'";
+        String expected = "CREATE TABLE demo_child (\n"
+            + "    id INTEGER NOT NULL,\n"
+            + "    parent_id INTEGER,\n"
+            + "    name VARCHAR(40),\n"
+            + "    PRIMARY KEY (id)\n"
+            + ");\n"
+            + "COMMENT ON TABLE demo_child IS 'demo表';\n"
+            + "COMMENT ON COLUMN demo_child.id IS '主键';\n"
+            + "COMMENT ON COLUMN demo_child.parent_id IS '父级Id'";
+        assertEquals(expected, GBase8sSchemaSql.normalizeGetDdlScript(raw));
+    }
+
+    @Test
+    public void normalizeGetDdlScriptLeavesAlreadyTerminatedCreateTableUntouched() {
+        String raw = "CREATE TABLE demo_edit_items (\n"
+            + "    id INTEGER NOT NULL,\n"
+            + "    name VARCHAR(40),\n"
+            + "    PRIMARY KEY (id)\n"
+            + ");";
+        assertEquals(raw, GBase8sSchemaSql.normalizeGetDdlScript(raw));
+    }
+
+    @Test
+    public void normalizeGetDdlScriptTerminatesCreateTableBeforeIndexAndBlankLines() {
+        String raw = "CREATE TABLE t (\n"
+            + "    id INTEGER NOT NULL,\n"
+            + "    amount DECIMAL(10,2),\n"
+            + "    PRIMARY KEY (id)\n"
+            + ")\n"
+            + "\n"
+            + "CREATE UNIQUE INDEX ix_t ON t (id);\n"
+            + "COMMENT ON TABLE t IS 'with index'";
+        String expected = "CREATE TABLE t (\n"
+            + "    id INTEGER NOT NULL,\n"
+            + "    amount DECIMAL(10,2),\n"
+            + "    PRIMARY KEY (id)\n"
+            + ");\n"
+            + "\n"
+            + "CREATE UNIQUE INDEX ix_t ON t (id);\n"
+            + "COMMENT ON TABLE t IS 'with index'";
+        assertEquals(expected, GBase8sSchemaSql.normalizeGetDdlScript(raw));
+    }
+
+    @Test
+    public void normalizeGetDdlScriptHandlesNullAndSingleLine() {
+        assertEquals(null, GBase8sSchemaSql.normalizeGetDdlScript(null));
+        assertEquals("CREATE TABLE t (id INT);", GBase8sSchemaSql.normalizeGetDdlScript("CREATE TABLE t (id INT);"));
+    }
 }

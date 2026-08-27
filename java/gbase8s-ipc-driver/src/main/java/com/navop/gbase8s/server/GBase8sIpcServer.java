@@ -243,7 +243,7 @@ public final class GBase8sIpcServer {
         for (String method : methodNames) {
             methods.add(method);
         }
-        result.put("extension_version", "0.1.23");
+        result.put("extension_version", "0.1.24");
         result.put("api_used", api);
         result.put("features", features);
         result.put("drivers_ready", drivers);
@@ -477,7 +477,7 @@ public final class GBase8sIpcServer {
         for (List<Map<String, Object>> row : query.getRows()) {
             String ddl = rowString(row, 0);
             if (!ddl.isEmpty()) {
-                statements.add(ddl);
+                statements.add(GBase8sSchemaSql.normalizeGetDdlScript(ddl));
             }
         }
         Map<String, Object> result = new LinkedHashMap<String, Object>();

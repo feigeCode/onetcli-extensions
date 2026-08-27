@@ -1,5 +1,6 @@
 package com.navop.gbase8s.schema;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public final class GBase8sSchemaSql {
@@ -103,6 +104,77 @@ public final class GBase8sSchemaSql {
      */
     public static String dumpDdlSql(String owner, String table) {
         return "EXECUTE PROCEDURE get_ddl('table', '" + escapeSql(owner) + "', '" + escapeSql(table) + "', 0)";
+    }
+
+    /**
+     * The GBase 8s <code>get_ddl</code> SPL emits a table's CREATE TABLE and its
+     * follow-up index/COMMENT statements as one atomic script in which only the
+     * final statement carries a terminating {@code ;}. Re-running such a script
+     * fails with a syntax error because the unterminated CREATE TABLE and the
+     * next statement are parsed as one. Insert {@code ;} before every top-level
+     * statement that begins a new statement, so the script can be re-executed.
+     */
+    public static String normalizeGetDdlScript(String ddl) {
+        if (ddl == null) {
+            return null;
+        }
+        String[] lines = ddl.split("\n", -1);
+        if (lines.length <= 1) {
+            return ddl;
+        }
+        List<String> result = new ArrayList<String>(lines.length);
+        int prev = -1; // index in result of the last non-empty line
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) {
+                result.add(line);
+                continue;
+            }
+            if (prev >= 0 && beginsStatement(trimmed)) {
+                String previous = result.get(prev);
+                if (!previous.trim().endsWith(";")) {
+                    result.set(prev, previous + ";");
+                }
+            }
+            result.add(line);
+            prev = result.size() - 1;
+        }
+        StringBuilder out = new StringBuilder(ddl.length() + 16);
+        for (int i = 0; i < result.size(); i++) {
+            if (i > 0) {
+                out.append('\n');
+            }
+            out.append(result.get(i));
+        }
+        return out.toString();
+    }
+
+    private static boolean beginsStatement(String trimmedLine) {
+        int end = trimmedLine.indexOf(' ');
+        String keyword = end < 0 ? trimmedLine : trimmedLine.substring(0, end);
+        if (keyword.isEmpty()) {
+            return false;
+        }
+        switch (keyword.toUpperCase()) {
+            case "COMMENT":
+            case "CREATE":
+            case "ALTER":
+            case "DROP":
+            case "REVOKE":
+            case "GRANT":
+            case "INSERT":
+            case "UPDATE":
+            case "DELETE":
+            case "SELECT":
+            case "SET":
+            case "PRAGMA":
+            case "TRUNCATE":
+            case "LOCK":
+            case "UNLOCK":
+                return true;
+            default:
+                return false;
+        }
     }
 
     private static String ownerFilter(String tableAlias, String schema) {
