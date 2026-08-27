@@ -1,6 +1,7 @@
 name: GBase 8s
 description: GBase 8s Java IPC 驅動
 "common.connect": "連線"
+"common.create": "建立"
 "database.connection.tab.general": "常規"
 "database.connection.tab.advanced": "進階"
 "database.connection.field.name": "連線名稱"
@@ -11,6 +12,9 @@ description: GBase 8s Java IPC 驅動
 "database.connection.field.password": "密碼"
 "database.connection.field.database": "資料庫"
 "database.gbase8s.connection.title": "新建 GBase 8s 連線"
+"database.gbase8s.database.new": "新建資料庫"
+"database.gbase8s.database.name": "資料庫名稱"
+"database.gbase8s.database.name.placeholder": "輸入資料庫名稱"
 "database.gbase8s.field.gbasedbtserver": "GBASEDBTSERVER 服務名"
 "database.gbase8s.field.gbasedbtserver.placeholder": "gbaseserver"
 "database.gbase8s.field.protocol": "協定"

@@ -47,7 +47,7 @@ public class GBase8sIpcServerTest {
         GBase8sIpcServer server = newServer();
 
         JsonNode init = server.handle(request(1, "init", "{\"host_version\":\"1.0.0\",\"api_offered\":{\"database\":\"1.0\"},\"instance_id\":\"test\",\"config\":{}}"));
-        assertEquals("0.1.22", init.get("result").get("extension_version").asText());
+        assertEquals("0.1.23", init.get("result").get("extension_version").asText());
         assertEquals("gbase8s", init.get("result").get("drivers_ready").get(0).asText());
         assertTrue(init.get("result").get("methods").toString().contains("schema/object_view"));
         assertTrue(init.get("result").get("methods").toString().contains("schema/dump_ddl"));
@@ -304,6 +304,36 @@ public class GBase8sIpcServerTest {
             "{\"kind\":\"table\",\"database\":\"testdb\",\"schema\":\"testuser\",\"name\":\"probe_table\"}"
         ));
         assertEquals("DROP TABLE testuser.probe_table", drop.get("result").get("sql").asText());
+    }
+
+    @Test
+    public void ddlBuildCreateAndDropDatabase() throws Exception {
+        GBase8sIpcServer server = newServer();
+        server.handle(request(1, "init", "{\"host_version\":\"0.10.0\"}"));
+
+        JsonNode create = server.handle(request(
+            2,
+            "ddl/build",
+            "{\"op\":\"create_database\",\"payload\":{\"database_name\":\"demo_parent\"}}"
+        ));
+        assertEquals(
+            "CREATE DATABASE demo_parent",
+            create.get("result").get("sql").asText()
+        );
+        assertEquals(
+            "CREATE DATABASE demo_parent",
+            create.get("result").get("statements").get(0).asText()
+        );
+
+        JsonNode drop = server.handle(request(
+            3,
+            "ddl/build",
+            "{\"op\":\"drop_database\",\"payload\":{\"database_name\":\"demo_parent\"}}"
+        ));
+        assertEquals(
+            "DROP DATABASE demo_parent",
+            drop.get("result").get("sql").asText()
+        );
     }
 
     @Test

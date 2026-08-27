@@ -1,6 +1,7 @@
 name: GBase 8s
 description: GBase 8s Java IPC 驱动
 "common.connect": "连接"
+"common.create": "创建"
 "database.connection.tab.general": "常规"
 "database.connection.tab.advanced": "高级"
 "database.connection.field.name": "连接名称"
@@ -11,6 +12,9 @@ description: GBase 8s Java IPC 驱动
 "database.connection.field.password": "密码"
 "database.connection.field.database": "数据库"
 "database.gbase8s.connection.title": "新建 GBase 8s 连接"
+"database.gbase8s.database.new": "新建数据库"
+"database.gbase8s.database.name": "数据库名称"
+"database.gbase8s.database.name.placeholder": "输入数据库名称"
 "database.gbase8s.field.gbasedbtserver": "GBASEDBTSERVER 服务名"
 "database.gbase8s.field.gbasedbtserver.placeholder": "gbaseserver"
 "database.gbase8s.field.protocol": "协议"

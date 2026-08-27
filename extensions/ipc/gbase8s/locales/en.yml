@@ -1,6 +1,7 @@
 name: GBase 8s
 description: GBase 8s Java IPC driver
 "common.connect": "Connect"
+"common.create": "Create"
 "database.connection.tab.general": "General"
 "database.connection.tab.advanced": "Advanced"
 "database.connection.field.name": "Connection Name"
@@ -11,6 +12,9 @@ description: GBase 8s Java IPC driver
 "database.connection.field.password": "Password"
 "database.connection.field.database": "Database"
 "database.gbase8s.connection.title": "New GBase 8s Connection"
+"database.gbase8s.database.new": "New Database"
+"database.gbase8s.database.name": "Database Name"
+"database.gbase8s.database.name.placeholder": "Enter database name"
 "database.gbase8s.field.gbasedbtserver": "GBASEDBTSERVER"
 "database.gbase8s.field.gbasedbtserver.placeholder": "gbaseserver"
 "database.gbase8s.field.protocol": "Protocol"

@@ -243,7 +243,7 @@ public final class GBase8sIpcServer {
         for (String method : methodNames) {
             methods.add(method);
         }
-        result.put("extension_version", "0.1.22");
+        result.put("extension_version", "0.1.23");
         result.put("api_used", api);
         result.put("features", features);
         result.put("drivers_ready", drivers);
@@ -1194,6 +1194,26 @@ public final class GBase8sIpcServer {
         }
         if ("drop_table".equals(op) || "drop_view".equals(op)) {
             return handleDdlBuildDrop(id, payload);
+        }
+        if ("create_database".equals(op)) {
+            String database = requiredText(payload, "database_name");
+            String sql = "CREATE DATABASE " + database;
+            List<String> statements = new ArrayList<String>();
+            statements.add(sql);
+            Map<String, Object> result = new LinkedHashMap<String, Object>();
+            result.put("sql", sql);
+            result.put("statements", statements);
+            return ok(id, result);
+        }
+        if ("drop_database".equals(op)) {
+            String database = requiredText(payload, "database_name");
+            String sql = "DROP DATABASE " + database;
+            List<String> statements = new ArrayList<String>();
+            statements.add(sql);
+            Map<String, Object> result = new LinkedHashMap<String, Object>();
+            result.put("sql", sql);
+            result.put("statements", statements);
+            return ok(id, result);
         }
         return error(id, ProtocolError.INVALID_PARAMS, "ddl op `" + op + "` is not supported");
     }
