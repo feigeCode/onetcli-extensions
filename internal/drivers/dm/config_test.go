@@ -174,3 +174,34 @@ func ConfigFromWireNoError(t *testing.T, raw map[string]any) dbipc.Config {
 	}
 	return cfg
 }
+
+func TestSpecBuildsDamengDumpDDL(t *testing.T) {
+	cfg := ConfigFromWireNoError(t, map[string]any{
+		"host":     "127.0.0.1",
+		"username": "SYSDBA",
+	})
+	spec := Spec()
+	if spec.SchemaSQL.DumpDDL == nil {
+		t.Fatalf("dm Spec() must provide DumpDDL")
+	}
+
+	withoutOwner := spec.SchemaSQL.DumpDDL(cfg, "", "", "demo")
+	if withoutOwner != "SELECT DBMS_METADATA.GET_DDL('TABLE', 'DEMO') FROM DUAL" {
+		t.Fatalf("ownerless DumpDDL SQL = %q", withoutOwner)
+	}
+
+	withOwner := spec.SchemaSQL.DumpDDL(cfg, "APP", "APP", "demo")
+	if withOwner != "SELECT DBMS_METADATA.GET_DDL('TABLE', 'DEMO', 'APP') FROM DUAL" {
+		t.Fatalf("owner DumpDDL SQL = %q", withOwner)
+	}
+
+	qualified := spec.SchemaSQL.DumpDDL(cfg, "", "", "app.demo")
+	if qualified != "SELECT DBMS_METADATA.GET_DDL('TABLE', 'DEMO', 'APP') FROM DUAL" {
+		t.Fatalf("qualified DumpDDL SQL = %q", qualified)
+	}
+
+	escaped := spec.SchemaSQL.DumpDDL(cfg, "", "", "o'brien")
+	if !strings.Contains(escaped, "'O''BRIEN'") {
+		t.Fatalf("DumpDDL SQL %q does not escape a single quote", escaped)
+	}
+}

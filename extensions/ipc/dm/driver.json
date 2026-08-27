@@ -3,7 +3,7 @@
   "name": "Dameng DM",
   "description": "使用 Go 开发的达梦 DM 数据库 IPC 驱动，支持连接管理、SQL 查询、事务、Schema 浏览及数据导入导出。 Go-based IPC driver for Dameng DM with connection management, SQL queries, transactions, schema browsing, and data import/export.",
   "category": "domestic_database",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "engines": {
     "onetcli": ">=0.10.0"
   },

@@ -33,6 +33,7 @@ func Spec() dbipc.DriverSpec {
 			Views:          dmViewsSQL,
 			Functions:      dmFunctionsSQL,
 			ViewDefinition: dmViewDefinitionSQL,
+			DumpDDL:        dmDumpDDL,
 		},
 	}
 }
@@ -130,6 +131,18 @@ func dmViewDefinitionSQL(cfg dbipc.Config, database, schema, view string) string
 		ownerFilter = fmt.Sprintf(" AND OWNER = '%s'", upperEscapeSQL(owner))
 	}
 	return fmt.Sprintf("SELECT TEXT, 'NO' FROM ALL_VIEWS WHERE VIEW_NAME = '%s'%s", upperEscapeSQL(view), ownerFilter)
+}
+
+// dmDumpDDL asks the server for the official CREATE TABLE text via
+// DBMS_METADATA, which Dameng DM implements with the Oracle-compatible
+// signature. The owner argument is omitted when unknown so the provider uses
+// the connected user's schema.
+func dmDumpDDL(cfg dbipc.Config, database, schema, table string) string {
+	owner, table := dmOwnerAndTable(database, schema, table)
+	if owner == "" {
+		return fmt.Sprintf("SELECT DBMS_METADATA.GET_DDL('TABLE', '%s') FROM DUAL", upperEscapeSQL(table))
+	}
+	return fmt.Sprintf("SELECT DBMS_METADATA.GET_DDL('TABLE', '%s', '%s') FROM DUAL", upperEscapeSQL(table), upperEscapeSQL(owner))
 }
 
 func dmOwner(database, schema string) string {
