@@ -55,7 +55,7 @@ func buildDSN(cfg dbipc.Config) (string, error) {
 	}
 
 	values := url.Values{}
-	for key, value := range dbipc.CopyDriverExtra(cfg.Extra) {
+	for key, value := range oracleDSNParams(cfg.Extra) {
 		values.Set(key, value)
 	}
 	rawURL := url.URL{
@@ -66,6 +66,64 @@ func buildDSN(cfg dbipc.Config) (string, error) {
 		RawQuery: values.Encode(),
 	}
 	return rawURL.String(), nil
+}
+
+// oracleDSNParams returns the go-ora URL options for a connection.
+//
+// Only parameters go-ora understands may appear in the DSN: go-ora rejects
+// any unknown option with "unknown URL option: <key>" (protocol code -33001).
+// Host-managed generic parameters (connect_timeout / read_timeout from the
+// connection form, schema preferences, external driver identity) are therefore
+// never copied into the DSN. The form's timeout values are mapped to the
+// go-ora equivalents so user-configured timeouts still take effect.
+func oracleDSNParams(extra map[string]string) map[string]string {
+	params := make(map[string]string)
+	for key, value := range dbipc.CopyDriverExtra(extra) {
+		switch normalizeOptionKey(key) {
+		case "connect_timeout":
+			if seconds, ok := timeoutSeconds(value); ok {
+				params["CONNECT TIMEOUT"] = seconds
+			}
+		case "read_timeout":
+			if seconds, ok := timeoutSeconds(value); ok {
+				params["READ TIMEOUT"] = seconds
+			}
+		case "external_driver_id",
+			"default_schema",
+			"schema_filter_mode",
+			"schema_filter_include",
+			"schema_filter_exclude":
+			// Host-managed; not go-ora URL options.
+		default:
+			params[key] = value
+		}
+	}
+	return params
+}
+
+// normalizeOptionKey folds a wire extra-param key to a canonical lowercase
+// option name so host forms can use either snake_case or space-separated
+// spellings.
+func normalizeOptionKey(key string) string {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	normalized = strings.ReplaceAll(normalized, " ", "_")
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	return normalized
+}
+
+// timeoutSeconds converts a form timeout value (seconds) to the integer
+// seconds string go-ora expects. Unparseable or negative values are skipped so
+// a bad form value never fails the whole connection.
+func timeoutSeconds(raw string) (string, bool) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", false
+	}
+	seconds, err := strconv.Atoi(value)
+	if err != nil || seconds < 0 {
+		return "", false
+	}
+	return strconv.Itoa(seconds), true
 }
 
 func oracleDatabasesSQL(cfg dbipc.Config) string {

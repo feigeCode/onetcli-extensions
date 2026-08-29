@@ -304,3 +304,103 @@ func TestSpecBuildsOracleDumpDDL(t *testing.T) {
 		t.Fatalf("DumpDDL SQL %q does not escape a single quote", escaped)
 	}
 }
+
+func TestSpecMapsFormTimeoutsToGoOraOptions(t *testing.T) {
+	cfg, err := ConfigFromWire(map[string]any{
+		"host":         "127.0.0.1",
+		"username":     "system",
+		"password":     "oracle",
+		"service_name": "orclpdb1",
+		"extra_params": map[string]any{
+			"connect_timeout": "30",
+			"read_timeout":    "28800",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ConfigFromWire returned error: %v", err)
+	}
+
+	dsn, err := Spec().BuildDSN(cfg)
+	if err != nil {
+		t.Fatalf("BuildDSN returned error: %v", err)
+	}
+
+	if !strings.Contains(dsn, "CONNECT+TIMEOUT=30") {
+		t.Fatalf("dsn %q does not map connect_timeout to CONNECT TIMEOUT", dsn)
+	}
+	if !strings.Contains(dsn, "READ+TIMEOUT=28800") {
+		t.Fatalf("dsn %q does not map read_timeout to READ TIMEOUT", dsn)
+	}
+	if strings.Contains(dsn, "connect_timeout=") {
+		t.Fatalf("dsn %q leaks the unsupported connect_timeout URL option", dsn)
+	}
+	if strings.Contains(dsn, "read_timeout=") {
+		t.Fatalf("dsn %q leaks the unsupported read_timeout URL option", dsn)
+	}
+}
+
+func TestSpecDropsHostManagedParamsFromDSN(t *testing.T) {
+	cfg, err := ConfigFromWire(map[string]any{
+		"host":         "127.0.0.1",
+		"username":     "system",
+		"password":     "oracle",
+		"service_name": "orclpdb1",
+		"extra_params": map[string]any{
+			"external_driver_id":    "oracle-go",
+			"default_schema":        "APP",
+			"schema_filter_mode":    "auto",
+			"schema_filter_include": "",
+			"schema_filter_exclude": "",
+			"ssh_target_host":       "db.internal",
+			"SERVER":                "dedicated",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ConfigFromWire returned error: %v", err)
+	}
+
+	dsn, err := Spec().BuildDSN(cfg)
+	if err != nil {
+		t.Fatalf("BuildDSN returned error: %v", err)
+	}
+
+	for _, leaked := range []string{
+		"external_driver_id",
+		"default_schema",
+		"schema_filter",
+		"ssh_",
+	} {
+		if strings.Contains(strings.ToLower(dsn), leaked) {
+			t.Fatalf("dsn %q leaked host-managed param %q", dsn, leaked)
+		}
+	}
+	if !strings.Contains(dsn, "SERVER=dedicated") {
+		t.Fatalf("dsn %q dropped a driver-supported option", dsn)
+	}
+}
+
+func TestSpecSkipsUnparseableTimeoutWithoutFailing(t *testing.T) {
+	cfg, err := ConfigFromWire(map[string]any{
+		"host":         "127.0.0.1",
+		"username":     "system",
+		"password":     "oracle",
+		"service_name": "orclpdb1",
+		"extra_params": map[string]any{
+			"connect_timeout": "abc",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ConfigFromWire returned error: %v", err)
+	}
+
+	dsn, err := Spec().BuildDSN(cfg)
+	if err != nil {
+		t.Fatalf("BuildDSN returned error: %v", err)
+	}
+	if strings.Contains(dsn, "TIMEOUT") {
+		t.Fatalf("dsn %q should skip the unparseable timeout", dsn)
+	}
+	if strings.Contains(dsn, "connect_timeout") {
+		t.Fatalf("dsn %q leaked the unsupported connect_timeout URL option", dsn)
+	}
+}
