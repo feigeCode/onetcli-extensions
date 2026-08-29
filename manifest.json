@@ -223,6 +223,16 @@
       "manifest": "windterm-importer/manifest.json"
     },
     {
+      "id": "com.onetcli.importer.mobaxterm",
+      "kind": "composite",
+      "name": "MobaXterm Importer",
+      "version": "0.1.0",
+      "release_tag": "mobaxterm-importer-v0.1.0",
+      "description": "从 MobaXterm 的 MobaXterm.ini 配置或 .mxtsessions 会话导出文件中发现 SSH 连接，并通过 Rust WASM 导入到 Navop；支持便携版与安装版配置的手动迁移。 Discovers SSH connections from MobaXterm.ini configurations or .mxtsessions session exports and imports them into Navop through Rust WASM, including manual migration of portable and installer edition configurations.",
+      "file_extensions": [],
+      "manifest": "mobaxterm-importer/manifest.json"
+    },
+    {
       "id": "duckdb",
       "kind": "database_driver",
       "name": "DuckDB",

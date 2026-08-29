@@ -1,0 +1,13 @@
+{
+  "id": "mobaxterm-importer",
+  "kind": "composite",
+  "language": "rust-wasm",
+  "package": "mobaxterm_importer_wasm",
+  "binary": "mobaxterm_importer_wasm.wasm",
+  "path": "extensions/wasm/mobaxterm-importer",
+  "targets": [
+    "universal"
+  ],
+  "releaseTagPrefix": "mobaxterm-importer-v",
+  "r2Prefix": "extensions/mobaxterm-importer"
+}

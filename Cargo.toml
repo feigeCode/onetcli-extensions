@@ -8,6 +8,7 @@ members = [
     "extensions/wasm/jetbrains-importer",
     "extensions/wasm/math-renderer",
     "extensions/wasm/mermaid-renderer",
+    "extensions/wasm/mobaxterm-importer",
     "extensions/wasm/notes-document-export-core",
     "extensions/wasm/notes-html-exporter",
     "extensions/wasm/notes-pdf-exporter",

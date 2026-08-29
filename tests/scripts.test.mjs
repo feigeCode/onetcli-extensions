@@ -870,6 +870,37 @@ test("WindTerm importer is registered as a composite WASM importer", () => {
   assert.ok(sourceManifest.permissions.includes("fs:read:%USERPROFILE%/.wind/profiles"));
 });
 
+test("MobaXterm importer is registered as a composite WASM importer", () => {
+  const globalManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifest.json"), "utf8"));
+  const entry = globalManifest.extensions.find((extension) => extension.id === "com.onetcli.importer.mobaxterm");
+
+  assert.equal(entry?.kind, "composite");
+  assert.equal(entry?.manifest, "mobaxterm-importer/manifest.json");
+
+  const sourceManifest = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, "extensions/wasm/mobaxterm-importer/extension.json"), "utf8"),
+  );
+  const importer = sourceManifest.contributes.connectionImporters[0];
+
+  assert.equal(importer.id, "mobaxterm");
+  assert.equal(importer.runtimeId, "mobaxterm-importer");
+  assert.deepEqual(importer.outputKinds, ["ssh"]);
+  assert.deepEqual(importer.platforms, ["macos", "windows", "linux"]);
+  assert.equal(importer.manualFilePick?.prompt, "选择 MobaXterm.ini / .mxtsessions 文件");
+  assert.equal(importer.manualFilePick?.supportsDirectories, true);
+  assert.equal(importer.manualFilePick?.directoryPrompt, "选择 MobaXterm 配置目录");
+  assert.ok(
+    importer.candidateFiles.some((candidate) => candidate.path === "%USERPROFILE%/Documents/MobaXterm"),
+    "MobaXterm importer should discover Windows Documents configuration directories",
+  );
+  assert.ok(
+    importer.candidateFiles.some((candidate) => candidate.path === "%APPDATA%/MobaXterm"),
+    "MobaXterm importer should discover Windows AppData configuration directories",
+  );
+  assert.ok(sourceManifest.permissions.includes("fs:read:%USERPROFILE%/Documents/MobaXterm"));
+  assert.ok(sourceManifest.permissions.includes("fs:read:%APPDATA%/MobaXterm"));
+});
+
 test("SecureCRT importer is registered as a composite WASM importer", () => {
   const globalManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifest.json"), "utf8"));
   const entry = globalManifest.extensions.find((extension) => extension.id === "com.onetcli.importer.securecrt");

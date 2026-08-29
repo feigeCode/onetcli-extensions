@@ -4178,6 +4178,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mobaxterm_importer_wasm"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "moka"
 version = "0.12.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
