@@ -39,12 +39,12 @@ type connectionState struct {
 }
 
 type cursorState struct {
-	connID      uint64
-	rows        *sql.Rows
-	columnCount int
-	maxRows     *uint64
-	fetched     uint64
-	done        bool
+	connID  uint64
+	rows    *sql.Rows
+	kinds   []string
+	maxRows *uint64
+	fetched uint64
+	done    bool
 }
 
 type txState struct {
@@ -403,11 +403,15 @@ func (s *Server) handleQueryStart(ctx context.Context, req ipc.Message) ipc.Mess
 	}
 	cursorID := fmt.Sprintf("%s-cursor-%d", s.spec.ID, s.nextCursor)
 	s.nextCursor++
+	kinds := make([]string, 0, len(columns))
+	for _, column := range columns {
+		kinds = append(kinds, column.TypeKind)
+	}
 	s.cursors[cursorID] = &cursorState{
-		connID:      p.ConnID,
-		rows:        rows,
-		columnCount: len(columns),
-		maxRows:     p.MaxRows,
+		connID:  p.ConnID,
+		rows:    rows,
+		kinds:   kinds,
+		maxRows: p.MaxRows,
 	}
 	return s.ok(req.ID, map[string]any{
 		"cursor_id":       cursorID,
@@ -435,7 +439,7 @@ func (s *Server) handleCursorFetch(req ipc.Message) ipc.Message {
 	if cursor.done || cursor.rows == nil {
 		return s.ok(req.ID, map[string]any{"rows": [][]cellValue{}, "done": true})
 	}
-	rows, done, fetched, err := fetchRows(cursor.rows, cursor.columnCount, n, cursor.maxRows, cursor.fetched)
+	rows, done, fetched, err := fetchRows(cursor.rows, cursor.kinds, n, cursor.maxRows, cursor.fetched)
 	if err != nil {
 		return s.errFromError(req.ID, ErrSQLSyntax, err)
 	}

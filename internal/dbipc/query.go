@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type columnSpec struct {
@@ -55,7 +56,7 @@ func startQuery(ctx context.Context, queryer queryExecutor, sqlText string, args
 	return specs, rows, nil
 }
 
-func fetchRows(rows *sql.Rows, columnCount int, n int, maxRows *uint64, fetched uint64) ([][]cellValue, bool, uint64, error) {
+func fetchRows(rows *sql.Rows, kinds []string, n int, maxRows *uint64, fetched uint64) ([][]cellValue, bool, uint64, error) {
 	if n <= 0 {
 		n = 500
 	}
@@ -70,7 +71,7 @@ func fetchRows(rows *sql.Rows, columnCount int, n int, maxRows *uint64, fetched 
 			}
 			return out, true, fetched, nil
 		}
-		row, err := scanCurrentRow(rows, columnCount)
+		row, err := scanCurrentRow(rows, kinds)
 		if err != nil {
 			return nil, false, fetched, err
 		}
@@ -83,9 +84,9 @@ func fetchRows(rows *sql.Rows, columnCount int, n int, maxRows *uint64, fetched 
 	return out, false, fetched, nil
 }
 
-func scanCurrentRow(rows *sql.Rows, columnCount int) ([]cellValue, error) {
-	values := make([]any, columnCount)
-	ptrs := make([]any, columnCount)
+func scanCurrentRow(rows *sql.Rows, kinds []string) ([]cellValue, error) {
+	values := make([]any, len(kinds))
+	ptrs := make([]any, len(kinds))
 	for i := range values {
 		ptrs[i] = &values[i]
 	}
@@ -93,8 +94,12 @@ func scanCurrentRow(rows *sql.Rows, columnCount int) ([]cellValue, error) {
 		return nil, err
 	}
 	row := make([]cellValue, 0, len(values))
-	for _, value := range values {
-		row = append(row, toCell(value))
+	for i, value := range values {
+		if i < len(kinds) {
+			row = append(row, toCellForKind(value, kinds[i]))
+		} else {
+			row = append(row, toCell(value))
+		}
 	}
 	return row, nil
 }
@@ -206,12 +211,6 @@ func toCell(value any) cellValue {
 	case float64:
 		return cellValue{"type": "f64", "value": v}
 	case []byte:
-		if json.Valid(v) {
-			var j any
-			if err := json.Unmarshal(v, &j); err == nil {
-				return cellValue{"type": "json", "value": j}
-			}
-		}
 		return cellValue{"type": "bytes", "value": base64.StdEncoding.EncodeToString(v)}
 	case string:
 		return cellValue{"type": "text", "value": v}
@@ -220,6 +219,50 @@ func toCell(value any) cellValue {
 	default:
 		return cellValue{"type": "text", "value": fmt.Sprint(v)}
 	}
+}
+
+// toCellForKind encodes a scanned value using the column's declared type kind.
+//
+// MySQL-protocol drivers (go-sql-driver/mysql, obconnector-go) return
+// VARCHAR/TEXT/DECIMAL/DATETIME/JSON columns as []byte, so the Go runtime type
+// alone cannot distinguish text from binary. The column's declared type kind
+// is authoritative: text-family bytes become text cells, and binary or
+// unresolvable kinds keep the lossless base64 `bytes` encoding. Text bytes
+// that are not valid UTF-8 also fall back to `bytes` because the wire cell is
+// JSON-encoded; silently replacing them with U+FFFD would lose data.
+func toCellForKind(value any, kind string) cellValue {
+	raw, ok := value.([]byte)
+	if !ok {
+		return toCell(value)
+	}
+	switch kind {
+	case "text":
+		return textCell(raw)
+	case "decimal":
+		if utf8.Valid(raw) {
+			return cellValue{"type": "decimal", "value": string(raw)}
+		}
+	case "date", "time", "datetime":
+		if utf8.Valid(raw) {
+			return cellValue{"type": kind, "value": string(raw)}
+		}
+	case "json":
+		var j any
+		if err := json.Unmarshal(raw, &j); err == nil {
+			return cellValue{"type": "json", "value": j}
+		}
+		if utf8.Valid(raw) {
+			return cellValue{"type": "text", "value": string(raw)}
+		}
+	}
+	return cellValue{"type": "bytes", "value": base64.StdEncoding.EncodeToString(raw)}
+}
+
+func textCell(raw []byte) cellValue {
+	if utf8.Valid(raw) {
+		return cellValue{"type": "text", "value": string(raw)}
+	}
+	return cellValue{"type": "bytes", "value": base64.StdEncoding.EncodeToString(raw)}
 }
 
 func asBool(value any) (bool, error) {
@@ -327,6 +370,8 @@ func typeKind(raw string) string {
 	case strings.Contains(t, "json"):
 		return "json"
 	case strings.Contains(t, "char"), strings.Contains(t, "text"), strings.Contains(t, "clob"), strings.Contains(t, "varchar"):
+		return "text"
+	case strings.Contains(t, "uuid"), strings.Contains(t, "xml"), strings.Contains(t, "interval"):
 		return "text"
 	default:
 		return "unknown"

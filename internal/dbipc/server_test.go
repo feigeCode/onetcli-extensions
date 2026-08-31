@@ -288,6 +288,122 @@ func TestQueryStartKeepsRowsStreamingUntilCursorFetch(t *testing.T) {
 	}
 }
 
+func TestCursorFetchEncodesByteArraysByDeclaredColumnType(t *testing.T) {
+	// MySQL 协议驱动把 VARCHAR/TEXT/DECIMAL/DATETIME/JSON 全部扫描为 []byte。
+	// 宿主必须依赖列声明类型而非 Go 运行时类型来区分文本与二进制。
+	// 非 UTF-8 文本、非法 JSON、NULL 也必须保持无损或有正确语义。
+	invalidUTF8 := []byte{0xD6, 0xD0, 0xCE, 0xC4} // GBK "中文"
+	state := &streamingDriverState{
+		rows: [][]driver.Value{
+			{
+				[]byte("中文 varchar"),
+				[]byte("12.50"),
+				[]byte("2026-08-31 10:20:30"),
+				[]byte(`{"k":"v"}`),
+				[]byte{0xDE, 0xAD},
+				[]byte{0x00, 0xFF},
+				invalidUTF8,
+				[]byte("not-json{"),
+				nil,
+				[]byte("550e8400-e29b-41d4-a716-446655440000"),
+			},
+		},
+		columns: []string{
+			"vc", "amount", "ts", "doc", "raw", "blob_col", "legacy", "badjson", "nul", "uid",
+		},
+		typeNames: []string{
+			"VARCHAR(64)", "DECIMAL(8,2)", "DATETIME", "JSON", "VARBINARY(16)", "BLOB",
+			"TEXT", "JSON", "VARCHAR(10)", "UUID",
+		},
+	}
+	driverName := fmt.Sprintf("dbipc_streaming_%d", atomic.AddUint64(&streamingDriverSeq, 1))
+	sql.Register(driverName, &streamingDriver{state: state})
+	server := NewServer(testSpecWithSQLDriver(driverName), nil)
+	server.initialized = true
+
+	connID := openTestConn(t, server)
+	startResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  "query/start",
+		Params:  json.RawMessage(fmt.Sprintf(`{"conn_id":%d,"sql":"SELECT * FROM demo"}`, connID)),
+	})
+	if startResp.Error != nil {
+		t.Fatalf("query/start returned error: %#v", startResp.Error)
+	}
+	var started struct {
+		CursorID string `json:"cursor_id"`
+	}
+	decodeResult(t, startResp, &started)
+
+	fetchResp := server.Handle(context.Background(), ipc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`3`),
+		Method:  "cursor/fetch",
+		Params:  json.RawMessage(fmt.Sprintf(`{"cursor_id":%q,"n":10}`, started.CursorID)),
+	})
+	if fetchResp.Error != nil {
+		t.Fatalf("cursor/fetch returned error: %#v", fetchResp.Error)
+	}
+	var fetched struct {
+		Rows [][]cellValue `json:"rows"`
+	}
+	decodeResult(t, fetchResp, &fetched)
+	if len(fetched.Rows) != 1 {
+		t.Fatalf("rows = %#v, want 1 row", fetched.Rows)
+	}
+
+	row := fetched.Rows[0]
+	expectations := []struct {
+		column int
+		type_  string
+	}{
+		{0, "text"},
+		{1, "decimal"},
+		{2, "datetime"},
+		{3, "json"},
+		{4, "bytes"},
+		{5, "bytes"},
+		{6, "bytes"}, // 非 UTF-8 文本回退无损 bytes
+		{7, "text"},  // 非法 JSON 回退 text
+		{8, "null"},  // NULL 保持 null
+		{9, "text"},  // UUID kind 映射为 text
+	}
+	for _, want := range expectations {
+		cell := row[want.column]
+		if cell["type"] != want.type_ {
+			t.Fatalf("column %d type = %#v, want %q", want.column, cell["type"], want.type_)
+		}
+	}
+	if row[0]["value"] != "中文 varchar" || row[1]["value"] != "12.50" {
+		t.Fatalf("text values = %#v %#v", row[0]["value"], row[1]["value"])
+	}
+	if row[2]["value"] != "2026-08-31 10:20:30" {
+		t.Fatalf("datetime value = %#v", row[2]["value"])
+	}
+	if got, ok := row[3]["value"].(map[string]any); !ok || got["k"] != "v" {
+		t.Fatalf("json value = %#v", row[3]["value"])
+	}
+	if row[4]["value"] != base64.StdEncoding.EncodeToString([]byte{0xDE, 0xAD}) {
+		t.Fatalf("varbinary value = %#v", row[4]["value"])
+	}
+	if row[5]["value"] != base64.StdEncoding.EncodeToString([]byte{0x00, 0xFF}) {
+		t.Fatalf("blob value = %#v", row[5]["value"])
+	}
+	if row[6]["value"] != base64.StdEncoding.EncodeToString(invalidUTF8) {
+		t.Fatalf("invalid-utf8 text value = %#v, want lossless base64", row[6]["value"])
+	}
+	if row[7]["value"] != "not-json{" {
+		t.Fatalf("invalid json fallback value = %#v", row[7]["value"])
+	}
+	if _, has := row[8]["value"]; has {
+		t.Fatalf("null cell should have no value, got %#v", row[8])
+	}
+	if row[9]["value"] != "550e8400-e29b-41d4-a716-446655440000" {
+		t.Fatalf("uuid value = %#v", row[9]["value"])
+	}
+}
+
 func TestCursorFetchReturnsEmptyArrayWhenNoRows(t *testing.T) {
 	driverName, _ := registerStreamingDriver(t, nil)
 	server := NewServer(testSpecWithSQLDriver(driverName), nil)
@@ -1910,6 +2026,7 @@ var streamingDriverSeq uint64
 type streamingDriverState struct {
 	rows          [][]driver.Value
 	columns       []string
+	typeNames     []string
 	queryCalls    int32
 	nextCalls     int32
 	closeCalls    int32
@@ -2035,6 +2152,9 @@ func (r *streamingRows) Next(dest []driver.Value) error {
 }
 
 func (r *streamingRows) ColumnTypeDatabaseTypeName(index int) string {
+	if index < len(r.state.typeNames) {
+		return r.state.typeNames[index]
+	}
 	if index == 0 {
 		return "BIGINT"
 	}
