@@ -95,10 +95,72 @@ func oracleDSNParams(extra map[string]string) map[string]string {
 			"schema_filter_exclude":
 			// Host-managed; not go-ora URL options.
 		default:
-			params[key] = value
+			// Only go-ora URL options may appear in the DSN. Any other key
+			// (connection name, remark, or arbitrary host form fields) would
+			// be rejected by go-ora with "unknown URL option: <key>".
+			if goOraURLOption(key) {
+				params[key] = value
+			}
 		}
 	}
 	return params
+}
+
+// goOraSupportedOptionNormalized lists every URL option go-ora understands
+// (the switch in go-ora's connect_config.go), normalized to the lowercase
+// underscore spelling used by normalizeOptionKey. Options that make go-ora
+// fail on parse (FAILOVER / RETRY TIME) are intentionally excluded.
+var goOraSupportedOptionNormalized = map[string]struct{}{
+	"cid":                          {},
+	"connstr":                      {},
+	"server":                       {},
+	"service_name":                 {},
+	"sid":                          {},
+	"instance_name":                {},
+	"wallet":                       {},
+	"wallet_password":              {},
+	"auth_type":                    {},
+	"os_user":                      {},
+	"os_pass":                      {},
+	"os_password":                  {},
+	"os_hash":                      {},
+	"os_passhash":                  {},
+	"os_password_hash":             {},
+	"domain":                       {},
+	"auth_serv":                    {},
+	"encryption":                   {},
+	"data_integrity":               {},
+	"ssl":                          {},
+	"ssl_verify":                   {},
+	"dba_privilege":                {},
+	"timeout":                      {},
+	"read_timeout":                 {},
+	"socket_timeout":               {},
+	"connect_timeout":              {},
+	"connection_timeout":           {},
+	"trace_file":                   {},
+	"trace_dir":                    {},
+	"trace_folder":                 {},
+	"trace_directory":              {},
+	"use_oob":                      {},
+	"enable_oob":                   {},
+	"enable_urgent_data_transport": {},
+	"prefetch_rows":                {},
+	"unix_socket":                  {},
+	"proxy_client_name":            {},
+	"lob_fetch":                    {},
+	"language":                     {},
+	"territory":                    {},
+	"charset":                      {},
+	"client_charset":               {},
+	"program":                      {},
+	"server_location":              {},
+}
+
+// goOraURLOption reports whether key names a URL option go-ora accepts.
+func goOraURLOption(key string) bool {
+	_, ok := goOraSupportedOptionNormalized[normalizeOptionKey(key)]
+	return ok
 }
 
 // normalizeOptionKey folds a wire extra-param key to a canonical lowercase

@@ -379,6 +379,53 @@ func TestSpecDropsHostManagedParamsFromDSN(t *testing.T) {
 	}
 }
 
+func TestSpecDropsUnsupportedExtraParamsFromDSN(t *testing.T) {
+	cfg, err := ConfigFromWire(map[string]any{
+		"host":         "127.0.0.1",
+		"username":     "system",
+		"password":     "oracle",
+		"service_name": "orclpdb1",
+		"extra_params": map[string]any{
+			"name":               "Local Oracle",
+			"remark":             "my notes",
+			"protocol":           "oracle",
+			"default_schema":     "APP",
+			"schema_filter_mode": "auto",
+			"ssh_tunnel_enabled": "false",
+			"connect_timeout":    "30",
+			"SERVER":             "dedicated",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ConfigFromWire returned error: %v", err)
+	}
+
+	dsn, err := Spec().BuildDSN(cfg)
+	if err != nil {
+		t.Fatalf("BuildDSN returned error: %v", err)
+	}
+
+	for _, leaked := range []string{
+		"name=",
+		"remark=",
+		"protocol=",
+		"default_schema",
+		"schema_filter",
+		"ssh_",
+		"connect_timeout=",
+	} {
+		if strings.Contains(strings.ToLower(dsn), leaked) {
+			t.Fatalf("dsn %q leaked unsupported param %q", dsn, leaked)
+		}
+	}
+	if !strings.Contains(dsn, "CONNECT+TIMEOUT=30") {
+		t.Fatalf("dsn %q does not map connect_timeout to CONNECT TIMEOUT", dsn)
+	}
+	if !strings.Contains(dsn, "SERVER=dedicated") {
+		t.Fatalf("dsn %q dropped a go-ora-supported option", dsn)
+	}
+}
+
 func TestSpecSkipsUnparseableTimeoutWithoutFailing(t *testing.T) {
 	cfg, err := ConfigFromWire(map[string]any{
 		"host":         "127.0.0.1",
