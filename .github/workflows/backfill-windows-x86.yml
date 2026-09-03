@@ -113,6 +113,9 @@ jobs:
           elif [ "${{ matrix.kind }}" = "acp_agent" ]; then
             bash scripts/package-acp-agent.sh "${{ matrix.extension }}" "$WINDOWS_X86_TARGET" artifacts "${{ matrix.version }}"
             bash scripts/verify-acp-agent-package.sh "artifacts/${{ matrix.package_file }}"
+          elif [ "${{ matrix.kind }}" = "composite" ]; then
+            bash scripts/package-composite-extension.sh "${{ matrix.extension }}" "$WINDOWS_X86_TARGET" artifacts "${{ matrix.version }}"
+            bash scripts/verify-composite-package.sh "artifacts/${{ matrix.package_file }}"
           else
             echo "::error::Unsupported Windows x86 extension kind: ${{ matrix.kind }}"
             exit 1

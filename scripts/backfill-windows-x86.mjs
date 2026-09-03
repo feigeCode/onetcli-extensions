@@ -12,6 +12,7 @@ const extensionRoots = [
   "extensions/remote-desktop",
   "extensions/mcp-helper",
   "extensions/acp-agent",
+  "extensions/composite",
   "extensions/wasm",
   "extensions/language",
   "extensions/language-bundle",
@@ -40,7 +41,10 @@ function main() {
 function writeMatrix(selector) {
   const marketplace = readJson(path.join(repoRoot, "manifest.json"));
   const releasesById = new Map(
-    (marketplace.extensions || []).map((extension) => [extension.id, extension]),
+    (marketplace.extensions || []).map((extension) => [
+      extension.manifest?.split("/")[0] || extension.id,
+      extension,
+    ]),
   );
   const include = [];
 

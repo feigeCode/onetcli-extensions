@@ -23,6 +23,7 @@ const roots = [
   "extensions/remote-desktop",
   "extensions/mcp-helper",
   "extensions/acp-agent",
+  "extensions/composite",
   "extensions/wasm",
   "extensions/language",
   "extensions/language-bundle",

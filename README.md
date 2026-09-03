@@ -53,6 +53,7 @@ scripts/
   generate-marketplace-manifest.mjs
   install-local-drivers.sh
   install-local-remote-desktop-providers.sh
+  install-local-composite-extensions.sh
   package-driver.sh
   package-remote-desktop-provider.sh
   release-driver.mjs
@@ -268,6 +269,16 @@ Install remote desktop providers locally:
 bash scripts/install-local-remote-desktop-providers.sh
 bash scripts/install-local-remote-desktop-providers.sh rdp
 ```
+
+Build, package, verify, and install a native or universal composite extension:
+
+```bash
+bash scripts/install-local-composite-extensions.sh elasticsearch
+```
+
+Native composites publish one archive per target. Their root `extension.json`
+may combine `runtime.ipc` with `contributes.shellViews`; packages contain the
+platform provider under `bin/` and gpui-shell sources under `ui/`.
 
 By default this follows Navop's config-directory migration state. On Unix it
 uses `$HOME/.config`; on Windows it uses `%APPDATA%`. Within that config root it

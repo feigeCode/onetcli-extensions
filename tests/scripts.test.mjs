@@ -736,9 +736,11 @@ test("composite marketplace ids match their installed extension manifest ids", (
     (extension) => extension.kind === "composite",
   )) {
     const artifactSlug = entry.manifest.split("/")[0];
+    const metadata = extensionBuildEntries().find((candidate) => candidate.id === artifactSlug);
+    assert.ok(metadata, `missing build metadata for ${artifactSlug}`);
     const sourceManifest = JSON.parse(
       fs.readFileSync(
-        path.join(repoRoot, `extensions/wasm/${artifactSlug}/extension.json`),
+        path.join(repoRoot, metadata.path, "extension.json"),
         "utf8",
       ),
     );
@@ -1112,7 +1114,7 @@ test("Windows x86 backfill matrix resolves every supported published extension",
   );
   const matrix = JSON.parse(output);
 
-  assert.equal(matrix.include.length, 16);
+  assert.equal(matrix.include.length, 17);
   assert.deepEqual(
     matrix.include.map((entry) => entry.extension),
     [
@@ -1120,6 +1122,7 @@ test("Windows x86 backfill matrix resolves every supported published extension",
       "codex-acp",
       "dm",
       "duckdb",
+      "elasticsearch",
       "iotdb",
       "kingbase",
       "mongodb-legacy",
@@ -1917,6 +1920,72 @@ test("package-composite-extension creates a static remote editor package", () =>
     [path.join(workdir, "scripts/verify-composite-package.sh"), archivePath],
     { cwd: workdir, encoding: "utf8" },
   );
+});
+
+test("package-composite-extension creates a native shell provider package", () => {
+  const workdir = makeTempDir();
+  createNativeCompositeFixture(workdir);
+
+  const archivePath = execFileSync(
+    "bash",
+    [
+      path.join(workdir, "scripts/package-composite-extension.sh"),
+      "elasticsearch",
+      "x86_64-unknown-linux-gnu",
+      path.join(workdir, "artifacts"),
+      "1.2.3",
+    ],
+    { cwd: workdir, encoding: "utf8" },
+  ).trim();
+
+  execFileSync("tar", ["xzf", archivePath, "-C", path.join(workdir, "unpacked")]);
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(workdir, "unpacked/extension.json"), "utf8"),
+  );
+  assert.equal(manifest.version, "1.2.3");
+  assert.equal(manifest.runtime.ipc[0].entry.command, "./bin/elasticsearch-provider");
+  assert.equal(manifest.contributes.connections[0].id, "elasticsearch");
+  assert.equal(manifest.contributes.connections[0].shellViewId, "explorer");
+  assert.ok(manifest.permissions.includes("spawn:./bin/elasticsearch-provider"));
+  assert.equal(
+    fs.readFileSync(path.join(workdir, "unpacked/bin/elasticsearch-provider"), "utf8"),
+    "fake elasticsearch provider\n",
+  );
+  assert.match(
+    fs.readFileSync(path.join(workdir, "unpacked/ui/explorer.js"), "utf8"),
+    /ElasticsearchExplorer/,
+  );
+  execFileSync(
+    "bash",
+    [path.join(workdir, "scripts/verify-composite-package.sh"), archivePath],
+    { cwd: workdir, encoding: "utf8" },
+  );
+});
+
+test("package-composite-extension rewrites native Windows commands and permissions", () => {
+  const workdir = makeTempDir();
+  createNativeCompositeFixture(workdir, { target: "x86_64-pc-windows-msvc" });
+
+  const archivePath = execFileSync(
+    "bash",
+    [
+      path.join(workdir, "scripts/package-composite-extension.sh"),
+      "elasticsearch",
+      "x86_64-pc-windows-msvc",
+      path.join(workdir, "artifacts"),
+      "1.2.3",
+    ],
+    { cwd: workdir, encoding: "utf8" },
+  ).trim();
+
+  execFileSync("tar", ["xzf", archivePath, "-C", path.join(workdir, "unpacked")]);
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(workdir, "unpacked/extension.json"), "utf8"),
+  );
+  assert.equal(manifest.runtime.ipc[0].entry.command, "./bin/elasticsearch-provider.exe");
+  assert.ok(manifest.permissions.includes("spawn:./bin/elasticsearch-provider.exe"));
+  assert.ok(!manifest.permissions.includes("spawn:./bin/elasticsearch-provider"));
+  assert.ok(fs.existsSync(path.join(workdir, "unpacked/bin/elasticsearch-provider.exe")));
 });
 
 test("package-language-extension creates a Tree-sitter language package", () => {
@@ -4553,6 +4622,45 @@ test("release-driver packages composite wasm extensions", () => {
   );
 });
 
+test("release-driver packages native composite shell extensions", () => {
+  const workdir = makeTempDir();
+  copyScript("release-driver.mjs", workdir);
+  copyScript("package-composite-extension.sh", workdir);
+  copyScript("verify-composite-package.sh", workdir);
+  copyScript("generate-marketplace-manifest.mjs", workdir);
+  createNativeCompositeFixture(workdir);
+
+  const output = execFileSync(
+    "node",
+    [
+      path.join(workdir, "scripts/release-driver.mjs"),
+      "elasticsearch",
+      "1.2.3",
+      "--target",
+      "x86_64-unknown-linux-gnu",
+      "--skip-build",
+      "--artifact-dir",
+      "artifacts",
+    ],
+    { cwd: workdir, encoding: "utf8" },
+  );
+
+  assert.match(output, /Packaging elasticsearch \(x86_64-unknown-linux-gnu\)/);
+  assert.ok(
+    fs.existsSync(
+      path.join(workdir, "artifacts/elasticsearch-composite-x86_64-unknown-linux-gnu.tar.gz"),
+    ),
+  );
+  const extensionManifest = JSON.parse(
+    fs.readFileSync(path.join(workdir, "artifacts/extension-manifest.json"), "utf8"),
+  );
+  assert.equal(extensionManifest.extensions[0].kind, "composite");
+  assert.equal(
+    extensionManifest.extensions[0].artifacts["x86_64-unknown-linux-gnu"].file,
+    "elasticsearch-composite-x86_64-unknown-linux-gnu.tar.gz",
+  );
+});
+
 function makeTempDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "navop-extensions-test-"));
   fs.mkdirSync(path.join(dir, "unpacked"), { recursive: true });
@@ -4560,7 +4668,7 @@ function makeTempDir() {
 }
 
 function extensionBuildEntries() {
-  const roots = ["extensions/ipc", "extensions/remote-desktop", "extensions/mcp-helper", "extensions/acp-agent", "extensions/wasm", "extensions/language", "extensions/language-bundle"];
+  const roots = ["extensions/ipc", "extensions/remote-desktop", "extensions/mcp-helper", "extensions/acp-agent", "extensions/composite", "extensions/wasm", "extensions/language", "extensions/language-bundle"];
   const entries = [];
   for (const root of roots) {
     if (!fs.existsSync(path.join(repoRoot, root))) continue;
@@ -4792,6 +4900,65 @@ function createDbeaverImporterFixture(workdir, options = {}) {
   fs.writeFileSync(path.join(workdir, `extensions/wasm/${id}/wasm/dbeaver_importer_wasm.wasm`), "fake wasm\n");
 }
 
+function createNativeCompositeFixture(workdir, options = {}) {
+  const target = options.target || "x86_64-unknown-linux-gnu";
+  const executable = target.includes("windows")
+    ? "elasticsearch-provider.exe"
+    : "elasticsearch-provider";
+  copyScript("package-composite-extension.sh", workdir);
+  copyScript("verify-composite-package.sh", workdir);
+  writeJson(path.join(workdir, "extensions/composite/elasticsearch/extension.build.json"), {
+    id: "elasticsearch",
+    kind: "composite",
+    language: "rust",
+    package: "elasticsearch-provider",
+    binary: "elasticsearch-provider",
+    path: "extensions/composite/elasticsearch",
+    targets: [target],
+  });
+  writeJson(path.join(workdir, "extensions/composite/elasticsearch/extension.json"), {
+    schema_version: 1,
+    id: "com.navop.elasticsearch",
+    name: "Elasticsearch",
+    version: "0.0.0",
+    engines: { onetcli: ">=0.15.2", gpui_shell: "0.2.0" },
+    api: { extension: "1.0", shell: "1.0" },
+    permissions: ["shell:exec", "spawn:./bin/elasticsearch-provider"],
+    runtime: {
+      ipc: [{ id: "main", entry: { command: "./bin/elasticsearch-provider" } }],
+    },
+    contributes: {
+      connections: [{
+        id: "elasticsearch",
+        label: "Elasticsearch",
+        runtimeId: "main",
+        resourceType: "elasticsearch",
+        shellViewId: "explorer",
+        form: { tabs: [] },
+      }],
+      shellViews: [{
+        id: "explorer",
+        title: "Elasticsearch",
+        entry: "ui/explorer.js",
+        singleton: false,
+        backends: { search: "main" },
+        modules: ["context", "resource"],
+      }],
+    },
+  });
+  fs.mkdirSync(path.join(workdir, "extensions/composite/elasticsearch/ui"), { recursive: true });
+  fs.writeFileSync(
+    path.join(workdir, "extensions/composite/elasticsearch/ui/explorer.js"),
+    "export default class ElasticsearchExplorer {}\n",
+  );
+  fs.mkdirSync(path.join(workdir, `target/${target}/release`), { recursive: true });
+  fs.writeFileSync(
+    path.join(workdir, `target/${target}/release/${executable}`),
+    "fake elasticsearch provider\n",
+    { mode: 0o755 },
+  );
+}
+
 function createStaticRemoteEditorFixture(workdir) {
   const id = "notepad-plus-plus-editor";
   copyScript("package-composite-extension.sh", workdir);
@@ -4990,7 +5157,7 @@ function createFailingRustc(workdir) {
 }
 
 function collectExtensionMetadata() {
-  return ["extensions/ipc", "extensions/remote-desktop", "extensions/mcp-helper", "extensions/acp-agent", "extensions/wasm"].flatMap((root) =>
+  return ["extensions/ipc", "extensions/remote-desktop", "extensions/mcp-helper", "extensions/acp-agent", "extensions/composite", "extensions/wasm"].flatMap((root) =>
     fs.existsSync(path.join(repoRoot, root)) ?
     fs
       .readdirSync(path.join(repoRoot, root))

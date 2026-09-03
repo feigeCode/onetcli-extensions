@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "id": "com.navop.elasticsearch",
+  "name": "Elasticsearch 9",
+  "version": "0.1.0",
+  "publisher": "Navop",
+  "license": "Apache-2.0",
+  "description": "面向 Elasticsearch 9.x 的原生 Rust SDK 管理扩展，支持集群信息、索引浏览和异步搜索。 Native Rust SDK extension for Elasticsearch 9.x with cluster information, index browsing, and asynchronous search.",
+  "categories": ["database", "search", "developer-tools"],
+  "keywords": ["elasticsearch", "search", "index", "observability"],
+  "engines": {
+    "onetcli": ">=0.15.2",
+    "gpui_shell": "0.2.0"
+  },
+  "api": {
+    "extension": "1.0",
+    "shell": "1.0"
+  },
+  "permissions": [
+    "shell:exec",
+    "spawn:./bin/elasticsearch-provider",
+    "net:tcp:*:9200",
+    "net:tcp:*:443",
+    "secrets:read:self.*"
+  ],
+  "runtime": {
+    "ipc": [
+      {
+        "id": "main",
+        "entry": {
+          "command": "./bin/elasticsearch-provider"
+        },
+        "transport": {
+          "kind": "local_socket",
+          "connect_timeout_ms": 5000
+        },
+        "auto_restart": true,
+        "max_restart_attempts": 3,
+        "shutdown_grace_ms": 2500
+      }
+    ]
+  },
+  "contributes": {
+    "connections": [
+      {
+        "id": "elasticsearch9",
+        "label": "Elasticsearch 9",
+        "description": "Connect to an Elasticsearch 9.x cluster.",
+        "runtimeId": "main",
+        "resourceType": "elasticsearch",
+        "shellViewId": "explorer",
+        "form": {
+          "tabs": [
+            {
+              "id": "general",
+              "label": "General",
+              "fields": [
+                {
+                  "id": "url",
+                  "label": "URL",
+                  "fieldType": "Text",
+                  "required": true,
+                  "defaultValue": "http://localhost:9200",
+                  "placeholder": "https://localhost:9200"
+                },
+                {
+                  "id": "auth_type",
+                  "label": "Authentication",
+                  "fieldType": "Select",
+                  "required": true,
+                  "defaultValue": "none",
+                  "options": [
+                    { "value": "none", "label": "None" },
+                    { "value": "api_key", "label": "API key" },
+                    { "value": "basic", "label": "Username and password" },
+                    { "value": "bearer", "label": "Bearer token" }
+                  ]
+                },
+                {
+                  "id": "username",
+                  "label": "Username",
+                  "fieldType": "Text",
+                  "required": true,
+                  "visibleWhen": [
+                    { "field": "auth_type", "equals": "basic" }
+                  ]
+                },
+                {
+                  "id": "api_key",
+                  "label": "Encoded API key",
+                  "fieldType": "Password",
+                  "required": true,
+                  "secret": true,
+                  "visibleWhen": [
+                    { "field": "auth_type", "equals": "api_key" }
+                  ]
+                },
+                {
+                  "id": "password",
+                  "label": "Password",
+                  "fieldType": "Password",
+                  "required": true,
+                  "secret": true,
+                  "visibleWhen": [
+                    { "field": "auth_type", "equals": "basic" }
+                  ]
+                },
+                {
+                  "id": "token",
+                  "label": "Bearer token",
+                  "fieldType": "Password",
+                  "required": true,
+                  "secret": true,
+                  "visibleWhen": [
+                    { "field": "auth_type", "equals": "bearer" }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "shellViews": [
+      {
+        "id": "explorer",
+        "title": "Elasticsearch 9",
+        "description": "Browse an Elasticsearch 9 cluster and run searches.",
+        "entry": "ui/explorer.js",
+        "surface": "tab",
+        "singleton": false,
+        "backends": {
+          "search": "main"
+        },
+        "modules": [
+          "context",
+          "resource",
+          "job",
+          "event",
+          "blob",
+          "runtime",
+          "log"
+        ]
+      }
+    ]
+  }
+}

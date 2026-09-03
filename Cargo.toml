@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "drivers/mongodb-driver",
+    "extensions/composite/elasticsearch",
     "extensions/ipc/duckdb",
     "extensions/ipc/opengauss",
     "extensions/ipc/redis",
@@ -35,9 +36,10 @@ base64 = "0.22"
 bson = { version = "2.13", features = ["chrono-0_4"] }
 chrono = { version = "0.4.23", features = ["serde"] }
 duckdb = { version = "1.10504.0", features = ["bundled"] }
-extension-driver = { git = "https://github.com/feigeCode/navop", branch = "dev" }
-extension-host = { git = "https://github.com/feigeCode/navop", branch = "dev" }
-extension-protocol = { git = "https://github.com/feigeCode/navop", branch = "dev" }
+elasticsearch = { version = "9.1.0-alpha.1", default-features = false, features = ["rustls-tls"] }
+extension-driver = { git = "https://github.com/feigeCode/navop", rev = "4e18a15e6f98552736563fe91aa5e1ce1ad61dba" }
+extension-host = { git = "https://github.com/feigeCode/navop", rev = "4e18a15e6f98552736563fe91aa5e1ce1ad61dba" }
+extension-protocol = { git = "https://github.com/feigeCode/navop", rev = "4e18a15e6f98552736563fe91aa5e1ce1ad61dba" }
 hex = "0.4"
 interprocess = { version = "2.4.0", features = ["tokio"] }
 futures = "0.3.32"

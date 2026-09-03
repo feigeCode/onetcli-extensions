@@ -132,7 +132,7 @@ function splitTargets(value) {
 }
 
 function loadExtensionMetadata(id) {
-  const roots = ["extensions/ipc", "extensions/remote-desktop", "extensions/mcp-helper", "extensions/acp-agent", "extensions/wasm", "extensions/language", "extensions/language-bundle"];
+  const roots = ["extensions/ipc", "extensions/remote-desktop", "extensions/mcp-helper", "extensions/acp-agent", "extensions/composite", "extensions/wasm", "extensions/language", "extensions/language-bundle"];
   let file = "";
   for (const root of roots) {
     const candidate = path.join(repoRoot, root, id, "extension.build.json");

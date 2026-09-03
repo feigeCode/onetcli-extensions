@@ -51,7 +51,7 @@ for (const extension of extensions) {
 process.stdout.write(`${JSON.stringify({ include })}\n`);
 
 function loadExtensions() {
-  const roots = ["extensions/ipc", "extensions/remote-desktop", "extensions/mcp-helper", "extensions/acp-agent", "extensions/wasm", "extensions/language", "extensions/language-bundle"];
+  const roots = ["extensions/ipc", "extensions/remote-desktop", "extensions/mcp-helper", "extensions/acp-agent", "extensions/composite", "extensions/wasm", "extensions/language", "extensions/language-bundle"];
   const result = [];
   for (const root of roots) {
     if (!fs.existsSync(root)) continue;

@@ -3,6 +3,16 @@
   "release_version": "",
   "extensions": [
     {
+      "id": "com.navop.elasticsearch",
+      "kind": "composite",
+      "name": "Elasticsearch 9",
+      "version": "0.1.0",
+      "release_tag": "elasticsearch-v0.1.0",
+      "description": "面向 Elasticsearch 9.x 的原生 Rust SDK 管理扩展，支持集群信息、索引浏览和异步搜索。 Native Rust SDK extension for Elasticsearch 9.x with cluster information, index browsing, and asynchronous search.",
+      "file_extensions": [],
+      "manifest": "elasticsearch/manifest.json"
+    },
+    {
       "id": "dm",
       "kind": "database_driver",
       "name": "Dameng DM",
