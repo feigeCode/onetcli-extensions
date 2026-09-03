@@ -88,6 +88,12 @@ func oracleDSNParams(extra map[string]string) map[string]string {
 			if seconds, ok := timeoutSeconds(value); ok {
 				params["READ TIMEOUT"] = seconds
 			}
+		case "role":
+			// Host-managed Oracle role (default/sysdba/sysoper); maps to the
+			// go-ora "DBA PRIVILEGE" URL option. Empty/default adds nothing.
+			if privilege := oracleRoleValue(value); privilege != "" {
+				params["DBA PRIVILEGE"] = privilege
+			}
 		case "external_driver_id",
 			"default_schema",
 			"schema_filter_mode",
@@ -104,6 +110,19 @@ func oracleDSNParams(extra map[string]string) map[string]string {
 		}
 	}
 	return params
+}
+
+// oracleRoleValue maps the host form role value to the DBAPrivilege string
+// go-ora understands. Anything other than sysdba/sysoper connects normally.
+func oracleRoleValue(raw string) string {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "SYSDBA":
+		return "SYSDBA"
+	case "SYSOPER":
+		return "SYSOPER"
+	default:
+		return ""
+	}
 }
 
 // goOraSupportedOptionNormalized lists every URL option go-ora understands

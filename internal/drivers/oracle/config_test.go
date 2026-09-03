@@ -339,6 +339,39 @@ func TestSpecMapsFormTimeoutsToGoOraOptions(t *testing.T) {
 	}
 }
 
+func TestSpecMapsOracleRoleToDBAPrivilege(t *testing.T) {
+	build := func(t *testing.T, role string) string {
+		t.Helper()
+		cfg, err := ConfigFromWire(map[string]any{
+			"host":         "127.0.0.1",
+			"username":     "sys",
+			"password":     "oracle",
+			"service_name": "orclpdb1",
+			"extra_params": map[string]any{
+				"role": role,
+			},
+		})
+		if err != nil {
+			t.Fatalf("ConfigFromWire returned error: %v", err)
+		}
+		dsn, err := Spec().BuildDSN(cfg)
+		if err != nil {
+			t.Fatalf("BuildDSN returned error: %v", err)
+		}
+		return dsn
+	}
+
+	if dsn := build(t, "sysdba"); !strings.Contains(dsn, "DBA+PRIVILEGE=SYSDBA") {
+		t.Fatalf("dsn %q does not map role=sysdba to DBA PRIVILEGE=SYSDBA", dsn)
+	}
+	if dsn := build(t, "SYSOPER"); !strings.Contains(dsn, "DBA+PRIVILEGE=SYSOPER") {
+		t.Fatalf("dsn %q does not map role=SYSOPER to DBA PRIVILEGE=SYSOPER", dsn)
+	}
+	if dsn := build(t, "default"); strings.Contains(dsn, "DBA+PRIVILEGE") {
+		t.Fatalf("dsn %q must not set DBA PRIVILEGE for the default role", dsn)
+	}
+}
+
 func TestSpecDropsHostManagedParamsFromDSN(t *testing.T) {
 	cfg, err := ConfigFromWire(map[string]any{
 		"host":         "127.0.0.1",
