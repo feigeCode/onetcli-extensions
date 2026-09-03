@@ -1962,6 +1962,18 @@ test("package-composite-extension creates a native shell provider package", () =
   );
 });
 
+test("Elasticsearch shell consumes the host-opened connection resource", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "extensions/composite/elasticsearch/ui/explorer.js"),
+    "utf8",
+  );
+
+  assert.match(source, /current\(\)/);
+  assert.match(source, /connection\.resource\.handle/);
+  assert.doesNotMatch(source, /await open\(/);
+  assert.doesNotMatch(source, /credentialRefs/);
+});
+
 test("package-composite-extension rewrites native Windows commands and permissions", () => {
   const workdir = makeTempDir();
   createNativeCompositeFixture(workdir, { target: "x86_64-pc-windows-msvc" });

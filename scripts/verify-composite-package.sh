@@ -155,6 +155,10 @@ for (const connection of connections) {
       console.error(`connection shell view ${view.id} must be non-singleton with context and resource modules`);
       process.exit(1);
     }
+    if (!Object.values(view.backends || {}).includes(connection.runtimeId)) {
+      console.error(`connection shell view ${view.id} must expose runtime ${connection.runtimeId}`);
+      process.exit(1);
+    }
   }
   const tabs = connection.form.tabs || [];
   const fieldIds = new Set();

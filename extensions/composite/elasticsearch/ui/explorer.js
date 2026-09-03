@@ -5,7 +5,7 @@ import { Button, Input, InputState } from "gpui-component";
 import { close as closeBlob, read as readBlob } from "navop.blob";
 import { current } from "navop.context";
 import { cancel, close as closeJob, result as jobResult, start, status } from "navop.job";
-import { close, invoke, open } from "navop.resource";
+import { invoke } from "navop.resource";
 
 export default class ElasticsearchExplorer extends View {
   init(_props, cx) {
@@ -91,12 +91,8 @@ export default class ElasticsearchExplorer extends View {
   async connect(cx) {
     try {
       const connection = this.context.connection;
-      if (!connection) throw new Error("Connection context is missing");
-      const opened = await open("search", connection.resourceType, {
-        ...connection.config,
-        credential_refs: connection.credentialRefs,
-      });
-      this.resource = opened.handle;
+      if (!connection?.resource?.handle) throw new Error("Connection resource is missing");
+      this.resource = connection.resource.handle;
       this.cluster = await this.resolve(await invoke(this.resource, "elasticsearch/cluster/info", {}));
       await this.loadIndices();
       this.content = this.cluster;
