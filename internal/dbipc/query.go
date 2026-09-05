@@ -238,6 +238,38 @@ func toCellForKind(value any, kind string) cellValue {
 	switch kind {
 	case "text":
 		return textCell(raw)
+	case "i64":
+		// 文本协议驱动把整数家族也扫描为 []byte；按声明类型还原数值语义，
+		// 超出 float64 精度的值保留原始十进制文本以避免精度损失。
+		if n, err := strconv.ParseInt(string(raw), 10, 64); err == nil {
+			return cellValue{"type": "i64", "value": n}
+		}
+		if utf8.Valid(raw) {
+			return cellValue{"type": "text", "value": string(raw)}
+		}
+	case "u64":
+		if n, err := strconv.ParseUint(string(raw), 10, 64); err == nil {
+			return cellValue{"type": "u64", "value": strconv.FormatUint(n, 10)}
+		}
+		if utf8.Valid(raw) {
+			return cellValue{"type": "text", "value": string(raw)}
+		}
+	case "f64":
+		if f, err := strconv.ParseFloat(strings.TrimSpace(string(raw)), 64); err == nil {
+			return cellValue{"type": "f64", "value": f}
+		}
+		if utf8.Valid(raw) {
+			return cellValue{"type": "text", "value": string(raw)}
+		}
+	case "bool":
+		if utf8.Valid(raw) {
+			switch strings.TrimSpace(string(raw)) {
+			case "0", "false", "FALSE":
+				return cellValue{"type": "bool", "value": false}
+			case "1", "true", "TRUE":
+				return cellValue{"type": "bool", "value": true}
+			}
+		}
 	case "decimal":
 		if utf8.Valid(raw) {
 			return cellValue{"type": "decimal", "value": string(raw)}
@@ -353,8 +385,12 @@ func asString(value any) string {
 func typeKind(raw string) string {
 	t := strings.ToLower(raw)
 	switch {
-	case strings.Contains(t, "bool"):
+	case strings.Contains(t, "bool"), strings.Contains(t, "tinyint(1)"):
 		return "bool"
+	case strings.Contains(t, "interval"):
+		return "text"
+	case strings.Contains(t, "unsigned"):
+		return "u64"
 	case strings.Contains(t, "int"), strings.Contains(t, "serial"):
 		return "i64"
 	case strings.Contains(t, "numeric"), strings.Contains(t, "decimal"), strings.Contains(t, "number"):
@@ -371,7 +407,7 @@ func typeKind(raw string) string {
 		return "json"
 	case strings.Contains(t, "char"), strings.Contains(t, "text"), strings.Contains(t, "clob"), strings.Contains(t, "varchar"):
 		return "text"
-	case strings.Contains(t, "uuid"), strings.Contains(t, "xml"), strings.Contains(t, "interval"):
+	case strings.Contains(t, "uuid"), strings.Contains(t, "xml"):
 		return "text"
 	default:
 		return "unknown"

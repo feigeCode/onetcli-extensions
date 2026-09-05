@@ -306,14 +306,21 @@ func TestCursorFetchEncodesByteArraysByDeclaredColumnType(t *testing.T) {
 				[]byte("not-json{"),
 				nil,
 				[]byte("550e8400-e29b-41d4-a716-446655440000"),
+				[]byte("9223372036854775807"),
+				[]byte("-42"),
+				[]byte("18446744073709551615"),
+				[]byte("3.141592653589793"),
+				[]byte("1"),
 			},
 		},
 		columns: []string{
 			"vc", "amount", "ts", "doc", "raw", "blob_col", "legacy", "badjson", "nul", "uid",
+			"big", "neg", "ubig", "dbl", "flag",
 		},
 		typeNames: []string{
 			"VARCHAR(64)", "DECIMAL(8,2)", "DATETIME", "JSON", "VARBINARY(16)", "BLOB",
 			"TEXT", "JSON", "VARCHAR(10)", "UUID",
+			"BIGINT(20)", "INT", "BIGINT UNSIGNED", "DOUBLE", "TINYINT(1)",
 		},
 	}
 	driverName := fmt.Sprintf("dbipc_streaming_%d", atomic.AddUint64(&streamingDriverSeq, 1))
@@ -368,6 +375,13 @@ func TestCursorFetchEncodesByteArraysByDeclaredColumnType(t *testing.T) {
 		{7, "text"},  // 非法 JSON 回退 text
 		{8, "null"},  // NULL 保持 null
 		{9, "text"},  // UUID kind 映射为 text
+		// MySQL 文本协议驱动同样把 BIGINT/INT/DOUBLE/TINYINT 扫描为 []byte，
+		// 数值家族必须按列声明类型还原为数值 cell，而不是 base64 bytes。
+		{10, "i64"},
+		{11, "i64"},
+		{12, "u64"},
+		{13, "f64"},
+		{14, "bool"},
 	}
 	for _, want := range expectations {
 		cell := row[want.column]
@@ -400,7 +414,22 @@ func TestCursorFetchEncodesByteArraysByDeclaredColumnType(t *testing.T) {
 		t.Fatalf("null cell should have no value, got %#v", row[8])
 	}
 	if row[9]["value"] != "550e8400-e29b-41d4-a716-446655440000" {
-		t.Fatalf("uuid value = %#v", row[9]["value"])
+		t.Fatalf("uuid value = %#v", row[9])
+	}
+	if row[10]["value"] != float64(9223372036854775807) {
+		t.Fatalf("bigint value = %#v, want max int64", row[10]["value"])
+	}
+	if row[11]["value"] != float64(-42) {
+		t.Fatalf("int value = %#v, want -42", row[11]["value"])
+	}
+	if row[12]["value"] != "18446744073709551615" {
+		t.Fatalf("bigint unsigned value = %#v, want lossless decimal text", row[12]["value"])
+	}
+	if row[13]["value"] != float64(3.141592653589793) {
+		t.Fatalf("double value = %#v", row[13]["value"])
+	}
+	if row[14]["value"] != true {
+		t.Fatalf("tinyint(1) value = %#v, want bool true", row[14]["value"])
 	}
 }
 

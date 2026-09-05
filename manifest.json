@@ -327,7 +327,7 @@
       "kind": "database_driver",
       "name": "OceanBase",
       "version": "0.1.10",
-      "release_tag": "oceanbase-v0.1.9",
+      "release_tag": "oceanbase-v0.1.11",
       "description": "使用 Go 开发的 OceanBase 数据库 IPC 驱动，支持连接测试、SQL 查询、事务、数据库对象浏览及数据传输。 Go-based IPC driver for OceanBase with connection testing, SQL queries, transactions, database object browsing, and data transfer.",
       "file_extensions": [],
       "manifest": "oceanbase/manifest.json"
